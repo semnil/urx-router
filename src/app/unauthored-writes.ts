@@ -8,7 +8,8 @@
 // from, and this reports the ones that would MOVE the unit without the operator having asked.
 //
 // `load` and `manual` are the two the operator chose: the document named the value, or an edit
-// funnel wrote it. Everything else is not — `default` is the factory fill, `device` is a value
+// funnel wrote it. Everything else is not — `default` is what the load supplied (the factory fill,
+// or a value it moved into what the write sends), `device` is a value
 // read off the unit, and a key NOBODY recorded is one no funnel claims. The classification is
 // total and falls toward warning, since a leaf that reached the plan unrecorded is exactly the
 // kind this cannot vouch for. A wire's params are asked the same way — a send's level and its

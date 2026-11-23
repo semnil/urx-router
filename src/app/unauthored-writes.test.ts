@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { cmdAddr, planToCommands } from "../core/control/translate";
 import { MIC_LINE_JACK_BASE } from "../core/control/params";
-import { setExclusiveConnection } from "../core/plan";
+import { emptyPlan, setExclusiveConnection } from "../core/plan";
+import { planProblems, prepareLoadedPlan } from "../core/plan-validate";
 import {
   connectionContestKey,
   connParamContestKey,
@@ -515,6 +516,24 @@ describe("a routing wire the load completed", () => {
 // document listed without it. That completion is the fill's, so the strip is named when the level
 // would move the unit — while a level the document wrote, and a wire's param nothing recorded on a
 // wire the operator drew, stay theirs.
+describe("a value the load moved into what the write sends", () => {
+  it.each<[number, boolean]>([
+    [3, true],
+    [1, false],
+  ])("names the strip for a GEQ Link the document carried as %s: %s", (link, reported) => {
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { eqType: 2, geq: { link } };
+    prepareLoadedPlan(MODEL, plan, planProblems(MODEL, plan));
+    const at = new Set(
+      planToCommands(MODEL, plan, "all")
+        .filter((c) => c.node === "bus.mix1" && c.name === "OUT_GEQ_LINK")
+        .map(cmdAddr),
+    );
+    expect(at.size, "the premise: the write carries the link").toBeGreaterThan(0);
+    expect(unauthoredWriteNodes(MODEL, plan, "all", at).includes("bus.mix1")).toBe(reported);
+  });
+});
+
 describe("a send level", () => {
   const SEND = ["ch1:out", "bus.mix1:in"] as const;
   const LEVEL = connParamContestKey(...SEND, "level");

@@ -1868,6 +1868,27 @@ describe("prepareLoadedPlan", () => {
   const u44v = getModel("URX44V");
   const load = (plan: Plan) => prepareLoadedPlan(u44v, plan, planProblems(u44v, plan));
 
+  it("records a value it moves into what the write sends as the fill's, and the document's own as the document's", () => {
+    const lpf = fxParams(1024).find((d) => d.key === "delayLpf")!;
+    const plan = emptyPlan("URX44V");
+    plan.nodeParams["bus.mix1"] = { eqType: 2, geq: { link: 3 } }; // an enum off its menu
+    plan.nodeParams["bus.mix2"] = { eqType: 2, geq: { link: 2 } }; // on its menu
+    plan.nodeParams["ch1"] = { hpfFreq: 601.25 }; // past the knob's last stop
+    plan.nodeParams["bus.fx2"] = { fxEffect: { type: 1024, params: { delayLpf: lpf.rawMin! - 1, delayHpf: 40 } } };
+    const repairs = load(plan);
+    expect(repairs.ranged.map((p) => [p.node, p.key, p.action]).sort()).toEqual([
+      ["bus.fx2", "delayLpf", "bound"],
+      ["bus.mix1", "geq.link", "bound"],
+      ["ch1", "hpfFreq", "bound"],
+    ]);
+    const source = (node: string, path: string) => plan.paramSource?.get(nodeParamContestPath(node, path));
+    expect([plan.nodeParams["bus.mix1"]!.geq!.link, source("bus.mix1", "geq.link")]).toEqual([0, "default"]);
+    expect([plan.nodeParams["ch1"]!.hpfFreq, source("ch1", "hpfFreq")]).toEqual([600, "default"]);
+    expect(source("bus.fx2", "fxEffect.params.delayLpf")).toBe("default");
+    expect(source("bus.mix2", "geq.link"), "a value the load keeps").toBe("load");
+    expect(source("bus.fx2", "fxEffect.params.delayHpf"), "a value the load keeps").toBe("load");
+  });
+
   it("converts an on/off before the HI-Z rule bounds it", () => {
     const plan = emptyPlan("URX44V");
     plan.nodeParams["in.micline_3_4"] = { hiZL: 1 as unknown as boolean, phantomL: 1 as unknown as boolean };

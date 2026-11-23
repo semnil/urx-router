@@ -441,6 +441,15 @@ export function applyParamRange(plan: Plan, problems: ParamRangeProblem[]): void
   }
 }
 
+/** Where a range problem's value sits in its node's params, as the fill walks them: `null` for the
+ *  effect object itself, which is only ever dropped. */
+function rangedLeafPath(p: ParamRangeProblem): string | null {
+  if (p.where === "node") return p.key;
+  if (p.where === "field") return `fxEffect.${p.key}`;
+  if (p.where === "params") return `fxEffect.params.${p.key}`;
+  return null;
+}
+
 /** A receiver the unit never leaves without a source (`DeviceModel.requiredSources`) that the
  *  document gives no wire. Carries the wire the loader adds: the model's own default source for
  *  that receiver, which is the unit's factory selection.
@@ -1133,6 +1142,13 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
     }
   }
   const repairs = applyLoadRepairs(model, plan, problems);
+  // A value the load moved into what the write sends is the load's, not the document's: recorded as
+  // the fill's, so the write confirm names its strip when that value would move the unit. A value
+  // removed is completed from the factory values below, and the fill records that completion.
+  for (const p of repairs.ranged) {
+    const at = rangedLeafPath(p);
+    if (p.action === "bound" && at !== null) source.set(nodeParamContestPath(p.node, at), "default");
+  }
   fillFactoryParams(model.id, plan);
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   for (const name of completeNodeNames(model, plan)) source.set(name, "default");
