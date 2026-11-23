@@ -334,11 +334,11 @@ one (a file, a `?plan=` link) is refused at load.
   that name neither one source nor a pair stay **unread** — the pair the wrong way round, two channels
   of different pairs, one half selected and the other clear: the node keeps the plan's own wires and
   carries the unread badge, and the read report names both halves. The unit's list offers none of
-  these, yet each of them, written over the control link, is accepted and held. On the unit's own
-  screen the pair the wrong way round and the two channels of different pairs leave the source field
-  **blank**, and one half selected with the other clear shows the pair the selected channel belongs to
-  (`CH 3/4` for CH 3 alone). There is no selection there for the plan to take, and the app writes none
-  of them.
+  these, yet each of them, written over the control link, is accepted and held. On a URX44V's own
+  screen, for USB MAIN C on System 1.5.0.1, CH 4 on L with CH 3 on R and CH 2 on L with CH 3 on R left
+  the source field **blank**, and CH 3 on L with R clear showed `CH 3/4`, the label CH 3 and CH 4 as a
+  pair also show; the app still reads that one as unread. There is no selection there for the plan to
+  take, and the app writes none of them.
 - **The pair's Signal Type does not reach the USB outputs.** Linking and unlinking the pair (Signal
   Type STEREO / MONO × 2, see "Fixed (non-wireable) elements") leaves a USB output's source where it
   is, and while the pair is linked the unit's list still offers each of its channels alone. So a link
@@ -346,8 +346,8 @@ one (a file, a `?plan=` link) is refused at load.
   On the canvas, drawing a channel of a linked pair puts the pair on the output
   ([architecture.md](architecture.md)).
 
-> The three items above were confirmed on a URX44V on System 1.3.1.0 and again on System 1.5.0.1, where the
-> screen of the two shapes besides the pair the wrong way round was first read.
+> The three items above were confirmed on a URX44V on System 1.3.1.0 and again on System 1.5.0.1. On 1.3.1.0
+> the screen was read for the pair the wrong way round alone; the other two shapes' screen was read on 1.5.0.1.
 
 ### 7. DAW Rec Signal Assign (fixed, no node)
 
