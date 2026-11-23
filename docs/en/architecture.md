@@ -144,7 +144,8 @@ carries a one-line map of the same directories and points here.
   off its menu to the menu's default — and a leaf the write never sends at all, a filter type on one of the
   PEQ's two fixed-peaking bands, is dropped. A bounded value is recorded as the fill's rather than the
   document's, so the write confirm names its strip when that value would move the unit, as it does for a
-  value the fill supplied. That reaches the oscillator, which is scene-external: under the
+  value the fill supplied; a linked pair's copy below carries the record along with the value, so the
+  record is the one of the value the write sends. That reaches the oscillator, which is scene-external: under the
   Scene-only device scope the write does not carry it, while the load still moves it and says so. A drop of
   the effect OBJECT is the one
   repair that changes what is sent, and in the safe direction — see "An FX channel the plan does not
@@ -775,8 +776,9 @@ carries a one-line map of the same directories and points here.
   `param-source.ts` where each of a plan's parameter values came from — the fill records `load` /
   `default` as it goes, an edit records `manual` — the engine slots an effect selection seeds with
   the type's defaults excepted, which are `default` — and a settled read or a landed write records
-  `device` for everything they reached. Transient, and never serialized: the document holds state,
-  not a record of how it was operated /
+  `device` for everything they reached. A scene-scoped document's values it did not carry take the
+  record of the plan on screen they were copied off, but for a value the load repaired. Transient,
+  and never serialized: the document holds state, not a record of how it was operated /
   `unauthored-writes.ts` which of a write's changes the operator never chose. The plan is dense — the
   loader completes a document from the model's factory values — so a write carries keys nobody set, and
   this names the strips they are on by re-emitting the plan with those keys blanked: an address that

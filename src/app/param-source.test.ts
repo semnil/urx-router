@@ -3,7 +3,13 @@ import { nodeParamContestPath } from "../core/plan-history";
 import type { Plan } from "../core/plan";
 import { filledPlan } from "./filled-plan.test-util";
 import { defaultPlan } from "../models/initial-state";
-import { markAuthored, markParamSource, noteSeededDefaults, type SeededDefault } from "./param-source";
+import {
+  inheritSceneExternalRecords,
+  markAuthored,
+  markParamSource,
+  noteSeededDefaults,
+  type SeededDefault,
+} from "./param-source";
 
 const sourcesOf = (plan: Plan, nodeId: string): Set<string> => {
   const prefix = nodeParamContestPath(nodeId, "");
@@ -75,5 +81,31 @@ describe("markAuthored", () => {
     const { plan } = selected();
     markAuthored(plan, [key(6)], new Map());
     expect(plan.paramSource!.get(key(6))).toBe("manual");
+  });
+});
+
+describe("inheritSceneExternalRecords", () => {
+  // The STREAMING delay's frame rate is outside the scene under the current boundary: a scene-scoped
+  // document does not carry it, and the load copies it off the plan on screen.
+  const FRAME_RATE = nodeParamContestPath("bus.stream", "delay.frameRate");
+  const plans = (): { next: Plan; current: Plan } => {
+    const current = filledPlan();
+    current.paramSource!.set(FRAME_RATE, "load");
+    const next = filledPlan();
+    next.paramSource!.set(FRAME_RATE, "default");
+    expect(next.nodeParams["bus.stream"]?.delay?.frameRate, "the premise: the plan carries a frame rate").toBeDefined();
+    return { next, current };
+  };
+
+  it("gives a value the document did not carry the record of the plan it was copied off", () => {
+    const { next, current } = plans();
+    inheritSceneExternalRecords(next, current, 2, []);
+    expect(next.paramSource!.get(FRAME_RATE)).toBe("load");
+  });
+
+  it("keeps the record the load gave a value it repaired", () => {
+    const { next, current } = plans();
+    inheritSceneExternalRecords(next, current, 2, [FRAME_RATE]);
+    expect(next.paramSource!.get(FRAME_RATE)).toBe("default");
   });
 });

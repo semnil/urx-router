@@ -35,6 +35,7 @@ import {
   nodeColorContestKey,
   nodeNameContestKey,
   nodeParamContestPath,
+  walkParamLeaves,
 } from "./plan-history";
 import type { ConnParams, NodeParams, Plan, PlanConnection } from "./plan";
 import {
@@ -450,6 +451,16 @@ function rangedLeafPath(p: ParamRangeProblem): string | null {
   return null;
 }
 
+/** The contest names of the values a range repair moved (`bound`), removed (`drop`), or either. */
+export function rangedContestNames(problems: ParamRangeProblem[], action?: "bound" | "drop"): string[] {
+  const names: string[] = [];
+  for (const p of problems) {
+    const at = rangedLeafPath(p);
+    if (at !== null && (action === undefined || p.action === action)) names.push(nodeParamContestPath(p.node, at));
+  }
+  return names;
+}
+
 /** A receiver the unit never leaves without a source (`DeviceModel.requiredSources`) that the
  *  document gives no wire. Carries the wire the loader adds: the model's own default source for
  *  that receiver, which is the unit's factory selection.
@@ -626,6 +637,24 @@ export function applyLinkedPairs(model: DeviceModel, plan: Plan, problems: Linke
     const next: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) if (!pairCopies(k)) next[k] = v;
     for (const [k, v] of Object.entries(src)) if (pairCopies(k)) next[k] = structuredClone(v);
+    // A copied value takes the primary's record of where it came from, and a secondary value the
+    // copy replaces or removes loses its own: the record follows the value the write sends.
+    if (source) {
+      for (const [k, v] of Object.entries(plan.nodeParams[b] ?? {})) {
+        if (pairCopies(k)) walkParamLeaves(v, (path) => source.delete(nodeParamContestPath(b, path)), [k]);
+      }
+      for (const [k, v] of Object.entries(src)) {
+        if (!pairCopies(k)) continue;
+        walkParamLeaves(
+          v,
+          (path) => {
+            const from = source.get(nodeParamContestPath(a, path));
+            if (from !== undefined) source.set(nodeParamContestPath(b, path), from);
+          },
+          [k],
+        );
+      }
+    }
     plan.nodeParams[b] = next as NodeParams;
     const sendKeys = pairSendKeys(isBalLinkedPair(model, plan, a));
     for (const [ra, rb] of pairSends(model, a, b)) {
@@ -1052,6 +1081,12 @@ export function applyLoadRepairs(model: DeviceModel, plan: Plan, problems: LoadP
   applyBooleanParams(plan, booleans);
   const ranged = problems.filter((p) => p.reason === "paramRange");
   applyParamRange(plan, ranged);
+  // A value the load moved into what the write sends is the load's, not the document's: recorded
+  // as the fill's, so the write confirm names its strip when that value would move the unit. Done
+  // here, before the linked-pair copy, which carries a record along with the value it copies. A
+  // value removed is completed from the factory values afterwards, and that completion records it.
+  const source = (plan.paramSource ??= new Map());
+  for (const name of rangedContestNames(ranged, "bound")) source.set(name, "default");
   const supplied = problems.filter((p) => p.reason === "requiredSource");
   applyRequiredSources(model, plan, supplied);
   const sendLevels = problems.filter((p) => p.reason === "sendLevel");
@@ -1142,13 +1177,6 @@ export function prepareLoadedPlan(model: DeviceModel, plan: Plan, problems: Load
     }
   }
   const repairs = applyLoadRepairs(model, plan, problems);
-  // A value the load moved into what the write sends is the load's, not the document's: recorded as
-  // the fill's, so the write confirm names its strip when that value would move the unit. A value
-  // removed is completed from the factory values below, and the fill records that completion.
-  for (const p of repairs.ranged) {
-    const at = rangedLeafPath(p);
-    if (p.action === "bound" && at !== null) source.set(nodeParamContestPath(p.node, at), "default");
-  }
   fillFactoryParams(model.id, plan);
   for (const name of completeInsertFxParams(model, plan)) source.set(name, "default");
   for (const name of completeNodeNames(model, plan)) source.set(name, "default");

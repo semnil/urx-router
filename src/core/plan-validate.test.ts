@@ -1299,6 +1299,19 @@ describe("linkedPairProblems", () => {
     ...(params ? { params } : {}),
   });
 
+  // The record follows the value the write sends: a range repair records its value as the fill's,
+  // and the copy then hands the primary's record to the secondary along with the value.
+  it.each<[string, number, number, number, "default" | "load"]>([
+    ["the primary bounded, the secondary copied from it", 39, 100, 40, "default"],
+    ["the secondary bounded, then replaced by the primary's own", 100, 39, 100, "load"],
+    ["the secondary bounded onto what the copy then writes", 40, 39, 40, "load"],
+  ])("records a linked secondary's copied value as the primary's: %s", (_, ch1, ch2, sent, record) => {
+    const plan = doc({ ch1: { stereoLink: true, panBal: PAN_BAL_PAN, hpfFreq: ch1 }, ch2: { hpfFreq: ch2 } });
+    load(plan);
+    expect([plan.nodeParams.ch1?.hpfFreq, plan.nodeParams.ch2?.hpfFreq]).toEqual([sent, sent]);
+    expect(plan.paramSource?.get(nodeParamContestPath("ch2", "hpfFreq"))).toBe(record);
+  });
+
   it("copies the primary's shared values onto a secondary that disagrees, and says which", () => {
     const plan = doc({
       ch1: { stereoLink: true, panBal: PAN_BAL_PAN, gate: { threshold: -50 }, hpfFreq: 100, gain: 20 },
