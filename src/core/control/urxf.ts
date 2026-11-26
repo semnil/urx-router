@@ -95,6 +95,13 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
   while (at < bytes.length) {
     const rec = readRecordHeader(view, bytes, at);
     if (rec.tag === END_TAG) {
+      // The terminator is the record header alone, and the file ends with it.
+      if (rec.extraLen !== 0 || rec.dataLen !== 0 || at + RECORD_HEADER !== bytes.length) {
+        throw new UrxfError(
+          "truncated",
+          `#END at ${at} declares ${rec.extraLen}+${rec.dataLen} bytes, file ends at ${bytes.length}`,
+        );
+      }
       ended = true;
       break;
     }

@@ -410,7 +410,8 @@ carries a one-line map of the same directories and points here.
       dedicated tables and enums for SP Type/Amp Type/Scale etc.)
     - `urxf.ts` reader for the unit's microSD settings file (`.urxf`, written by SETUP > SAVE) — two-level
       endianness (BE record/descriptor headers, LE block headers and values), a frameless D block walked
-      only by its own F table, and an x axis stored flattened onto consecutive ids. It exposes a chunk as a
+      only by its own F table, and an x axis stored flattened onto consecutive ids. The `#END` record carries
+      no extra block or body and ends the file; a file that breaks this is refused. It exposes a chunk as a
       `ParamSource`, so `readback.ts` runs its existing device→plan inverse against a file
       (`applySourceState`) instead of a second inverse — the source travels as a parameter, so a file import
       and a device follow reconcile cannot cross. During Live sync an import is an edit the session writes to the unit. **Read-only**

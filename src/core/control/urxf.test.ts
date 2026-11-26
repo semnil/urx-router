@@ -180,6 +180,35 @@ describe("parseUrxf", () => {
     new DataView(swallowed.buffer).setUint32(sceneAt + 28, bytes.length - sceneAt - CHUNK_HEADER, false);
     expect(() => parseUrxf(swallowed)).toThrow(expect.objectContaining({ code: "truncated" }));
   });
+
+  // The terminator is the record header alone, and it is the file's last record. One that
+  // declares an extra block or a body, or that bytes follow, is not the end of a whole file.
+  it("takes #END only when it is empty and ends the file", () => {
+    const bytes = sample();
+    const end = bytes.length - 36;
+    const declaring = (offset: number): Uint8Array => {
+      const out = new Uint8Array(bytes.length + 4);
+      out.set(bytes);
+      new DataView(out.buffer).setUint32(end + offset, 4, false);
+      return out;
+    };
+    const followedBy = (tail: Uint8Array): Uint8Array => {
+      const out = new Uint8Array(bytes.length + tail.length);
+      out.set(bytes);
+      out.set(tail, bytes.length);
+      return out;
+    };
+    expect(() => parseUrxf(bytes)).not.toThrow();
+    for (const [label, file] of [
+      ["an extra block", declaring(24)],
+      ["a body", declaring(28)],
+      ["zero bytes after it", followedBy(new Uint8Array(4))],
+      ["a second #END", followedBy(bytes.subarray(end))],
+      ["a second file", followedBy(bytes)],
+    ] as const) {
+      expect(() => parseUrxf(file), label).toThrow(expect.objectContaining({ code: "truncated" }));
+    }
+  });
 });
 
 // The builder's own guards. Each is a mistake the FILE takes without complaint — the
