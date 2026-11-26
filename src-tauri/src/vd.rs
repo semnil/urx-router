@@ -1407,8 +1407,8 @@ mod imp {
     /// from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
     ///
     /// It bounds no command's patience: every reply loop carries its own 3 s wall-clock
-    /// deadline and treats a read timeout as "keep waiting" (`do_set`, `do_get_value`,
-    /// `do_get_str`). `drain_late_reply` is the one reader that used this as its own
+    /// deadline, treats a read timeout as "keep waiting" and takes no frame completed
+    /// after the deadline (`do_set`, `do_get_value`, `vd_get_data`). `drain_late_reply` is the one reader that used this as its own
     /// give-up point, and it now carries an explicit floor instead — see there.
     const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
@@ -1453,6 +1453,10 @@ mod imp {
                 if let Some(err) = synchronize_lost(&msg) {
                     return Err(err);
                 }
+            }
+            // A frame completed after the deadline is not the answer, as in do_set.
+            if Instant::now() >= deadline {
+                break;
             }
             // This loop is separate from reply_for's: it runs before a session
             // exists, so there is nothing to absorb into. The verb is matched for
@@ -1569,10 +1573,18 @@ mod imp {
         link.send_vdp(json!({ "method": verb, "uri": uri, "data": { "current_value": value } }))?;
         // Await the matching response, skipping unrelated notifications.
         let deadline = Instant::now() + Duration::from_secs(3);
+        let mut late = None;
         while Instant::now() < deadline {
             let Some(msg) = link.read_frame()? else {
                 continue;
             };
+            // A frame completed after the deadline is not the answer, even the reply
+            // itself: the read that finishes it can end one READ_TIMEOUT past the
+            // deadline, and the late drain is the reader for what comes after it.
+            if Instant::now() >= deadline {
+                late = Some(msg);
+                break;
+            }
             // A device-lost push can land mid-write (the broker still ACKs the
             // write itself); fail the command so the session tears down.
             if let Some(err) = synchronize_lost(&msg) {
@@ -1585,8 +1597,10 @@ mod imp {
             };
             return write_verdict(&vdp, param_id, x, y);
         }
-        Err(drain_late_reply(link, subs, &base, verb, Some(operation))
-            .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")))
+        Err(
+            drain_late_reply(link, subs, late, &base, verb, Some(operation))
+                .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")),
+        )
     }
 
     /// A command that timed out may still have its reply in flight. The vd protocol
@@ -1600,9 +1614,13 @@ mod imp {
     /// A device-lost push met here ends the drain and comes back as the command's
     /// error, in place of its deadline: this reader consumes frames like the reply
     /// loops do, and the push arrives once.
+    ///
+    /// `late` is the frame the command's wait read past its deadline, if any; the
+    /// drain takes it as its first.
     fn drain_late_reply(
         link: &mut Link,
         subs: &mut Subs,
+        late: Option<Value>,
         base: &str,
         method: &str,
         operation: Option<&str>,
@@ -1625,8 +1643,13 @@ mod imp {
         // completed for that long, so where a line is split does not move the end.
         let mut progress = Instant::now();
         let mut frames = 0;
+        let mut late = late;
         while frames < DRAIN_FRAMES {
-            match link.read_frame() {
+            let read = match late.take() {
+                Some(msg) => Ok(Some(msg)),
+                None => link.read_frame(),
+            };
+            match read {
                 Ok(Some(msg)) => {
                     frames += 1;
                     progress = Instant::now();
@@ -1726,10 +1749,16 @@ mod imp {
         let verb = "get";
         link.send_vdp(json!({ "method": verb, "uri": base }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
+        let mut late = None;
         while Instant::now() < deadline {
             let Some(msg) = link.read_frame()? else {
                 continue;
             };
+            // A frame completed after the deadline is not the answer (see do_set).
+            if Instant::now() >= deadline {
+                late = Some(msg);
+                break;
+            }
             // A device-lost push can land mid-read; fail the command so the caller
             // (readback / converge / live) surfaces the drop instead of timing out.
             if let Some(err) = synchronize_lost(&msg) {
@@ -1744,7 +1773,7 @@ mod imp {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        Err(drain_late_reply(link, subs, &base, verb, None)
+        Err(drain_late_reply(link, subs, late, &base, verb, None)
             .unwrap_or_else(|| format!("broker-timeout: value at {param_id}:{x}:{y}")))
     }
 
@@ -2939,7 +2968,7 @@ mod imp {
             let (mut link, mut peer) = vdp_link();
             send(&mut peer, synchronize("offline"));
 
-            let err = drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None)
+            let err = drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None)
                 .expect("the push is what the drain reports");
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
         }
@@ -2955,11 +2984,11 @@ mod imp {
                 json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                 None
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                 None,
                 "a quiet link ends the drain at its floor"
             );
@@ -2986,6 +3015,85 @@ mod imp {
             assert!(err.starts_with("broker-rejected:"), "{err}");
         }
 
+        /// The broker's end, on its own thread: each of `before` answers one request at
+        /// once, and `reply` answers the request after them across that request's 3 s
+        /// deadline — the first half of its line 20 ms before the deadline, the rest 20 ms
+        /// after, so the one read that finishes the line begins in time and ends late.
+        fn across_the_deadline(
+            peer: TcpStream,
+            before: Vec<Value>,
+            reply: Value,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            std::thread::spawn(move || {
+                let mut peer = peer;
+                let mut requests = BufReader::new(peer.try_clone().unwrap());
+                let mut request = String::new();
+                for frame in before {
+                    requests.read_line(&mut request).unwrap();
+                    send(&mut peer, frame);
+                }
+                requests.read_line(&mut request).unwrap();
+                let asked = Instant::now();
+                let line = format!("{}\n", json!({ "vdp": reply }));
+                let (head, tail) = line.split_at(line.len() / 2);
+                std::thread::sleep(Duration::from_millis(2_980).saturating_sub(asked.elapsed()));
+                peer.write_all(head.as_bytes()).unwrap();
+                std::thread::sleep(Duration::from_millis(3_020).saturating_sub(asked.elapsed()));
+                peer.write_all(tail.as_bytes()).unwrap();
+                peer
+            })
+        }
+
+        // A reply whose line is finished after the read's deadline is not its answer,
+        // though the read that finished it began in time: the read fails at its deadline,
+        // and the late drain takes the reply, so the next read on the address gets its own.
+        #[test]
+        fn a_read_takes_no_reply_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
+            let peer = across_the_deadline(peer, vec![], reply(3));
+            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            let mut peer = peer.join().unwrap();
+            send(&mut peer, reply(7));
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(7))
+            );
+        }
+
+        // The frame the wait read past its deadline goes to the late drain, not away: the
+        // unit lost, pushed across a read's deadline, is still the read's error.
+        #[test]
+        fn a_unit_lost_across_a_reads_deadline_is_its_error() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![], synchronize("lost"));
+            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+            drop(peer.join());
+        }
+
+        // …and a write's: an acknowledgement finished after the deadline is not its
+        // verdict, and the next write on the address takes its own (a refusal here).
+        #[test]
+        fn a_write_takes_no_verdict_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let reply = |code: i64| {
+                json!({
+                    "method": "post",
+                    "uri": format!("{ADDR}?operation=value"),
+                    "data": { "response_code": code }
+                })
+            };
+            let peer = across_the_deadline(peer, vec![], reply(200));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            let mut peer = peer.join().unwrap();
+            send(&mut peer, reply(400));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
         // The late drain consumes the straggler of the write that gave up, and only that
         // one: a registration's reply is not it, and taking it for one would leave the
         // straggler on the socket for the next write on the address to take as its own.
@@ -3002,7 +3110,14 @@ mod imp {
             send(&mut peer, post("regist", 200));
             send(&mut peer, post("value", 200));
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "post", Some("value")),
+                drain_late_reply(
+                    &mut link,
+                    &mut Subs::new(),
+                    None,
+                    ADDR,
+                    "post",
+                    Some("value")
+                ),
                 None
             );
             send(&mut peer, post("value", 400));
@@ -3067,7 +3182,7 @@ mod imp {
             lines.push(json!({ "method": "get", "uri": ADDR, "data": { "current_value": 11 } }));
             let writer = send_split(peer, lines);
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                 None
             );
             let mut peer = writer.join().unwrap();
@@ -3114,7 +3229,7 @@ mod imp {
                     peer
                 });
                 assert_eq!(
-                    drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                    drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                     None
                 );
                 let mut peer = writer.join().unwrap();
@@ -3345,6 +3460,29 @@ mod imp {
             ])
             .unwrap_err();
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // The handshake's reads take no reply finished after their deadline either: a
+        // status finished late is the status read's timeout, not an `online`…
+        #[test]
+        fn the_handshake_takes_no_reply_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![], status_reply("online"));
+            let err = handshake(&mut link).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            drop(peer.join());
+        }
+
+        // …while the unit lost, pushed across the firmware read's deadline, still fails
+        // the handshake with it, as the late drain hands such a push back after a
+        // session's command.
+        #[test]
+        fn a_unit_lost_across_the_firmware_reads_deadline_fails_the_handshake() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![status_reply("online")], synchronize("lost"));
+            let err = handshake(&mut link).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+            drop(peer.join());
         }
 
         // …while an `online` push there, a push before the status reply, a status reply
