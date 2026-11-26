@@ -1,6 +1,6 @@
 // Pins which Dependabot pull requests .github/workflows/dependabot-auto-merge.yml lets merge on
 // their own: every updated dependency a semver patch or a semver minor update, a minor update
-// of a cargo crate below 1.0 excepted, or a git submodule, in a pull request that is one commit, the head, which
+// of a cargo crate below 1.0 excepted, or a git submodule other than vendor/urx-device, in a pull request that is one commit, the head, which
 // dependabot[bot] wrote, GitHub (web-flow) committed and GitHub verified the signature of.
 //
 // It RUNS the workflow's own `run:` block rather than reading it, against a stub `gh` that
@@ -99,6 +99,9 @@ const LCD_SIM_COMMIT = dependency(
   "",
   "2612f186cf4796f93afa8e12719d958b1a3efc91",
 );
+// The shared library's submodule, which moves only to a published release in a pull request a
+// person opens: never merged on its own, even arriving as a Dependabot submodule update.
+const URX_DEVICE_COMMIT = dependency("vendor/urx-device", "submodules", null, "", LCD_SIM_COMMIT.newVersion);
 
 // `failures` names how many calls of a kind fail before one succeeds: `commits` the commit
 // list, `view` the read of the head and of auto-merge, `enable` and `disable` the two writes.
@@ -229,6 +232,8 @@ describe.skipIf(!toolsAvailable)("the decision", () => {
       [{ ...LCD_SIM_COMMIT, packageEcosystem: "npm_and_yarn" }],
     ],
     ["a submodule update beside a major update", [LCD_SIM_COMMIT, JSDOM_MAJOR]],
+    ["an update of the urx-device submodule", [URX_DEVICE_COMMIT]],
+    ["an update of the urx-device submodule beside a qualifying one", [LCD_SIM_COMMIT, URX_DEVICE_COMMIT]],
     // fetch-metadata's `update-type` reads patch here: a dependency with no type is not counted.
     ["a patch update beside one with no version", [JSDOM_PATCH, TOOLCHAIN_SHA]],
     // fetch-metadata's `previous-version` reads 2.13.3 here: it is the first dependency's.

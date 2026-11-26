@@ -47,12 +47,16 @@ updates:
 
   # vendor/urx-lcd-sim, moved to the newest commit of urx-lcd-sim's default branch. The entry
   # is excluded from Dependabot's default cooldown, so a commit is offered on the next daily run.
+  # vendor/urx-device is not offered at all: it moves only to a published urx-device release,
+  # in an adoption pull request of its own, never to the newest commit of a branch.
   - package-ecosystem: gitsubmodule
     directory: /
     schedule:
       interval: cron
       cronjob: "0 0 * * *"
       timezone: "Asia/Tokyo"
+    ignore:
+      - dependency-name: "vendor/urx-device"
     cooldown:
       exclude:
         - "*"
