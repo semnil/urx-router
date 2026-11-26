@@ -359,10 +359,19 @@ describe("a file's sample rate", () => {
             label: "",
             fields: [
               ...CURRENT_FIELDS,
-              ...(rate === null ? [] : [{ id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] }]),
+              ...(rate === null
+                ? []
+                : [{ id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] } satisfies Field]),
               ...(tracks === undefined
                 ? []
-                : [{ id: PARAMS.SD_REC_TRACK_COUNT.id, typecode: 1, elemSize: 1, values: [tracks / 2] }]),
+                : [
+                    {
+                      id: PARAMS.SD_REC_TRACK_COUNT.id,
+                      typecode: 1,
+                      elemSize: 1,
+                      values: [tracks / 2],
+                    } satisfies Field,
+                  ]),
             ],
           },
         ]),
