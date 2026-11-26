@@ -2421,7 +2421,8 @@ start of fetch / write / live sync when it differs, letting the user continue or
 **three-valued** `Option<String>`, and the three values do not collapse: a version arms or disarms the warning
 by comparison, `Some("")` means the unit answered with a list read in full that holds no System entry and legitimately
 disables the gate, and `None` means the version could not be read — the read did not land, a row of the list
-has no readable name or the System row no readable version, or two System rows disagree — so it is unknown
+has no readable name or a System row no readable version (an empty name or version included), or two System
+rows disagree — so it is unknown
 rather than absent, and the operation stops instead of proceeding with the gate silently off
 ([Aborting on failure](#aborting-on-failure)). A device-lost push that arrives while the handshake waits for
 `/vd/device` fails the connect as `device-lost`: Device Center answers that read from its cache once the unit

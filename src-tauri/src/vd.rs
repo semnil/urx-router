@@ -1502,7 +1502,7 @@ mod imp {
     /// The System version in a /vd/device answer, its entries matched by name without
     /// case, or None when it cannot be read: no firm_list array, an entry without a
     /// non-empty string firm_name (it could be the System entry), a System entry
-    /// without a string firm_version, or System entries that disagree. Entry order
+    /// without a non-empty string firm_version, or System entries that disagree. Entry order
     /// does not change the result, and no System entry is `Some("")`.
     fn firmware_of(data: &Value) -> Option<String> {
         let list = data.pointer("/firm_list").and_then(Value::as_array)?;
@@ -1515,7 +1515,10 @@ mod imp {
             if !name.eq_ignore_ascii_case("system") {
                 continue;
             }
-            let this = entry.get("firm_version").and_then(Value::as_str)?;
+            let this = entry
+                .get("firm_version")
+                .and_then(Value::as_str)
+                .filter(|version| !version.is_empty())?;
             if version.is_some_and(|seen| seen != this) {
                 return None;
             }
@@ -3361,7 +3364,15 @@ mod imp {
                     json!([{ "firm_name": "MCU Main", "firm_version": "1.0" }]),
                     Some(""),
                 ),
-                ("an empty System version", system(""), Some("")),
+                ("an empty System version", system(""), None),
+                (
+                    "an empty System version beside a readable one",
+                    json!([
+                        { "firm_name": "System", "firm_version": "" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
                 (
                     "a System row with a number for its version",
                     json!([{ "firm_name": "System", "firm_version": 150 }]),
