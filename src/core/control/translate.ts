@@ -1123,8 +1123,7 @@ const COMP_FIELDS: EmittedDynField[] = [
     steps: DYN_RELEASE_STOPS_MS,
   },
 ];
-// Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
-// hold; decay shares the ×10 release scale with a wider range. Ordered as the
+
 /**
  * One band of the 4-band PEQ, in the order the unit's own screen reads it (Q, Freq, Gain).
  * The set depends on the filter type only in which of them the device reads — a pass filter
@@ -1249,6 +1248,86 @@ export function ssmcsEqBandFields(band: SsmcsEqBandName): DynField[] {
   ];
 }
 
+/**
+ * One of the SSMCS compressor's two internal settings, Threshold and Makeup: values the unit
+ * holds and a write sets, which no screen of the unit shows and no row of this app edits. The
+ * Morphing position and the Sweet Spot Data preset recompute both (`SSMCS_STRIP_DRIVEN` in
+ * params.ts), and nothing else in the app moves them.
+ *
+ * Not being on a screen is a fact about the surfaces, not about the setting. So the setting is
+ * defined here, apart from the slider tables above, and every path that touches it builds on
+ * this definition: the readback (and through it the `.urxf` import), the reads that compare the
+ * unit with a plan or keep its value for a restore, the write, and the bound the load applies to a
+ * document.
+ */
+export interface SsmcsInternalSetting {
+  /** The key under the plan's `ssmcs.comp`. */
+  key: "threshold" | "makeup";
+  /** The catalog row, which holds the address and its encoding. */
+  name: "SSMCS_COMP_THRESHOLD" | "SSMCS_COMP_MAKEUP";
+  /** The value set: every integer from `min` to `max`. The integer is the unit's own; it
+   *  is not a level in dB, and no curve turns it into one here. */
+  min: number;
+  max: number;
+}
+
+/** Threshold, then Makeup: the order the readback reads them in and the write sends them in. */
+export const SSMCS_INTERNAL_SETTINGS: readonly SsmcsInternalSetting[] = [
+  { key: "threshold", name: "SSMCS_COMP_THRESHOLD", min: SSMCS_COMP_INTERNAL_MIN, max: SSMCS_COMP_INTERNAL_MAX },
+  { key: "makeup", name: "SSMCS_COMP_MAKEUP", min: SSMCS_COMP_INTERNAL_MIN, max: SSMCS_COMP_INTERNAL_MAX },
+];
+
+/** Whether `v` is in the setting's value set. A fraction, a value outside the range and
+ *  anything that is not a number are not. */
+export function ssmcsInternalAdmits(setting: SsmcsInternalSetting, v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= setting.min && v <= setting.max;
+}
+
+/**
+ * Why a reading of `name`'s address is refused: where an internal setting is at that address and
+ * the reading is outside its value set, the reason; null for any other reading or address. Every
+ * read of the address answers to this — the read into the plan (`readSsmcsInternal` in
+ * readback.ts) and the reads that compare the unit with a plan or keep its value for a restore
+ * (`readAddressOf` in client.ts) — so no path takes such a value as what the unit holds.
+ */
+export function ssmcsInternalReadRefusal(name: ParamName, value: unknown): string | null {
+  const setting = SSMCS_INTERNAL_SETTINGS.find((s) => s.name === name);
+  if (!setting || ssmcsInternalAdmits(setting, value)) return null;
+  return `read ${String(value)}, not an integer from ${setting.min} to ${setting.max}`;
+}
+
+/** The channel an internal setting addresses: a MONO IN channel the model has, by its input
+ *  index. Null for any other node, which has no SSMCS bank to address. */
+export function ssmcsInternalTarget(model: DeviceModel, nodeId: string): number | null {
+  if (!model.nodes.some((n) => n.id === nodeId)) return null;
+  const cc = channelControl(model, nodeId);
+  return cc?.hasMicStrip ? cc.y : null;
+}
+
+/**
+ * The one write a requested value makes: the setting's address on the channel, once. A target
+ * that is not a MONO IN channel and a value outside the set are refused rather than moved onto
+ * something the setting has. Bringing a value the plan holds into the set is the plan's rule,
+ * not this one's (`pushSsmcsCommands` bounds it the way the load does).
+ */
+export function ssmcsInternalCommand(
+  model: DeviceModel,
+  nodeId: string,
+  setting: SsmcsInternalSetting,
+  value: unknown,
+): VdCommand {
+  const y = ssmcsInternalTarget(model, nodeId);
+  if (y === null) throw new RangeError(`${setting.name}: ${nodeId} is not a MONO IN channel of the ${model.id}`);
+  if (!ssmcsInternalAdmits(setting, value))
+    throw new RangeError(`${setting.name}: ${String(value)} is not an integer from ${setting.min} to ${setting.max}`);
+  return command(setting.name, y, value);
+}
+
+/** The bound the plan holds an internal setting to — the load's and the write's. */
+export const ssmcsInternalRule = (setting: SsmcsInternalSetting): BoundRule => rawRule(setting.min, setting.max);
+
+// Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
+// hold; decay shares the ×10 release scale with a wider range. Ordered as the
 // device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
 // Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: EmittedDynField[] = [
@@ -1537,8 +1616,7 @@ export function nodeLeafRules(model: DeviceModel, nodeId: string, np: NodeParams
       const group = isSsmcsScKey(f.key) ? "sc" : "comp";
       out.push([`ssmcs.${group}.${ssmcsPlanKey(f.key)}`, rawRule(f.min, f.max)]);
     }
-    out.push(["ssmcs.comp.threshold", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
-    out.push(["ssmcs.comp.makeup", rawRule(SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)]);
+    for (const s of SSMCS_INTERNAL_SETTINGS) out.push([`ssmcs.comp.${s.key}`, ssmcsInternalRule(s)]);
     for (const band of SSMCS_EQ_BAND_NAMES) {
       for (const f of ssmcsEqBandFields(band)) {
         if (f.key === "q" && !ssmcsEqBandHasQ(band)) continue;
@@ -1722,7 +1800,13 @@ function pushInsertFxEffectCommands(
   }
 }
 
-function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefined): void {
+function pushSsmcsCommands(
+  out: VdCommand[],
+  model: DeviceModel,
+  nodeId: string,
+  y: number,
+  s: SsmcsParams | undefined,
+): void {
   if (!s) return;
   // Every continuous value is a passthrough "raw" (or the knee "enum"), so it
   // carries the same firewall as the FX / DynFields paths: a hand-edited / ?plan=
@@ -1743,12 +1827,12 @@ function pushSsmcsCommands(out: VdCommand[], y: number, s: SsmcsParams | undefin
       out.push(command("SSMCS_COMP_RATIO", y, boundRaw(c.ratio, SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX)));
     if (c.knee !== undefined)
       out.push(command("SSMCS_COMP_KNEE", y, boundEnum(c.knee, COMP_KNEE_OPTIONS, COMP_KNEE_DEFAULT)));
-    if (isRaw(c.threshold))
-      out.push(
-        command("SSMCS_COMP_THRESHOLD", y, boundRaw(c.threshold, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)),
-      );
-    if (isRaw(c.makeup))
-      out.push(command("SSMCS_COMP_MAKEUP", y, boundRaw(c.makeup, SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX)));
+    // The two internal settings through their own write, with the value bounded the way the
+    // load bounds it — which is what the plan's rule is, and what the write then admits.
+    for (const setting of SSMCS_INTERNAL_SETTINGS) {
+      const v = c[setting.key];
+      if (isRaw(v)) out.push(ssmcsInternalCommand(model, nodeId, setting, admitLeaf(ssmcsInternalRule(setting), v)));
+    }
   }
   const sc = s.sc;
   if (sc) {
@@ -2572,7 +2656,7 @@ function buildCommands(model: DeviceModel, plan: Plan, emit: EmitOptions = {}): 
       // rides the string-write path (collectSsmcsPresetWrites), not this numeric
       // catalog. All values here raw.
       if (!dyn.comp && cc.hasMicStrip && (np.compEqType ?? COMP_EQ_COMP_FIRST) === COMP_EQ_SSMCS) {
-        pushSsmcsCommands(out, dyn.y, np.ssmcs);
+        pushSsmcsCommands(out, model, node.id, dyn.y, np.ssmcs);
       }
     }
     own(node.id);

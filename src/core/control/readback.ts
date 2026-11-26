@@ -16,6 +16,7 @@ import type {
   Plan,
   PlanConnection,
   SsmcsBand,
+  SsmcsCompParams,
   SsmcsParams,
 } from "../plan";
 import {
@@ -72,7 +73,6 @@ import {
 import { alignLinkedSendPans, monoPairOf, pairPrimary, requiresSource, ruleKind, sendPansToSources } from "../routing";
 import { isSceneExternalConnection } from "../scene-scope";
 import { GEQ_BAND_COUNT } from "../geq";
-import type { EmittedDynField, EqControl, EqOneKnobControl, GeqControl } from "./translate";
 import {
   addrKey,
   cmdAddr,
@@ -106,8 +106,12 @@ import {
   recordSlots,
   ROUTING_SELECTORS,
   sendControl,
+  SSMCS_INTERNAL_SETTINGS,
+  ssmcsInternalReadRefusal,
+  ssmcsInternalTarget,
   stereoIndexMap,
 } from "./translate";
+import type { EmittedDynField, EqControl, EqOneKnobControl, GeqControl, SsmcsInternalSetting } from "./translate";
 import type { ParamEncoding } from "./params";
 import {
   strToSweetSpotData,
@@ -842,7 +846,7 @@ async function readPass(
           // Comp/EQ section ON were read above via channelSections (compOn/eqOn).
           // Sweet Spot Data is a string param (91), read via the string IPC.
           const sweetSpotData = strToSweetSpotData((await vdGetStr(PARAMS.SWEET_SPOT_DATA.id, 0, dyn.y)).trim());
-          update.ssmcs = { ...(await readSsmcs(source, dyn.y)), sweetSpotData };
+          update.ssmcs = { ...(await readSsmcs(source, model, node.id, dyn.y)), sweetSpotData };
         }
       }
       // → STEREO bus assign ON (post-fader, V1.3) onto the main path connection's on.
@@ -2259,23 +2263,48 @@ async function readInsertFxInto(
   };
 }
 
+/**
+ * The one read of an SSMCS internal setting (`SsmcsInternalSetting` in translate.ts): its address
+ * on the channel, once. A reading outside the setting's value set fails the read instead of
+ * reaching the plan, which is the same answer the write gives that value. A `.urxf` import
+ * reads it through this same call, from the file.
+ */
+async function readSsmcsInternal(
+  source: ParamSource,
+  model: DeviceModel,
+  nodeId: string,
+  setting: SsmcsInternalSetting,
+): Promise<number> {
+  const y = ssmcsInternalTarget(model, nodeId);
+  if (y === null) throw new RangeError(`${setting.name}: ${nodeId} is not a MONO IN channel of the ${model.id}`);
+  const v = await source.get(PARAMS[setting.name].id, 0, y);
+  const refusal = ssmcsInternalReadRefusal(setting.name, v);
+  if (refusal !== null) throw new RangeError(`${setting.name}: ${refusal}`);
+  return v;
+}
+
 // Read the SSMCS morphing-strip raw values for a MONO IN channel (mirrors
 // pushSsmcsCommands). Sweet Spot Data (string param 91) is plan/UI-only.
-async function readSsmcs(source: ParamSource, y: number): Promise<SsmcsParams> {
+async function readSsmcs(source: ParamSource, model: DeviceModel, nodeId: string, y: number): Promise<SsmcsParams> {
   const { vdGet } = readers(source);
+  const on = vdToBool(await vdGet(PARAMS.SSMCS_ON.id, 0, y));
+  const compDrive = await vdGet(PARAMS.SSMCS_COMP_DRIVE.id, 0, y);
+  const morphing = await vdGet(PARAMS.SSMCS_MORPHING.id, 0, y);
+  const outGain = await vdGet(PARAMS.SSMCS_OUT_GAIN.id, 0, y);
+  const comp: SsmcsCompParams = {
+    attack: await vdGet(PARAMS.SSMCS_COMP_ATTACK.id, 0, y),
+    release: await vdGet(PARAMS.SSMCS_COMP_RELEASE.id, 0, y),
+    ratio: await vdGet(PARAMS.SSMCS_COMP_RATIO.id, 0, y),
+    knee: await vdGet(PARAMS.SSMCS_COMP_KNEE.id, 0, y),
+  };
+  for (const setting of SSMCS_INTERNAL_SETTINGS)
+    comp[setting.key] = await readSsmcsInternal(source, model, nodeId, setting);
   return {
-    on: vdToBool(await vdGet(PARAMS.SSMCS_ON.id, 0, y)),
-    compDrive: await vdGet(PARAMS.SSMCS_COMP_DRIVE.id, 0, y),
-    morphing: await vdGet(PARAMS.SSMCS_MORPHING.id, 0, y),
-    outGain: await vdGet(PARAMS.SSMCS_OUT_GAIN.id, 0, y),
-    comp: {
-      attack: await vdGet(PARAMS.SSMCS_COMP_ATTACK.id, 0, y),
-      release: await vdGet(PARAMS.SSMCS_COMP_RELEASE.id, 0, y),
-      ratio: await vdGet(PARAMS.SSMCS_COMP_RATIO.id, 0, y),
-      knee: await vdGet(PARAMS.SSMCS_COMP_KNEE.id, 0, y),
-      threshold: await vdGet(PARAMS.SSMCS_COMP_THRESHOLD.id, 0, y),
-      makeup: await vdGet(PARAMS.SSMCS_COMP_MAKEUP.id, 0, y),
-    },
+    on,
+    compDrive,
+    morphing,
+    outGain,
+    comp,
     sc: {
       on: vdToBool(await vdGet(PARAMS.SSMCS_SC_ON.id, 0, y)),
       q: await vdGet(PARAMS.SSMCS_SC_Q.id, 0, y),

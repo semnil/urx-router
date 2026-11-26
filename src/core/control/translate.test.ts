@@ -47,6 +47,9 @@ import {
   planToFollowOnlyAddrs,
   planToNameWrites,
   sendControl,
+  SSMCS_INTERNAL_SETTINGS,
+  ssmcsInternalCommand,
+  ssmcsInternalTarget,
 } from "./translate";
 import type { DynField, VdCommand } from "./translate";
 import { COMP_RATIO_CH_STEPS, COMP_RATIO_INF, COMP_RATIO_STEPS } from "./comp-ratio";
@@ -975,6 +978,87 @@ describe("planToCommands", () => {
     expect(at("SSMCS_EQ_HIGH_FREQ")!.vdValue).toBe(112);
     // Low/High bands carry no Q.
     expect(cmds.some((c) => c.name === ("SSMCS_EQ_LOW_Q" as never))).toBe(false);
+  });
+
+  // The SSMCS compressor's internal Threshold and Makeup: one definition each, and every path
+  // through it — the write, the plan's bound, and the order and count of the strip's commands.
+  describe("the SSMCS internal settings", () => {
+    const [threshold, makeup] = SSMCS_INTERNAL_SETTINGS;
+
+    it("are Threshold and Makeup, each an integer 0..200 at its own catalog row", () => {
+      expect(SSMCS_INTERNAL_SETTINGS.map((s) => [s.key, s.name, s.min, s.max])).toEqual([
+        ["threshold", "SSMCS_COMP_THRESHOLD", 0, 200],
+        ["makeup", "SSMCS_COMP_MAKEUP", 0, 200],
+      ]);
+      expect([PARAMS.SSMCS_COMP_THRESHOLD.id, PARAMS.SSMCS_COMP_MAKEUP.id]).toEqual([100, 101]);
+    });
+
+    it.each(MODEL_IDS)("target exactly the MONO IN channels of the %s", (id) => {
+      const m = getModel(id);
+      const targets = m.nodes.flatMap((n) => {
+        const y = ssmcsInternalTarget(m, n.id);
+        return y === null ? [] : [[n.id, y]];
+      });
+      const mono = id === "URX22" ? 2 : 4;
+      expect(targets).toEqual(Array.from({ length: mono }, (_, i) => [`ch${i + 1}`, i]));
+      // A mono id the model does not have is no target either.
+      expect(ssmcsInternalTarget(m, `ch${mono + 1}`)).toBeNull();
+    });
+
+    it.each([0, 200])("write %d once, at x 0 and the channel's y", (v) => {
+      for (const s of SSMCS_INTERNAL_SETTINGS) {
+        const c = ssmcsInternalCommand(getModel("URX22"), "ch2", s, v);
+        expect(uri(c)).toBe(`/vd/parameters/${PARAMS[s.name].id}:0:1?operation=value`);
+        expect([c.name, c.planValue, c.vdValue]).toEqual([s.name, v, v]);
+      }
+    });
+
+    it.each([[-1], [201], [99.5], [0.25], [Number.NaN], [Infinity], ["100"], [null], [undefined], [true]])(
+      "refuse %s rather than move it onto the range",
+      (v) => {
+        for (const s of SSMCS_INTERNAL_SETTINGS)
+          expect(() => ssmcsInternalCommand(model, "ch1", s, v)).toThrow(RangeError);
+      },
+    );
+
+    it.each(["ch_5_6", "bus.stereo", "ch5"])("refuse %s as a target", (node) => {
+      expect(() => ssmcsInternalCommand(model, node, threshold, 100)).toThrow(RangeError);
+    });
+
+    const ssmcsPlan = (comp: Record<string, number>) => {
+      const plan = emptyPlan("URX44V");
+      ensureFixedConnections(model, plan);
+      plan.nodeParams.ch3 = { compEqType: 1, ssmcs: { compDrive: 100, comp: { attack: 170, knee: 1, ...comp } } };
+      return planToCommands(model, plan).filter((c) => c.name.startsWith("SSMCS_COMP_"));
+    };
+
+    it("send a plan's values through that write, once each and after the knee", () => {
+      for (const v of [0, 70, 100, 200]) {
+        const cmds = ssmcsPlan({ threshold: v, makeup: v });
+        expect(cmds.map((c) => c.name)).toEqual([
+          "SSMCS_COMP_DRIVE",
+          "SSMCS_COMP_ATTACK",
+          "SSMCS_COMP_KNEE",
+          "SSMCS_COMP_THRESHOLD",
+          "SSMCS_COMP_MAKEUP",
+        ]);
+        for (const c of cmds.slice(3)) expect([uri(c), c.vdValue]).toEqual([uri({ ...c, x: 0, y: 2 }), v]);
+      }
+    });
+
+    it("send nothing for a value the plan does not hold", () => {
+      const names = ssmcsPlan({ makeup: 70 }).map((c) => c.name);
+      expect(names).not.toContain("SSMCS_COMP_THRESHOLD");
+      expect(names.filter((n) => n === "SSMCS_COMP_MAKEUP")).toHaveLength(1);
+    });
+
+    // A document's value outside the set never reaches the write: the load bounds it (rawRule),
+    // and the emit bounds a hand-built plan the same way before the write admits it.
+    it("bound a hand-built plan's value the way the load does", () => {
+      const at = (cmds: VdCommand[], name: string) => cmds.find((c) => c.name === name)?.vdValue;
+      const cmds = ssmcsPlan({ threshold: 250, makeup: 69.6 });
+      expect([at(cmds, threshold.name), at(cmds, makeup.name)]).toEqual([200, 70]);
+    });
   });
 
   it("emits no SSMCS detail in COMP->EQ mode", () => {

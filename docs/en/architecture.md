@@ -5272,6 +5272,16 @@ while any other device action holds the link (a Live sync still connecting holds
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
 window keeps running behind them.
 
+**The SSMCS compressor's internal Threshold and Makeup** — values no screen of the unit shows, which the Morphing
+position and the Sweet Spot Data preset recompute — come off a file through the same read as off the unit. Each is
+defined once (`SSMCS_INTERNAL_SETTINGS` in `control/translate.ts`), and its read, its write and the bound the load
+applies to a document are all built from that definition, so a file needs no reader of its own for them. A value
+outside the setting's value set fails that channel's read, from a file and from the unit alike, rather than reaching
+the plan. The reads that compare the unit with a plan or keep its value for a restore — a write's check, Compare with
+device, the self-test's restore — fail on it the same way (`readAddressOf` in `control/client.ts`), so no difference,
+re-send or restore is built from it. The write refuses the same values, and a document holding one is bounded on load
+like every other leaf the write bounds.
+
 Format notes that shape the reader:
 
 - **Endianness alternates by level.** Record headers and the F descriptor records are big-endian;

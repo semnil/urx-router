@@ -77,6 +77,8 @@ import {
   diffNames,
   diffPlan,
   reachedAndFailed,
+  readAddressOf,
+  RefusedReadingError,
   sendConverging,
   sendNames,
   sendPresetsAndReconverge,
@@ -99,6 +101,9 @@ import {
   hpfFreqLeftOut,
   planToCommands,
   selectableInputIds,
+  SSMCS_INTERNAL_SETTINGS,
+  ssmcsInternalReadRefusal,
+  ssmcsInternalTarget,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -945,6 +950,9 @@ export async function runSelfTest(
     // read before the sweep, written back after the restore.
     const held = await phaseStep(diffPlan(model, original, { signal, emit: RESTORE_EMIT }));
     if (!held) return report; // cancelled during the diff
+    // A reading the setting refused is kept here: the pre-sweep read of the same address can
+    // answer an ordinary value, and would leave nothing to say the unit gave another.
+    for (const line of held.refused) report.errors.push(`capture check ${line}`);
     const writeBack = new Map(unrestorable);
     for (const command of [...held.diffs.map((d) => d.command), ...held.unread]) {
       writeBack.set(cmdAddr(command), command);
@@ -958,6 +966,8 @@ export async function runSelfTest(
     const unused = await phaseStep(unusedSideCommands(model, captured, cap.unreadNodes, signal));
     if (!unused) return report; // cancelled during the read of the other side
     if (unused.unread.length) {
+      // What each of those reads failed on, the setting and the value it answered among them.
+      report.errors.push(...unused.errors.map((line) => `unused-side read ${line}`));
       report.errors.push(
         `refusing to sweep: the side ${unused.unread.join(", ")} ${unused.unread.length === 1 ? "is" : "are"} not using could not be read, so a pass could change it and nothing would put it back`,
       );
@@ -1407,17 +1417,27 @@ export function idleEngineOnCommands(model: DeviceModel, plan: Plan, unreadNodes
  * command for is dropped. Nothing is written, and the unit's type is not touched.
  *
  * `unread` names the nodes whose other side could not be read although the capture itself
- * read them: a pass could change that side and nothing would hold what it was.
+ * read them: a pass could change that side and nothing would hold what it was. A node whose
+ * other side answered a value an SSMCS internal setting refuses is named whatever the capture
+ * did with it: that is not the capture's failure coming round again, and it leaves the side
+ * with no command, so nothing else would stop the run from changing it.
  */
 async function unusedSideCommands(
   model: DeviceModel,
   captured: ReadonlyMap<number, unknown>,
   captureUnread: ReadonlySet<string>,
   signal: AbortSignal | undefined,
-): Promise<{ commands: VdCommand[]; unread: string[] }> {
+): Promise<{ commands: VdCommand[]; unread: string[]; errors: string[] }> {
+  // The strips whose other side answered an internal setting with a value it refuses.
+  const refusedStrips = new Set<string>();
   const otherSide: ParamSource = {
     get: async (paramId, x, y) => {
       const value = await vdGet(paramId, x, y);
+      const setting = x === 0 ? SSMCS_INTERNAL_SETTINGS.find((s) => PARAMS[s.name].id === paramId) : undefined;
+      if (setting && ssmcsInternalReadRefusal(setting.name, value) !== null) {
+        const node = model.nodes.find((n) => ssmcsInternalTarget(model, n.id) === y);
+        if (node) refusedStrips.add(node.id);
+      }
       if (paramId !== PARAMS.COMP_EQ_TYPE.id) return value;
       return value === COMP_EQ_SSMCS ? COMP_EQ_COMP_FIRST : COMP_EQ_SSMCS;
     },
@@ -1426,14 +1446,26 @@ async function unusedSideCommands(
   const shadow = emptyPlan(model.id);
   const read = await applySourceState(model, shadow, otherSide, signal);
   const strips = new Set(model.nodes.filter((n) => channelControl(model, n.id)?.hasMicStrip).map((n) => n.id));
+  const named = (id: string): boolean => !captureUnread.has(id) || refusedStrips.has(id);
   return {
     // Only what the strips themselves carry: this second read fails wherever the capture's
     // did, and what it leaves at its default elsewhere is not a side anything is not using.
     commands: planToCommands(model, shadow, "all", RESTORE_EMIT).filter(
       (c) => c.node !== undefined && strips.has(c.node) && !captured.has(cmdAddr(c)),
     ),
-    unread: [...read.unreadNodes].filter((id) => strips.has(id) && !captureUnread.has(id)),
+    unread: [...read.unreadNodes].filter((id) => strips.has(id) && named(id)),
+    // The failures behind `unread`, as the read words them (`<node label>: <cause>`).
+    errors: read.errors.filter((line) =>
+      model.nodes.some((n) => strips.has(n.id) && named(n.id) && line.startsWith(`${n.label}: `)),
+    ),
   };
+}
+
+/** A failed read as a report line words it: a reading the setting refused names that setting
+ *  beside its reason, since the line itself names only the address. */
+function readFailureText(c: VdCommand, e: unknown): string {
+  if (e instanceof RefusedReadingError) return `${c.name}: ${e.message}`;
+  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -1452,9 +1484,9 @@ async function readPreSweep(
   for (const [addr, c] of unrestorable) {
     signal?.throwIfAborted();
     try {
-      preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
+      preSweep.set(addr, await readAddressOf(c));
     } catch (e) {
-      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${readFailureText(c, e)}`);
     }
   }
   return preSweep;
@@ -1529,17 +1561,22 @@ async function restoreUnsent(
   // What still differs after a read past the settle window, as [address, command, what the
   // unit answered or the read's failure].
   type Left = { addr: number; c: VdCommand; want: number; got: number | null; error?: string };
+  // An address whose reading the setting refused, with that failure: it is not read or sent
+  // again, so a later ordinary answer cannot stand in for it, and it counts as not restored.
+  const refused = new Map<number, Left>();
   const stillDiffers = async (): Promise<Left[]> => {
     const left: Left[] = [];
     for (const [addr, c] of unrestorable) {
       const want = before.get(addr);
-      if (want === undefined) continue;
+      if (want === undefined || refused.has(addr)) continue;
       signal?.throwIfAborted();
       try {
-        const got = await vdGet(c.paramId, c.x, c.y);
+        const got = await readAddressOf(c);
         if (got !== want) left.push({ addr, c, want, got });
       } catch (e) {
-        left.push({ addr, c, want, got: null, error: e instanceof Error ? e.message : String(e) });
+        const entry = { addr, c, want, got: null, error: readFailureText(c, e) };
+        if (e instanceof RefusedReadingError) refused.set(addr, entry);
+        else left.push(entry);
       }
     }
     return left;
@@ -1574,6 +1611,7 @@ async function restoreUnsent(
     }
   }
   left ??= await stillDiffers();
+  left = [...left, ...refused.values()];
   for (const { addr, c, want, got, error } of left) {
     if (error !== undefined) {
       report.errors.push(`restore verify ${formatAddrKey(addr)}: ${error}`);

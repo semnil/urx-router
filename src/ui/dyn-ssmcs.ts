@@ -34,7 +34,14 @@ import {
   SSMCS_EQ_BAND_NAMES,
 } from "../core/control/translate";
 import type { DynField, SsmcsEqBandName } from "../core/control/translate";
-import { ssmcsCompDrive, ssmcsFreqHz, ssmcsGainDb, ssmcsQ, ssmcsRatio } from "../core/control/vd";
+import {
+  SSMCS_COMP_INTERNAL_MAX,
+  ssmcsCompDrive,
+  ssmcsFreqHz,
+  ssmcsGainDb,
+  ssmcsQ,
+  ssmcsRatio,
+} from "../core/control/vd";
 import { ssmcsEqResponse, ssmcsScResponse } from "../core/eq-response";
 import type { SsmcsBandState, SsmcsScState } from "../core/eq-response";
 import { sidechainTap } from "../core/meters";
@@ -202,12 +209,13 @@ const CORNER_FLOOR_DB = -54;
  */
 const CORNER_RAMP_RAW = 31;
 
-/** The makeup's own range, and the ceiling on what it returns. At its maximum it lifts
+/** The makeup's own range (the top of the value set `SSMCS_INTERNAL_SETTINGS` in translate.ts
+ *  gives it), and the ceiling on what it returns. At its maximum it lifts
  *  the corner to 0 dBFS — so it is a FRACTION of the corner's depth, not a number of dB —
  *  and it stops at MAKEUP_MAX_DB. Raw 0 gives exactly 0 dB at different corners, which is
  *  also what rules out a gain belonging to Comp Drive itself (what looked like one is this
  *  term following the corner as the drive moves it). */
-const MAKEUP_RAW_MAX = 200;
+const MAKEUP_RAW_MAX = SSMCS_COMP_INTERNAL_MAX;
 const MAKEUP_MAX_DB = 24;
 
 /**
