@@ -1115,7 +1115,14 @@ mod imp {
 
         let mut reader = LineReader::new();
         let deadline = Instant::now() + DISCOVERY_TIMEOUT;
-        while Instant::now() < deadline {
+        loop {
+            // Each read blocks for no longer than what is left, so the wait ends at the
+            // deadline whatever arrives before it.
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            arm_socket(&sock, left)?;
             let Some(msg) = reader.read_json(&mut sock)? else {
                 continue;
             };
@@ -1201,8 +1208,8 @@ mod imp {
         Ok(sync_status(link)? == "online")
     }
 
-    /// How long discovery waits for the device list, and how long its socket blocks
-    /// for one read — the same number, so the loop makes one read and then the
+    /// How long discovery waits for the device list. Each read on its socket blocks for
+    /// what is left of it at most, so on a silent link the loop makes one read and the
     /// deadline ends it rather than spinning.
     const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -3183,6 +3190,37 @@ mod imp {
                 "the 3 s deadline held while bytes kept arriving: {took:?} ({err})"
             );
             assert!(err.starts_with("broker-no-vdpport:"), "{err}");
+        }
+
+        // Something arriving just before the deadline — half a line, or a whole frame
+        // that is not the list — does not buy the wait another read's worth of time.
+        #[test]
+        fn a_frame_just_before_the_deadline_does_not_extend_the_wait() {
+            let other = format!(
+                "{}\n",
+                list_reply("/vddp_srv/other", "get", Some(json!({})))
+            );
+            for (label, bytes) in [
+                ("half a line", "{\"vddp\":".to_string()),
+                ("another frame", other),
+            ] {
+                let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let peer = std::thread::spawn(move || {
+                    let (mut sock, _) = listener.accept().unwrap();
+                    std::thread::sleep(Duration::from_millis(2_400));
+                    sock.write_all(bytes.as_bytes()).unwrap();
+                    std::thread::sleep(Duration::from_secs(5));
+                });
+                let started = Instant::now();
+                let err = discover_vdp_targets(port).unwrap_err();
+                let took = started.elapsed();
+                assert!(
+                    took < Duration::from_millis(3_500),
+                    "{label}: the wait ran past its 3 s deadline: {took:?} ({err})"
+                );
+                drop(peer);
+            }
         }
 
         fn status_reply(status: &str) -> Value {
