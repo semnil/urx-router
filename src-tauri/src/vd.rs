@@ -1487,8 +1487,9 @@ mod imp {
         y: i64,
         value: Value,
     ) -> Result<(), String> {
-        let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
+        let operation = "value";
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
+        let uri = format!("{base}?operation={operation}");
         // One spelling for what is sent and for what will be accepted as its reply,
         // so the two cannot drift into a command that can never be answered.
         let verb = "post";
@@ -1506,12 +1507,12 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb, Some(operation)) else {
                 continue;
             };
             return write_verdict(&vdp, param_id, x, y);
         }
-        Err(drain_late_reply(link, subs, &base, verb)
+        Err(drain_late_reply(link, subs, &base, verb, Some(operation))
             .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")))
     }
 
@@ -1520,7 +1521,8 @@ mod imp {
     /// from the reply to the *next* command on that same address — it would satisfy
     /// it with a stale value. Drain what is already buffered (bounded, and only
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
-    /// address that just gave up. Notifies stay batched via subs, as everywhere else.
+    /// command that just gave up — its verb, its address and, for a POST, its
+    /// operation. Notifies stay batched via subs, as everywhere else.
     ///
     /// A device-lost push met here ends the drain and comes back as the command's
     /// error, in place of its deadline: this reader consumes frames like the reply
@@ -1530,6 +1532,7 @@ mod imp {
         subs: &mut Subs,
         base: &str,
         method: &str,
+        operation: Option<&str>,
     ) -> Option<String> {
         // TWO bounds, because they answer different questions and neither covers the
         // other. FRAMES caps the busy case: under Live sync the broker streams meters
@@ -1549,7 +1552,7 @@ mod imp {
                     if let Some(err) = synchronize_lost(&msg) {
                         return Some(err);
                     }
-                    if reply_for(subs, &msg, base, method).is_some() {
+                    if reply_for(subs, &msg, base, method, operation).is_some() {
                         return None; // the straggler is consumed; the socket is clean again
                     }
                 }
@@ -1573,7 +1576,11 @@ mod imp {
     const DRAIN_QUIET: Duration = Duration::from_millis(200);
 
     /// The reply body for `method` at `base`, or None when the message was a notify,
-    /// a reply to a different verb, or a reply for another address. Shared by the two
+    /// a reply to a different verb, a reply for another address, or a POST reply whose
+    /// single `operation` is not `operation` (none, an unknown one and a repeated one
+    /// included). A write, a registration and an unregistration are all POSTs on one
+    /// address, and `reg_param` / `reg_meter` do not wait for their replies, so only the
+    /// operation tells a write's verdict from a registration's. Shared by the two
     /// await loops and the late drain so the matching cannot drift — the exact-address
     /// compare is what stops another instance's reply (e.g. y=12) satisfying a y=1
     /// request through a prefix match.
@@ -1592,6 +1599,7 @@ mod imp {
         msg: &'a Value,
         base: &str,
         method: &str,
+        operation: Option<&str>,
     ) -> Option<&'a Value> {
         if subs.absorb(msg) {
             return None;
@@ -1601,7 +1609,25 @@ mod imp {
             return None;
         }
         let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
-        (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
+        if uri.split('?').next().unwrap_or(uri) != base {
+            return None;
+        }
+        if operation.is_some() && operation_of(uri) != operation {
+            return None;
+        }
+        Some(vdp)
+    }
+
+    /// The value of the single `operation` query parameter in `uri`, or None when the
+    /// query has none or more than one.
+    fn operation_of(uri: &str) -> Option<&str> {
+        let (_, query) = uri.split_once('?')?;
+        let mut values = query.split('&').filter_map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (name == "operation").then_some(value)
+        });
+        let value = values.next()?;
+        values.next().is_none().then_some(value)
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
@@ -1630,14 +1656,14 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb, None) else {
                 continue;
             };
             return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        Err(drain_late_reply(link, subs, &base, verb)
+        Err(drain_late_reply(link, subs, &base, verb, None)
             .unwrap_or_else(|| format!("broker-timeout: value at {param_id}:{x}:{y}")))
     }
 
@@ -2273,7 +2299,7 @@ mod imp {
             let verdict = |data: Value| {
                 let mut subs = Subs::new();
                 let msg = reply("post", &format!("{base}?operation=value"), data);
-                let vdp = reply_for(&mut subs, &msg, base, "post")
+                let vdp = reply_for(&mut subs, &msg, base, "post", Some("value"))
                     .expect("the reply the write is waiting for");
                 write_verdict(vdp, 142, 0, 0)
             };
@@ -2316,8 +2342,8 @@ mod imp {
             let push = notify(base.into(), 1);
 
             assert!(!subs.absorb(&push), "nothing subscribed to absorb it");
-            assert!(reply_for(&mut subs, &push, base, "get").is_none());
-            assert!(reply_for(&mut subs, &push, base, "post").is_none());
+            assert!(reply_for(&mut subs, &push, base, "get", None).is_none());
+            assert!(reply_for(&mut subs, &push, base, "post", Some("value")).is_none());
 
             // The replies those two commands are actually waiting for still match,
             // query string and all — the broker echoes it back on a write.
@@ -2325,7 +2351,8 @@ mod imp {
                 &mut subs,
                 &reply("get", base, json!({ "current_value": 1 })),
                 base,
-                "get"
+                "get",
+                None
             )
             .is_some());
             assert!(reply_for(
@@ -2336,7 +2363,8 @@ mod imp {
                     json!({ "response_code": 200 })
                 ),
                 base,
-                "post"
+                "post",
+                Some("value")
             )
             .is_some());
         }
@@ -2352,8 +2380,69 @@ mod imp {
             let ack = reply("post", base, json!({ "response_code": 200 }));
             let value = reply("get", base, json!({ "current_value": 1 }));
 
-            assert!(reply_for(&mut subs, &ack, base, "get").is_none());
-            assert!(reply_for(&mut subs, &value, base, "post").is_none());
+            assert!(reply_for(&mut subs, &ack, base, "get", None).is_none());
+            assert!(reply_for(&mut subs, &value, base, "post", Some("value")).is_none());
+        }
+
+        /// A write, a registration and an unregistration are all POSTs, and a
+        /// registration's reply arrives while the next command runs (`reg_param` and
+        /// `reg_meter` do not wait for it), so on one address the verb does not tell
+        /// them apart: the reply's `operation` does. A POST reply answers only the
+        /// request whose single `operation` it carries; one with none, an unknown one
+        /// or a repeated one answers no POST. A GET reply still matches whatever its
+        /// query holds.
+        #[test]
+        fn reply_for_takes_a_post_reply_only_for_its_own_single_operation() {
+            let posts = [
+                ("/vd/parameters/142:0:1", "value"),
+                ("/vd/parameters/142:0:1", "regist"),
+                ("/vd/parameters/142:0:1", "unregist"),
+                ("/vd/meters/7:-1", "regist"),
+                ("/vd/meters/7:-1", "unregist"),
+            ];
+            let queries = [
+                "?operation=value",
+                "?operation=regist",
+                "?operation=unregist",
+                "",
+                "?",
+                "?operation",
+                "?operation=",
+                "?operation=foo",
+                "?operation=Value",
+                "?x=1&operation=value",
+                "?operation=value&operation=value",
+                "?operation=regist&operation=value",
+            ];
+            for (base, operation) in posts {
+                for query in queries {
+                    let mut subs = Subs::new();
+                    let msg = reply(
+                        "post",
+                        &format!("{base}{query}"),
+                        json!({ "response_code": 200 }),
+                    );
+                    let own = query == format!("?operation={operation}")
+                        || (operation == "value" && query == "?x=1&operation=value");
+                    assert_eq!(
+                        reply_for(&mut subs, &msg, base, "post", Some(operation)).is_some(),
+                        own,
+                        "{base} {operation} answered by {query:?}"
+                    );
+                }
+            }
+            for query in ["", "?x=1", "?operation=value"] {
+                let base = "/vd/parameters/142:0:1";
+                let msg = reply(
+                    "get",
+                    &format!("{base}{query}"),
+                    json!({ "current_value": 1 }),
+                );
+                assert!(
+                    reply_for(&mut Subs::new(), &msg, base, "get", None).is_some(),
+                    "a get reply with {query:?}"
+                );
+            }
         }
     }
 
@@ -2645,8 +2734,8 @@ mod imp {
         // timing.
         use super::super::{watch_link, Cmd, LinkCounters};
         use super::{
-            arm_socket, do_get_value, drain_late_reply, pump, serve, LineReader, Link, Subs,
-            DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, do_get_value, do_set, drain_late_reply, pump, serve, LineReader, Link,
+            Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
@@ -2696,7 +2785,7 @@ mod imp {
             let (mut link, mut peer) = vdp_link();
             send(&mut peer, synchronize("offline"));
 
-            let err = drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get")
+            let err = drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None)
                 .expect("the push is what the drain reports");
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
         }
@@ -2712,14 +2801,59 @@ mod imp {
                 json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
                 None
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
                 None,
                 "a quiet link ends the drain at its floor"
             );
+        }
+
+        // A write, a registration and an unregistration are all POSTs on the address, and
+        // a registration's reply can still be in flight when the next write starts. Only
+        // the reply carrying the write's own operation is its verdict: the refusal here,
+        // behind two acknowledgements of registrations.
+        #[test]
+        fn a_write_takes_its_verdict_only_from_its_own_operations_reply() {
+            let (mut link, mut peer) = vdp_link();
+            for (operation, code) in [("regist", 200), ("unregist", 200), ("value", 400)] {
+                send(
+                    &mut peer,
+                    json!({
+                        "method": "post",
+                        "uri": format!("{ADDR}?operation={operation}"),
+                        "data": { "response_code": code }
+                    }),
+                );
+            }
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
+        // The late drain consumes the straggler of the write that gave up, and only that
+        // one: a registration's reply is not it, and taking it for one would leave the
+        // straggler on the socket for the next write on the address to take as its own.
+        #[test]
+        fn the_late_drain_takes_only_the_straggler_of_its_own_operation() {
+            let (mut link, mut peer) = vdp_link();
+            let post = |operation: &str, code: i64| {
+                json!({
+                    "method": "post",
+                    "uri": format!("{ADDR}?operation={operation}"),
+                    "data": { "response_code": code }
+                })
+            };
+            send(&mut peer, post("regist", 200));
+            send(&mut peer, post("value", 200));
+            assert_eq!(
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "post", Some("value")),
+                None
+            );
+            send(&mut peer, post("value", 400));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
         }
 
         /// A line from the broker that is not JSON.

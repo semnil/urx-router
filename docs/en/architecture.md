@@ -2440,7 +2440,9 @@ that ordinary rather than rare. A notify names the address it is about, so match
 lets one answer the command: a read returns the pushed value instead of the read, and a write, finding no
 `response_code`, reports a write that landed as refused and aborts. Replies are therefore matched on **verb
 and address together** (`reply_for`), and each command keeps the verb it sent and the verb it will accept in
-one place so the two cannot drift. Notifies for a subscribed channel are absorbed into that channel's
+one place so the two cannot drift. A write, a registration and an unregistration are all POSTs on the
+address, and a registration's reply can still be in flight when the next write starts, so a POST reply also has
+to carry the request's single `operation` (`value`, `regist` or `unregist`). Notifies for a subscribed channel are absorbed into that channel's
 batch rather than dropped.
 
 **The same on both platforms.** A difference in the endpoints or the
