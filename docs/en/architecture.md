@@ -410,10 +410,15 @@ carries a one-line map of the same directories and points here.
       dedicated tables and enums for SP Type/Amp Type/Scale etc.)
     - `urxf.ts` reader for the unit's microSD settings file (`.urxf`, written by SETUP > SAVE) — two-level
       endianness (BE record/descriptor headers, LE block headers and values), a frameless D block walked
-      only by its own F table, and an x axis stored flattened onto consecutive ids. It exposes a chunk as a
+      only by its own F table, and an x axis stored flattened onto consecutive ids. The `#END` record carries
+      no extra block or body and ends the file, and a numeric element is 1, 2 or 4 bytes wide, an array of no
+      elements included; a file that breaks either is refused. It exposes a chunk as a
       `ParamSource`, so `readback.ts` runs its existing device→plan inverse against a file
       (`applySourceState`) instead of a second inverse — the source travels as a parameter, so a file import
-      and a device follow reconcile cannot cross. During Live sync an import is an edit the session writes to the unit. **Read-only**
+      and a device follow reconcile cannot cross. A sample rate the unit does not run at is refused like a
+      parameter the file does not carry: the plan keeps its rate, and a live import asks nothing about it.
+      The recorder's Track Count is taken only with a rate the unit runs at and within that rate's ceiling.
+      During Live sync an import is an edit the session writes to the unit. **Read-only**
       (writing back is untested against the unit's scene memory) and gated behind `--experimental`
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
       + time zone / language / HDMI + USB Main / the 16 User Defined Knobs assignments) — catalogued in
@@ -3648,7 +3653,15 @@ A failed read cancels the write, per the rule above: the rate decides which para
 statement of what a rate can carry, and `setPlanSampleRate` (`core/plan.ts`) is the only way the plan's rate moves:
 it lowers the stored Track Count to fit and never raises it back, because the unit does not either. Every path that
 moves the rate takes it — the picker, adopting the unit's rate, a device read, a fresh plan, and a LOAD, where it
-also normalises a document naming a rate and a count that cannot both be true. Applied when the rate CHANGES rather
+also normalises a document naming a rate and a count that cannot both be true. During a session an undo or redo that
+moves the rate holds to it as well: the count stays where it is, under the ceiling of the rate the entry lands on,
+rather than coming back to the one the entry recorded (`unitHoldsTrackCount` in `ui/history.ts`), and once the
+session's writes have settled and the unit has announced the rate the entry left — or the settle's bound has passed
+without it, where the rate never went out — the unit's count is read back and taken (`rereadTrackCount`); a rate
+chosen while it waits is the one the count then follows, so the wait starts again for that one. The unit acks a rate
+before it runs at it, and what the entry
+leaves is a prediction: an undo that reaches the unit before the rate it reverses did leaves a unit that never
+lowered its count. Away from a session the count is the plan's own and an undo restores it. Applied when the rate CHANGES rather
 than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
 then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
 the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
@@ -5250,7 +5263,11 @@ USB on gets the confirm the toolbar's FOLLOW USB gives, refused as well while th
 turns it off is asked about its rate where that differs, and about turning Follow USB off where it does not. The
 file's Follow USB is written before the rest, so the rate the session then writes lands on a unit clocked the way
 the file says. Under the Scene only device scope both are outside the session: nothing is asked, the file's rate is
-not taken, and the status line says the rate stayed. The import is refused
+not taken, and the status line says the rate stayed. The recorder's Track Count stays the unit's in either scope, since
+nothing writes it. What stays the unit's is answered with the plan's own value before anything is applied
+(`sessionImportSource`), once the file's own value has been read, so a value the file carries wrong or not at all is
+reported as it is outside a session, and the import moves none of it: a rate the file would lower the Track Count with is never set
+on the plan, and under a rate the import takes, the count is what that rate leaves of the unit's. The import is refused
 while any other device action holds the link (a Live sync still connecting holds it with no session up yet), and
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the
 window keeps running behind them.

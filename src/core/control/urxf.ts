@@ -14,6 +14,7 @@
 // with fewer scene chunks may or may not erase the unit's scene memory, which is
 // untested on hardware).
 
+import { SAMPLE_RATES, trackCountCeiling } from "../constraints";
 import { PARAMS } from "./params";
 import type { ParamSource } from "./readback";
 
@@ -95,6 +96,13 @@ export function parseUrxf(bytes: Uint8Array): UrxfFile {
   while (at < bytes.length) {
     const rec = readRecordHeader(view, bytes, at);
     if (rec.tag === END_TAG) {
+      // The terminator is the record header alone, and the file ends with it.
+      if (rec.extraLen !== 0 || rec.dataLen !== 0 || at + RECORD_HEADER !== bytes.length) {
+        throw new UrxfError(
+          "truncated",
+          `#END at ${at} declares ${rec.extraLen}+${rec.dataLen} bytes, file ends at ${bytes.length}`,
+        );
+      }
       ended = true;
       break;
     }
@@ -147,7 +155,10 @@ const KEPT_ON_LOAD = new Set<number>([PARAMS.STEREO_GEQ_LIMIT.id, PARAMS.OUT_GEQ
  * plan's current value: a readback group that silently keeps its old value would
  * report the plan as imported while part of it still shows what was there before.
  * The one exception is what `keeps` names, a value the unit itself keeps through a
- * load of the file.
+ * load of the file. A sample rate the unit does not run at throws too, so the plan's rate
+ * and the rate written from it stay ones the unit runs at; and so does the recorder's Track
+ * Count unless it comes with such a rate and within that rate's ceiling, so the plan never
+ * holds more tracks than the rate it keeps carries.
  */
 export function paramSourceOf(chunk: UrxfChunk): ParamSource {
   const at = (paramId: number, x: number, y: number): number | string => {
@@ -168,6 +179,20 @@ export function paramSourceOf(chunk: UrxfChunk): ParamSource {
     get: async (paramId, x, y) => {
       const value = at(paramId, x, y);
       if (typeof value !== "number") throw new Error(`parameter ${paramId + x} is a string`);
+      if (paramId + x === PARAMS.SAMPLE_RATE.id && !SAMPLE_RATES.includes(value)) {
+        throw new Error(`settings file's sample rate ${value} Hz is not a rate the unit runs at`);
+      }
+      if (paramId + x === PARAMS.SD_REC_TRACK_COUNT.id) {
+        const rate = chunk.params.get(PARAMS.SAMPLE_RATE.id)?.[0];
+        if (typeof rate !== "number" || !SAMPLE_RATES.includes(rate)) {
+          throw new Error("settings file's track count comes with no rate the unit runs at");
+        }
+        if (value * 2 > trackCountCeiling(rate)) {
+          throw new Error(
+            `settings file's track count ${value * 2} is above the ${trackCountCeiling(rate)} of its rate`,
+          );
+        }
+      }
       return value;
     },
     getStr: async (paramId, x, y) => {
@@ -285,6 +310,10 @@ function readValues(
       if (!signed && desc.typecode !== TC_UNSIGNED) {
         throw new UrxfError("badDescriptor", `typecode ${desc.typecode} on parameter ${desc.id}`);
       }
+      // Checked on the descriptor, so an array of no elements cannot carry an illegal width.
+      if (!NUMBER_WIDTHS.includes(desc.elemSize)) {
+        throw new UrxfError("badDescriptor", `element size ${desc.elemSize} on parameter ${desc.id}`);
+      }
       const values: number[] = [];
       for (let i = 0; i < desc.count; i++)
         values.push(readNumber(view, cursor + i * desc.elemSize, desc.elemSize, signed));
@@ -296,6 +325,9 @@ function readValues(
   if (cursor !== at + len) throw new UrxfError("lengthMismatch", `values end at ${cursor}, block at ${at + len}`);
   return params;
 }
+
+/** The element widths a numeric parameter may have. */
+const NUMBER_WIDTHS: readonly number[] = [1, 2, 4];
 
 function readNumber(view: DataView, at: number, size: number, signed: boolean): number {
   switch (size) {

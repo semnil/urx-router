@@ -198,6 +198,7 @@ import {
 } from "./core/control/readback";
 import type { MergedRead, ParamSource, ReadbackResult } from "./core/control/readback";
 import type { PendingWrites } from "./core/control/settle";
+import { writeSettle } from "./core/control/settle";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   compareCounts,
@@ -237,6 +238,7 @@ import {
   cueAddrs,
   cueAt,
   cueNotifyAddrs,
+  addrKey,
   hpfFreqLeftOut,
   planToCommands,
   planToNameWrites,
@@ -828,6 +830,8 @@ const cueModeEchoes = new LcdEchoes();
 // HOME's [Sends] destination in the same line; a session's release waits for the tail before it
 // disconnects.
 let cueWrites: Promise<void> = Promise.resolve();
+// The Track Count reads after a rate undone or redone during a session, one after another.
+let trackCountRereads: Promise<void> = Promise.resolve();
 let cueWritesPending = 0;
 
 /** The other member of the STEREO-linked mono pair `node` belongs to, which shares its flag. */
@@ -1239,6 +1243,53 @@ function rereadSendsTarget(): void {
       if (liveSessionUp && sendsVersion === since && sendsChoicesOut === 0) takeSendsTarget(raw);
     })
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
+}
+
+/**
+ * Read the recorder's Track Count back from the unit once the session's writes have settled, and
+ * take it. Asked after an undo or a redo that moved the rate during a session: the count the plan
+ * is left holding is a prediction — the unit lowers its count to a rate's ceiling and never raises
+ * it back, but whether it ever ran at the rate the entry moves away from depends on whether the
+ * flush had sent that rate yet — and while nothing writes the count, the unit's is the plan's.
+ * `mark` is the notify position when the entry landed, and `rate` the rate it left: the unit acks
+ * a rate before it runs at it, so the count is read once the unit has announced that rate, or once
+ * the settle's bound has passed without it, which is the answer where the rate never went out.
+ */
+function rereadTrackCount(mark: number, rate: number): void {
+  if (!liveSessionUp || !hasRecorder(modelId)) return;
+  // A chain of its own, not the unit writes': it waits on the plan flush, which a CUE press or
+  // a SENDS choice never does.
+  trackCountRereads = trackCountRereads
+    .then(async () => {
+      // Until the session has written and the unit announced the rate the plan holds: a rate
+      // chosen while this waited is the one the count now follows, so the wait starts again for
+      // it, from a mark taken then.
+      for (let target = { mark, rate }; ; target = { mark: writeSettle.mark(), rate: plan.sampleRate }) {
+        // The entry's own flush is armed behind a debounce, so the session is waited out until it
+        // has nothing armed or running, not only past the flush running now.
+        while (live?.isWriting()) {
+          await live.idle();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (!liveSessionUp) return;
+        await writeSettle.announcement(addrKey(PARAMS.SAMPLE_RATE.id, 0, 0), target.mark, target.rate);
+        if (!liveSessionUp) return;
+        if (!live?.isWriting() && plan.sampleRate === target.rate) break;
+      }
+      const merged = await followRead("track count after an undo moved the rate", (into, signal) =>
+        applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
+      );
+      if (!merged) return;
+      noteMergeConflicts(merged);
+      // absorb, as the write's own Track Count read does: an edit started while the read ran
+      // keeps its entry.
+      planHistory?.absorb(merged.devicePatch);
+      graph.render();
+      refreshInspector();
+      planValuesChanged();
+      assertReadComplete(merged, "track count read issues:");
+    })
+    .catch((err: unknown) => showError(t().error.trackCountReread(errorText(err))));
 }
 
 /** A rate change the unit announced: above 96 kHz the unit may have moved the destination. */
@@ -4073,6 +4124,7 @@ function reflectHistory(touch: PatchTouch): void {
   // out. resync() must NOT be called — it would re-base the snapshot to the plan
   // and suppress the very write the undo needs.
   markChanged();
+  if (liveSessionUp && touch.fields.has("sampleRate")) rereadTrackCount(writeSettle.mark(), plan.sampleRate);
 }
 
 // Repaint the views for a patch already applied to the plan in place: an undo / redo, or
@@ -4834,6 +4886,33 @@ async function confirmImportClock(
   return { followUsb, takeRate: true };
 }
 
+/**
+ * The file a settings import made during a session applies: what the session leaves to the unit is
+ * answered with the plan's own value before anything is applied, so the import cannot move it. The
+ * recorder's Track Count is the unit's, since nothing writes it, and so is the rate where the file's
+ * is not taken (the Scene only device scope). Answered with the plan's value at the moment it is
+ * read, after any rate the import takes has brought the count under that rate's ceiling, as the unit
+ * does. The file is read first all the same, so a value it does not carry or carries wrong is
+ * reported as it is outside a session. A plan holding no Track Count has none to answer with, and
+ * the read fails with that.
+ */
+function sessionImportSource(source: ParamSource, takeRate: boolean): ParamSource {
+  return {
+    ...source,
+    get: async (paramId, x, y) => {
+      const address = paramId + x;
+      const value = await source.get(paramId, x, y);
+      if (address === PARAMS.SAMPLE_RATE.id && !takeRate) return plan.sampleRate;
+      if (address === PARAMS.SD_REC_TRACK_COUNT.id) {
+        const count = plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount;
+        if (count === undefined) throw new Error("the plan holds no Track Count to keep for the unit");
+        return count / 2;
+      }
+      return value;
+    },
+  };
+}
+
 /** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
  *  and not at all while the link holds the rate. */
 function pickSampleRate(rate: number): void {
@@ -5165,6 +5244,7 @@ planHistory = new PlanHistory({
   // off, once the operator has agreed to it.
   rateHeld: () => rateHold(rateHoldState()),
   confirmRate: (rate) => confirmLiveRate(rate),
+  unitHoldsTrackCount: () => liveSessionUp,
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
   // entry moved does not decide the answer. The patch is applied to a copy, which is the
@@ -6747,6 +6827,7 @@ if (!DEMO) {
     const source = paramSourceOf(current);
     const clock = live ? await confirmImportClock(source) : { followUsb: undefined, takeRate: true };
     if (!clock) return;
+    const fileRate = await source.get(PARAMS.SAMPLE_RATE.id, 0, 0).catch(() => null);
     // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
     // replacement that does not go through `loadPlan` — it mutates the module plan in
     // place — so it has no share of that backstop, and the entry check is separated
@@ -6782,7 +6863,8 @@ if (!DEMO) {
       }
     }
     let result: ReadbackResult;
-    let rateKept = false;
+    // A rate outside the session stays the unit's, and the status line says so where the file's differs.
+    const rateKept = live && !clock.takeRate && fileRate !== null && fileRate !== plan.sampleRate;
     // During a session the import is one undo step of its own, so the edits before it close here.
     if (live) planHistory?.commit();
     // The plan as the import found it: what the import moved is measured against it.
@@ -6791,12 +6873,11 @@ if (!DEMO) {
       // A settings FILE, not the connected unit: its values are the same kind of thing a plan
       // document supplies, so they are recorded as such. Calling them the unit's would claim
       // the connected device holds them, which a file written by another unit does not.
-      result = await applySourceState(getModel(modelId), plan, source);
-      // A rate outside the session stays the unit's.
-      if (live && !clock.takeRate && plan.sampleRate !== beforeImport.sampleRate) {
-        setPlanSampleRate(plan, beforeImport.sampleRate);
-        rateKept = true;
-      }
+      result = await applySourceState(
+        getModel(modelId),
+        plan,
+        live ? sessionImportSource(source, clock.takeRate) : source,
+      );
       markSource(plan, patchContestNames(diffPlans(beforeImport, plan)), "load");
     } catch (err) {
       showError(t().status.settingsError(errorText(err)));

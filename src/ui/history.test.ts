@@ -5,7 +5,7 @@ import type { PatchTouch, PlanPatch } from "../core/plan-history";
 import type { RateHold } from "../core/sim-locks";
 import { t } from "../i18n";
 import { applyPatch, nodeParamContestPath } from "../core/plan-history";
-import { emptyPlan } from "../core/plan";
+import { emptyPlan, SDREC_NODE_ID, setPlanSampleRate } from "../core/plan";
 import type { Plan } from "../core/plan";
 
 // One PlanHistory per test, over a bare plan. The hooks record what was asked of
@@ -31,6 +31,8 @@ interface Harness {
   /** What `confirmRate` answers, and every rate it was asked about. */
   confirmRate: ((rate: number) => Promise<boolean> | null) | null;
   rateAsked: number[];
+  /** What `unitHoldsTrackCount` answers. */
+  unitHolds: boolean;
 }
 
 function harness(): Harness {
@@ -48,6 +50,7 @@ function harness(): Harness {
       | "authored"
       | "confirmRate"
       | "rateAsked"
+      | "unitHolds"
     > = {
     reflects: [],
     statuses: [],
@@ -59,6 +62,7 @@ function harness(): Harness {
     authored: [],
     confirmRate: null,
     rateAsked: [],
+    unitHolds: false,
   };
   const history = new PlanHistory({
     getPlan: () => plan,
@@ -71,6 +75,7 @@ function harness(): Harness {
     onStatus: (msg) => h.statuses.push(msg),
     onDepthChange: () => (h.depthReports += 1),
     onAuthored: (names) => h.authored.push([...names]),
+    unitHoldsTrackCount: () => h.unitHolds,
   });
   history.install();
   const out = h as Harness;
@@ -181,6 +186,34 @@ describe("gesture boundaries", () => {
     settle();
     expect(h.history.canUndo()).toBe(false);
   });
+
+  // A rate that lowered the recorder's Track Count: undone, the count comes back where the plan
+  // is the count's own, and stays where the unit holds it (it never raises its count back);
+  // redone, it is under the rate's ceiling either way.
+  it.each([
+    [false, 16],
+    [true, 8],
+  ])(
+    "brings a Track Count a rate lowered back on undo only where the plan holds it (unit holds: %s)",
+    (unitHolds, undone) => {
+      const h = harness();
+      h.edit((p) => {
+        p.sampleRate = 48000;
+        p.nodeParams[SDREC_NODE_ID] = { sdRecTrackCount: 16 };
+      });
+      idle();
+      h.unitHolds = unitHolds;
+      h.edit((p) => setPlanSampleRate(p, 96000));
+      idle();
+      expect(h.plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount).toBe(8);
+      h.history.undo();
+      settle();
+      expect([h.plan.sampleRate, h.plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount]).toEqual([48000, undone]);
+      h.history.redo();
+      settle();
+      expect([h.plan.sampleRate, h.plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount]).toEqual([96000, 8]);
+    },
+  );
 
   it("leaves the redo stack alone when a gesture moved no value", () => {
     const h = harness();

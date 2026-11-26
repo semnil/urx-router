@@ -182,6 +182,9 @@ export function deviceCommands(
    *  per command, so one refusing everything builds a failure list the size of the plan
    *  instead of exercising the behaviour under test. */
   ignoreWrite?: (a: Record<string, unknown>) => boolean,
+  /** What else a write moves on the unit, applied to the values it holds after the write
+   *  lands — a side effect the unit acts on, such as the Track Count a rate lowers. */
+  alsoMoves?: (a: Record<string, unknown>, held: Map<string, number>) => void,
 ): Record<string, unknown> {
   const values = new Map<string, number>(Object.entries(seed));
   const strings = new Map<string, string>();
@@ -212,7 +215,11 @@ export function deviceCommands(
     vd_get: (a: Record<string, unknown>) => live(() => values.get(addr(a)) ?? unwrittenRead(a)),
     vd_get_str: (a: Record<string, unknown>) => live(() => strings.get(addr(a)) ?? ""),
     vd_set: (a: Record<string, unknown>) =>
-      live(() => void (ignoreWrite?.(a) ? undefined : values.set(addr(a), a.value as number))),
+      live(() => {
+        if (ignoreWrite?.(a)) return;
+        values.set(addr(a), a.value as number);
+        alsoMoves?.(a, values);
+      }),
     vd_set_str: (a: Record<string, unknown>) => live(() => void strings.set(addr(a), a.value as string)),
     // Refused while disconnected like the reads and writes above: each of these goes
     // through the same `sender()` in the shell, so none of them is reachable without a

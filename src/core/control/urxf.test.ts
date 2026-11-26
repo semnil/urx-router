@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan } from "../plan";
+import { PARAMS } from "./params";
 import { applySourceState } from "./readback";
 import { parseUrxf, paramSourceOf } from "./urxf";
 import {
@@ -180,6 +181,75 @@ describe("parseUrxf", () => {
     new DataView(swallowed.buffer).setUint32(sceneAt + 28, bytes.length - sceneAt - CHUNK_HEADER, false);
     expect(() => parseUrxf(swallowed)).toThrow(expect.objectContaining({ code: "truncated" }));
   });
+
+  // The terminator is the record header alone, and it is the file's last record. One that
+  // declares an extra block or a body, or that bytes follow, is not the end of a whole file.
+  it("takes #END only when it is empty and ends the file", () => {
+    const bytes = sample();
+    const end = bytes.length - 36;
+    const declaring = (offset: number): Uint8Array => {
+      const out = new Uint8Array(bytes.length + 4);
+      out.set(bytes);
+      new DataView(out.buffer).setUint32(end + offset, 4, false);
+      return out;
+    };
+    const followedBy = (tail: Uint8Array): Uint8Array => {
+      const out = new Uint8Array(bytes.length + tail.length);
+      out.set(bytes);
+      out.set(tail, bytes.length);
+      return out;
+    };
+    expect(() => parseUrxf(bytes)).not.toThrow();
+    for (const [label, file] of [
+      ["an extra block", declaring(24)],
+      ["a body", declaring(28)],
+      ["zero bytes after it", followedBy(new Uint8Array(4))],
+      ["a second #END", followedBy(bytes.subarray(end))],
+      ["a second file", followedBy(bytes)],
+    ] as const) {
+      expect(() => parseUrxf(file), label).toThrow(expect.objectContaining({ code: "truncated" }));
+    }
+  });
+
+  // A numeric element is 1, 2 or 4 bytes wide. The width is checked on the descriptor,
+  // so an array of no elements cannot carry an illegal one past the parse.
+  it("rejects an illegal numeric width even on an array of no elements", () => {
+    const withEmptyArray = (typecode: number, elemSize: number): Uint8Array => {
+      const bytes = buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [
+            { id: 18, typecode: 4, elemSize: 1, values: ["", ""] },
+            { id: 96, typecode: 1, elemSize: 2, values: [0] },
+          ],
+        },
+      ]);
+      const view = new DataView(bytes.buffer);
+      const fPayload = FILE_HEADER + CHUNK_HEADER + BLOCK_HEADER;
+      // The ASCII array record (8 bytes) becomes a numeric array of no elements; the scalar
+      // record after it (6 bytes) widens to 4 so the values block, 2 + 2 bytes, still balances.
+      view.setUint8(fPayload + 3, typecode);
+      view.setUint16(fPayload + 4, elemSize, false);
+      view.setUint16(fPayload + 6, 0, false);
+      view.setUint16(fPayload + 8 + 4, 4, false);
+      return bytes;
+    };
+    for (const typecode of [1, 2]) {
+      for (const size of [3, 5, 8]) {
+        expect(() => parseUrxf(withEmptyArray(typecode, size)), `typecode ${typecode} width ${size}`).toThrow(
+          expect.objectContaining({ code: "badDescriptor" }),
+        );
+      }
+      for (const size of [1, 2, 4]) {
+        expect(
+          parseUrxf(withEmptyArray(typecode, size)).chunks[0]!.params.get(18),
+          `typecode ${typecode} width ${size}`,
+        ).toEqual([]);
+      }
+    }
+  });
 });
 
 // The builder's own guards. Each is a mistake the FILE takes without complaint — the
@@ -276,6 +346,88 @@ describe("paramSourceOf", () => {
 // A file a unit wrote before System firmware 1.5 carries the Flex12GEQ records of STEREO and the MIX
 // buses (EQ Type, [GEQ], GEQ Link, the 31 bands) but no GEQ Limit, which that firmware did not have.
 // A URX44V on 1.5 that loads it keeps the Limit it holds, so the import keeps the plan's.
+// A file's sample rate becomes the plan's, and from the plan it is written to the unit. Only a
+// rate the unit runs at is taken; any other is a read that failed, and the plan keeps its rate.
+describe("a file's sample rate", () => {
+  const sourceAt = (rate: number | null, tracks?: number) =>
+    paramSourceOf(
+      parseUrxf(
+        buildUrxf([
+          {
+            chunk: "CURRENT",
+            block: "CSF_BACKUP",
+            label: "",
+            fields: [
+              ...CURRENT_FIELDS,
+              ...(rate === null
+                ? []
+                : [{ id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] } satisfies Field]),
+              ...(tracks === undefined
+                ? []
+                : [
+                    {
+                      id: PARAMS.SD_REC_TRACK_COUNT.id,
+                      typecode: 1,
+                      elemSize: 1,
+                      values: [tracks / 2],
+                    } satisfies Field,
+                  ]),
+            ],
+          },
+        ]),
+      ).chunks[0]!,
+    );
+
+  it("takes a rate the unit runs at", async () => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = 48_000;
+    await applySourceState(getModel("URX44V"), plan, sourceAt(96_000));
+    expect(plan.sampleRate).toBe(96_000);
+  });
+
+  it.each([32_000, 0, 384_000])("keeps the plan's rate for %d Hz, which the unit does not run at", async (rate) => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = 48_000;
+    const result = await applySourceState(getModel("URX44V"), plan, sourceAt(rate));
+    expect(plan.sampleRate).toBe(48_000);
+    expect(result.errors.filter((e) => e.startsWith("sample rate:"))).toHaveLength(1);
+  });
+
+  // The file's Track Count is the recorder's at the file's rate. Taken with a rate the plan
+  // does not take — one the unit does not run at, or none — it could leave the plan holding
+  // more tracks than its rate carries, so it is refused with that rate; above the ceiling
+  // of the file's own rate it is refused too.
+  const tracksAfter = async (planRate: number, rate: number | null, tracks: number) => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = planRate;
+    const result = await applySourceState(getModel("URX44V"), plan, sourceAt(rate, tracks));
+    return {
+      rate: plan.sampleRate,
+      tracks: plan.nodeParams["out.sdrec"]?.sdRecTrackCount,
+      failed: result.errors.filter((e) => e.startsWith("SD Rec track count:")).length,
+    };
+  };
+
+  it.each([
+    ["32000 Hz", 32_000],
+    ["no rate", null],
+  ] as const)("refuses the Track Count of a file with %s", async (_, rate) => {
+    const after = await tracksAfter(96_000, rate, 16);
+    expect(after.rate).toBe(96_000);
+    expect(after.failed).toBe(1);
+    expect(after.tracks ?? 0).toBeLessThanOrEqual(8);
+  });
+
+  it("refuses a Track Count above the ceiling of the file's own rate", async () => {
+    expect(await tracksAfter(48_000, 192_000, 16)).toMatchObject({ rate: 192_000, failed: 1 });
+  });
+
+  it("takes the Track Count with the file's rate", async () => {
+    expect(await tracksAfter(192_000, 48_000, 16)).toEqual({ rate: 48_000, tracks: 16, failed: 0 });
+    expect(await tracksAfter(48_000, 96_000, 8)).toEqual({ rate: 96_000, tracks: 8, failed: 0 });
+  });
+});
+
 describe("a file written before System 1.5", () => {
   const n = (count: number, value: number): number[] => Array.from({ length: count }, () => value);
   const bands = (from: number, count: number): Field[] =>
