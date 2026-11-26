@@ -487,6 +487,20 @@ describe("importing a settings file", () => {
       },
     );
 
+    // A rate the unit does not run at is not the file's rate: nothing asks about re-clocking to
+    // it and nothing writes it.
+    it("neither asks about nor writes a rate the unit does not run at", SLOW, async () => {
+      const shell = await liveImport(file(false, 32_000), unit(false));
+      const from = await importNow(shell);
+      await imported();
+      expect(
+        confirms(shell).filter((m) => m.startsWith(t().confirm.reclock(formatRate(48_000), formatRate(32_000)))),
+        "asked about a rate the unit does not run at",
+      ).toEqual([]);
+      expect(written(shell, RATE, from)).not.toContain(32_000);
+      expect($<HTMLSelectElement>("rate-picker").value).toBe("48000");
+    });
+
     it("imports nothing when the operator declines the re-clock", SLOW, async () => {
       const shell = await liveImport(file(false, 96_000), unit(false), (m) =>
         m.startsWith(reclock) ? "Cancel" : "Ok",

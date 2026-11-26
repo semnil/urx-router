@@ -14,6 +14,7 @@
 // with fewer scene chunks may or may not erase the unit's scene memory, which is
 // untested on hardware).
 
+import { SAMPLE_RATES } from "../constraints";
 import { PARAMS } from "./params";
 import type { ParamSource } from "./readback";
 
@@ -154,7 +155,8 @@ const KEPT_ON_LOAD = new Set<number>([PARAMS.STEREO_GEQ_LIMIT.id, PARAMS.OUT_GEQ
  * plan's current value: a readback group that silently keeps its old value would
  * report the plan as imported while part of it still shows what was there before.
  * The one exception is what `keeps` names, a value the unit itself keeps through a
- * load of the file.
+ * load of the file. A sample rate the unit does not run at throws too, so the plan's rate
+ * and the rate written from it stay ones the unit runs at.
  */
 export function paramSourceOf(chunk: UrxfChunk): ParamSource {
   const at = (paramId: number, x: number, y: number): number | string => {
@@ -175,6 +177,9 @@ export function paramSourceOf(chunk: UrxfChunk): ParamSource {
     get: async (paramId, x, y) => {
       const value = at(paramId, x, y);
       if (typeof value !== "number") throw new Error(`parameter ${paramId + x} is a string`);
+      if (paramId + x === PARAMS.SAMPLE_RATE.id && !SAMPLE_RATES.includes(value)) {
+        throw new Error(`settings file's sample rate ${value} Hz is not a rate the unit runs at`);
+      }
       return value;
     },
     getStr: async (paramId, x, y) => {

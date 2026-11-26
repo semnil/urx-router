@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
 import { emptyPlan } from "../plan";
+import { PARAMS } from "./params";
 import { applySourceState } from "./readback";
 import { parseUrxf, paramSourceOf } from "./urxf";
 import {
@@ -345,6 +346,39 @@ describe("paramSourceOf", () => {
 // A file a unit wrote before System firmware 1.5 carries the Flex12GEQ records of STEREO and the MIX
 // buses (EQ Type, [GEQ], GEQ Link, the 31 bands) but no GEQ Limit, which that firmware did not have.
 // A URX44V on 1.5 that loads it keeps the Limit it holds, so the import keeps the plan's.
+// A file's sample rate becomes the plan's, and from the plan it is written to the unit. Only a
+// rate the unit runs at is taken; any other is a read that failed, and the plan keeps its rate.
+describe("a file's sample rate", () => {
+  const sourceAt = (rate: number) =>
+    paramSourceOf(
+      parseUrxf(
+        buildUrxf([
+          {
+            chunk: "CURRENT",
+            block: "CSF_BACKUP",
+            label: "",
+            fields: [...CURRENT_FIELDS, { id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] }],
+          },
+        ]),
+      ).chunks[0]!,
+    );
+
+  it("takes a rate the unit runs at", async () => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = 48_000;
+    await applySourceState(getModel("URX44V"), plan, sourceAt(96_000));
+    expect(plan.sampleRate).toBe(96_000);
+  });
+
+  it.each([32_000, 0, 384_000])("keeps the plan's rate for %d Hz, which the unit does not run at", async (rate) => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = 48_000;
+    const result = await applySourceState(getModel("URX44V"), plan, sourceAt(rate));
+    expect(plan.sampleRate).toBe(48_000);
+    expect(result.errors.filter((e) => e.startsWith("sample rate:"))).toHaveLength(1);
+  });
+});
+
 describe("a file written before System 1.5", () => {
   const n = (count: number, value: number): number[] => Array.from({ length: count }, () => value);
   const bands = (from: number, count: number): Field[] =>
