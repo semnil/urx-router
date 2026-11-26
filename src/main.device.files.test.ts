@@ -667,6 +667,38 @@ describe("importing a settings file", () => {
       expect(written(shell, RATE, from)).toEqual([]);
     });
 
+    // What stays the unit's is still read from the file, so a value the file carries wrong or not
+    // at all is reported as it is outside a session, though the plan keeps the unit's either way.
+    it.each([
+      ["a rate the unit does not run at, under Scene only", () => file(false, 32_000, 4), true, "sample rate:"],
+      [
+        "no rate, under Scene only",
+        () =>
+          buildUrxf([
+            {
+              chunk: "CURRENT",
+              block: "CSF_BACKUP",
+              label: "",
+              fields: [...CURRENT_FIELDS, { id: FOLLOW, typecode: 1, elemSize: 1, values: [0] }],
+            },
+          ]),
+        true,
+        "sample rate:",
+      ],
+      ["no Track Count", () => file(false, 48_000), false, "SD Rec track count:"],
+    ])("reports a file with %s", SLOW, async (_, bytes, scene, reported) => {
+      const shell = await liveImport(bytes(), unit(false, 48_000, 0, 16), () => "Ok", scene);
+      shell.answer("plugin:dialog|save", "/tmp/import-errors.md");
+      shell.answer("write_text_file", null);
+      const before = shell.count("write_text_file");
+      const from = await importNow(shell);
+      await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 15_000 });
+      const report = (shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents;
+      expect(report).toContain(reported);
+      expect(written(shell, RATE, from)).toEqual([]);
+      expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 });
+    });
+
     /** Undo or redo from the Edit menu, pressed again while a follow read in flight refuses it —
      *  a refused press is left where it was, so the next one is the same press. The invoke the
      *  press that went through started from. */

@@ -5249,7 +5249,8 @@ file's Follow USB is written before the rest, so the rate the session then write
 the file says. Under the Scene only device scope both are outside the session: nothing is asked, the file's rate is
 not taken, and the status line says the rate stayed. The recorder's Track Count stays the unit's in either scope, since
 nothing writes it. What stays the unit's is answered with the plan's own value before anything is applied
-(`sessionImportSource`), so the import moves none of it: a rate the file would lower the Track Count with is never set
+(`sessionImportSource`), once the file's own value has been read, so a value the file carries wrong or not at all is
+reported as it is outside a session, and the import moves none of it: a rate the file would lower the Track Count with is never set
 on the plan, and under a rate the import takes, the count is what that rate leaves of the unit's. The import is refused
 while any other device action holds the link (a Live sync still connecting holds it with no session up yet), and
 asks again once its confirms are answered, going ahead only in the state the confirm asked about, since the

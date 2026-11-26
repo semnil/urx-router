@@ -4840,20 +4840,23 @@ async function confirmImportClock(
  * recorder's Track Count is the unit's, since nothing writes it, and so is the rate where the file's
  * is not taken (the Scene only device scope). Answered with the plan's value at the moment it is
  * read, after any rate the import takes has brought the count under that rate's ceiling, as the unit
- * does. A plan holding no Track Count has none to answer with, and the read fails with that.
+ * does. The file is read first all the same, so a value it does not carry or carries wrong is
+ * reported as it is outside a session. A plan holding no Track Count has none to answer with, and
+ * the read fails with that.
  */
 function sessionImportSource(source: ParamSource, takeRate: boolean): ParamSource {
   return {
     ...source,
     get: async (paramId, x, y) => {
       const address = paramId + x;
+      const value = await source.get(paramId, x, y);
       if (address === PARAMS.SAMPLE_RATE.id && !takeRate) return plan.sampleRate;
       if (address === PARAMS.SD_REC_TRACK_COUNT.id) {
         const count = plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount;
         if (count === undefined) throw new Error("the plan holds no Track Count to keep for the unit");
         return count / 2;
       }
-      return source.get(paramId, x, y);
+      return value;
     },
   };
 }
