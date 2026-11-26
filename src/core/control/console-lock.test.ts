@@ -120,6 +120,26 @@ describe("watchConsoleLock", () => {
     expect(onLock).toHaveBeenCalledTimes(1);
   });
 
+  // The registration's verdict comes after a notify it already let through: a lock announced in
+  // between held writes for a watch that then never started, and must not outlive it.
+  it("leaves writes let through when the registration fails after a lock was announced", async () => {
+    let deliver: ((p: ParamUpdate) => void) | null = null;
+    const io: LockWatchIo = {
+      subscribe: async (_addrs, onUpdate) => {
+        deliver = onUpdate;
+        onUpdate({ paramId: 895, x: 0, y: 0, value: 1 });
+        throw new Error("broker-rejected: 895:0:0 response_code 400");
+      },
+      get: async () => 0,
+    };
+    const onLock = vi.fn();
+    await expect(watchConsoleLock(onLock, io)).rejects.toThrow("broker-rejected");
+    expect(deviceWritesHeld()).toBe(false);
+    (deliver as ((p: ParamUpdate) => void) | null)?.({ paramId: 895, x: 0, y: 0, value: 1 });
+    expect(deviceWritesHeld(), "a notify after the failed start holds nothing").toBe(false);
+    expect(onLock).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves nothing registered or held when the read fails", async () => {
     const u = unit(0, true);
     await expect(watchConsoleLock(() => {}, u.io)).rejects.toThrow("not-connected");

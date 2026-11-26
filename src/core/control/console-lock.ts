@@ -109,9 +109,18 @@ export async function watchConsoleLock(
     holdDeviceWrites(true);
     onLock();
   };
-  const unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
-    if (isConsoleLockAddr(p) && consoleLockedOf(p.value)) trip();
-  });
+  let unsubscribe: () => void;
+  try {
+    unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
+      if (isConsoleLockAddr(p) && consoleLockedOf(p.value)) trip();
+    });
+  } catch (err) {
+    // A lock announced before the registration failed held writes on this watch's
+    // behalf; a watch that never started holds nothing, and hears nothing after this.
+    stopped = true;
+    if (tripped) holdDeviceWrites(false);
+    throw err;
+  }
   const release = (): void => {
     if (stopped) return;
     stopped = true;
