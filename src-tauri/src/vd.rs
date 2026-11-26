@@ -1468,12 +1468,13 @@ mod imp {
     }
 
     /// The unit's System firmware version, from /vd/device's firm_list. `Some("")`
-    /// means the unit answered but reports no System version, which legitimately
-    /// disables the frontend's mismatch warning. `None` means the read itself did
-    /// not land — an unanswered /vd/device or a response without a firm_list — so
-    /// the version is unknown rather than absent, and the frontend refuses to touch
-    /// the device instead of proceeding with the gate silently disabled. A device-lost
-    /// push during the read is the handshake's error.
+    /// means the unit answered with a list read in full that holds no System version,
+    /// which legitimately disables the frontend's mismatch warning. `None` means the
+    /// version could not be read — an unanswered /vd/device, a response without a
+    /// firm_list, or a list the version cannot be taken from — so it is unknown rather
+    /// than absent, and the frontend refuses to touch the device instead of proceeding
+    /// with the gate silently disabled. A device-lost push during the read is the
+    /// handshake's error.
     fn system_firmware(link: &mut Link) -> Result<Option<String>, String> {
         match vd_get_data(link, "/vd/device", true) {
             Ok(data) => Ok(firmware_of(&data)),
@@ -1482,29 +1483,29 @@ mod imp {
         }
     }
 
-    /// The System version in a /vd/device answer.
+    /// The System version in a /vd/device answer, its entries matched by name without
+    /// case, or None when it cannot be read: no firm_list array, an entry without a
+    /// non-empty string firm_name (it could be the System entry), a System entry
+    /// without a string firm_version, or System entries that disagree. Entry order
+    /// does not change the result, and no System entry is `Some("")`.
     fn firmware_of(data: &Value) -> Option<String> {
         let list = data.pointer("/firm_list").and_then(Value::as_array)?;
-        // The System entry, matched by name (case-insensitive). A missing or renamed
-        // entry leaves the version empty (warning disabled) rather than mistaking
-        // another component's version for System.
+        let mut version: Option<&str> = None;
         for entry in list {
-            if entry
+            let name = entry
                 .get("firm_name")
                 .and_then(Value::as_str)
-                .unwrap_or("")
-                .eq_ignore_ascii_case("system")
-            {
-                return Some(
-                    entry
-                        .get("firm_version")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                );
+                .filter(|name| !name.is_empty())?;
+            if !name.eq_ignore_ascii_case("system") {
+                continue;
             }
+            let this = entry.get("firm_version").and_then(Value::as_str)?;
+            if version.is_some_and(|seen| seen != this) {
+                return None;
+            }
+            version = Some(this);
         }
-        Some(String::new())
+        Some(version.unwrap_or("").to_string())
     }
 
     /// What a write's reply says about the write.
@@ -3188,6 +3189,92 @@ mod imp {
                 "data": { "sync_status": "lost" }
             })))
             .is_none());
+        }
+
+        // The firmware version is three-valued (architecture.md "Live control
+        // connection"): `Some("")` only when the unit's list was read in full and holds
+        // no System entry, and `None` whenever the version cannot be read from it — a
+        // row whose name cannot be read could be the System entry, a System row with no
+        // string version has no version, and two System rows that disagree name none.
+        #[test]
+        fn the_firmware_is_unknown_when_its_rows_cannot_be_read() {
+            for (label, firm_list, expected) in [
+                ("one System row", system("1.5.0"), Some("1.5.0")),
+                (
+                    "System after another row",
+                    json!([
+                        { "firm_name": "MCU Main", "firm_version": "1.0" },
+                        { "firm_name": "system", "firm_version": "1.5.0" }
+                    ]),
+                    Some("1.5.0"),
+                ),
+                (
+                    "two System rows that agree",
+                    json!([
+                        { "firm_name": "System", "firm_version": "1.5.0" },
+                        { "firm_name": "SYSTEM", "firm_version": "1.5.0" }
+                    ]),
+                    Some("1.5.0"),
+                ),
+                (
+                    "no System row",
+                    json!([{ "firm_name": "MCU Main", "firm_version": "1.0" }]),
+                    Some(""),
+                ),
+                ("an empty System version", system(""), Some("")),
+                (
+                    "a System row with a number for its version",
+                    json!([{ "firm_name": "System", "firm_version": 150 }]),
+                    None,
+                ),
+                (
+                    "a System row with no version",
+                    json!([{ "firm_name": "System" }]),
+                    None,
+                ),
+                (
+                    "a row with no name",
+                    json!([{ "firm_version": "1.5.0" }]),
+                    None,
+                ),
+                (
+                    "a row with a number for its name",
+                    json!([
+                        { "firm_name": 1, "firm_version": "1.4.0" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
+                (
+                    "a row with an empty name",
+                    json!([{ "firm_name": "", "firm_version": "1.5.0" }]),
+                    None,
+                ),
+                (
+                    "two System rows that disagree",
+                    json!([
+                        { "firm_name": "System", "firm_version": "1.4.0" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
+            ] {
+                assert_eq!(
+                    handshake_with(vec![status_reply("online"), device_reply(firm_list)]),
+                    Ok(expected.map(str::to_string)),
+                    "{label}"
+                );
+            }
+        }
+
+        // An empty status is a status that is not `online`, which is `no-device`
+        // (architecture.md "Live control connection").
+        #[test]
+        fn an_empty_status_is_no_device() {
+            assert_eq!(
+                handshake_with(vec![status_reply("")]),
+                Err("no-device".to_string())
+            );
         }
 
         /// A line from the broker that is not JSON.
