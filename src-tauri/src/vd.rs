@@ -2958,11 +2958,14 @@ mod imp {
         use std::time::{Duration, Instant};
         use tauri::ipc::{Channel, InvokeResponseBody};
 
-        /// A link, and the broker's end of it.
+        /// A link, and the broker's end of it. Nagle is off on the broker's end as well, so
+        /// a case's small writes reach the link when it writes them, not when the previous
+        /// one's (possibly delayed) acknowledgement comes back.
         fn vdp_link() -> (Link, TcpStream) {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
             let (peer, _) = listener.accept().unwrap();
+            peer.set_nodelay(true).unwrap();
             arm_socket(&sock, READ_TIMEOUT).unwrap();
             (
                 Link {
@@ -3199,9 +3202,14 @@ mod imp {
         #[test]
         fn a_read_before_a_deadline_blocks_no_longer_than_what_is_left() {
             let (mut link, _peer) = vdp_link();
+            // A read left at READ_TIMEOUT blocks that long at least; one armed with a
+            // millisecond returns under it even on a timer as coarse as Windows' (~31 ms).
             for (left, under) in [
                 (Duration::ZERO, Duration::from_millis(5)),
-                (Duration::from_millis(10), Duration::from_millis(40)),
+                (
+                    Duration::from_millis(1),
+                    READ_TIMEOUT - Duration::from_millis(5),
+                ),
             ] {
                 let started = Instant::now();
                 assert_eq!(link.read_frame_before(started + left), Ok(None));
