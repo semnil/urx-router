@@ -690,9 +690,58 @@ mod imp {
     /// follow layer.
     #[derive(Default)]
     struct Routes {
-        meters: Option<(TokenId, Channel<Vec<MeterUpdate>>)>,
-        params: Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
-        probe: Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
+        meters: Route<MeterUpdate>,
+        params: Route<ParamUpdate>,
+        probe: Route<ParamUpdate>,
+    }
+
+    /// One kind's channel and the one it replaced. A replacement switches to the new
+    /// token while the old one still has notifications queued for it, received before
+    /// the switch; those still go out, on the old token's own channel. A notification
+    /// both tokens received goes out once, on the new one.
+    struct Route<T, Id = TokenId> {
+        current: Option<(Id, Channel<Vec<T>>)>,
+        previous: Option<(Id, Channel<Vec<T>>)>,
+    }
+
+    impl<T, Id> Default for Route<T, Id> {
+        fn default() -> Self {
+            Route {
+                current: None,
+                previous: None,
+            }
+        }
+    }
+
+    impl<T: serde::Serialize + Clone, Id: PartialEq> Route<T, Id> {
+        fn switch(&mut self, token: Id, channel: Channel<Vec<T>>) {
+            self.previous = self.current.take();
+            self.current = Some((token, channel));
+        }
+
+        fn clear(&mut self) {
+            self.current = None;
+            self.previous = None;
+        }
+
+        /// The channel a notification goes out on: the current token's when it is a
+        /// recipient, else the previous token's, else none.
+        fn pick(&self, recipients: &[Id]) -> Option<usize> {
+            [&self.current, &self.previous].iter().position(|route| {
+                route
+                    .as_ref()
+                    .is_some_and(|(token, _)| recipients.contains(token))
+            })
+        }
+
+        /// Sends the updates `pick` sorted, one IPC message per channel that has any.
+        fn send(&self, sorted: [Vec<T>; 2]) {
+            for (route, updates) in [&self.current, &self.previous].into_iter().zip(sorted) {
+                if let (Some((_, channel)), false) = (route, updates.is_empty()) {
+                    let _ = channel.send(updates);
+                }
+            }
+        }
     }
 
     /// One batch the transport delivered, sent on as one IPC message per channel, then
@@ -702,26 +751,16 @@ mod imp {
         connection: &OnceLock<Arc<Connection>>,
         batch: NotificationBatch,
     ) {
-        let mut meters = Vec::new();
-        let mut params = Vec::new();
-        let mut probe = Vec::new();
+        let mut meters: [Vec<MeterUpdate>; 2] = Default::default();
+        let mut params: [Vec<ParamUpdate>; 2] = Default::default();
+        let mut probe: [Vec<ParamUpdate>; 2] = Default::default();
         {
             let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
-            let has = |route: &Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
-                       recipients: &[TokenId]| {
-                route
-                    .as_ref()
-                    .is_some_and(|(token, _)| recipients.contains(token))
-            };
             for record in &batch.records {
                 match &record.payload {
                     Notification::Meter { address, value } => {
-                        if routes
-                            .meters
-                            .as_ref()
-                            .is_some_and(|(token, _)| record.recipients.contains(token))
-                        {
-                            meters.push(MeterUpdate {
+                        if let Some(at) = routes.meters.pick(&record.recipients) {
+                            meters[at].push(MeterUpdate {
                                 meter_id: address.meter_id,
                                 x: address.x,
                                 value: *value,
@@ -747,24 +786,18 @@ mod imp {
                             Notification::BulkChange => BULK_CHANGE,
                             Notification::Meter { .. } => unreachable!("matched above"),
                         };
-                        if has(&routes.params, &record.recipients) {
-                            params.push(update.clone());
+                        if let Some(at) = routes.params.pick(&record.recipients) {
+                            params[at].push(update.clone());
                         }
-                        if has(&routes.probe, &record.recipients) {
-                            probe.push(update);
+                        if let Some(at) = routes.probe.pick(&record.recipients) {
+                            probe[at].push(update);
                         }
                     }
                 }
             }
-            if let (Some((_, channel)), false) = (&routes.meters, meters.is_empty()) {
-                let _ = channel.send(meters);
-            }
-            if let (Some((_, channel)), false) = (&routes.params, params.is_empty()) {
-                let _ = channel.send(params);
-            }
-            if let (Some((_, channel)), false) = (&routes.probe, probe.is_empty()) {
-                let _ = channel.send(probe);
-            }
+            routes.meters.send(meters);
+            routes.params.send(params);
+            routes.probe.send(probe);
         }
         if let Some(connection) = connection.get() {
             connection.adopt_notifications(batch.ticket);
@@ -1007,20 +1040,21 @@ mod imp {
         }
 
         /// Replaces one subscription: a new token for `addresses`, switched to, then the
-        /// old token released (K10). The channel moves to the new token as soon as the
-        /// token exists, before its registrations run: the token receives notifications
-        /// from then on, so one that arrives while the registrations are in flight is
-        /// judged by the NEW set and goes out on the NEW channel. Registration runs one
-        /// address at a time with each verdict checked (K9); the reply carries the first
-        /// failure. A refused subscribe leaves nothing subscribed on its channel: the
-        /// transport releases a token whose activation failed, unregistering what it had
-        /// registered, and the previous token is released as on success, so neither set is
-        /// left installed.
+        /// old token released (K10). The token and its channel come into being in one
+        /// step under the routes lock, which the delivery thread takes for every batch, so
+        /// nothing the new token receives is judged before its channel is installed: one
+        /// that arrives while the registrations are in flight is judged by the NEW set and
+        /// goes out on the NEW channel, and what the old token received before the switch
+        /// still goes out on the old one (`Route`). Registration runs one address at a
+        /// time with each verdict checked (K9); the reply carries the first failure. A
+        /// refused subscribe leaves nothing subscribed on its channel: the transport releases a token whose
+        /// activation failed, unregistering what it had registered, and the previous token
+        /// is released as on success, so neither set is left installed.
         fn subscribe(
             &mut self,
             which: Which,
             addresses: Vec<SubscriptionAddress>,
-            install: impl FnOnce(&mut Routes, Option<TokenId>),
+            install: impl FnOnce(&mut Routes, TokenId),
         ) -> Result<(), String> {
             if let Some(ended) = self.connection.terminal() {
                 return Err(ended_text(&self.connection, ended));
@@ -1038,14 +1072,15 @@ mod imp {
                     "a registration",
                 )
             })?;
-            let new = self
-                .connection
-                .prepare_subscription(&addresses)
-                .map_err(|failure| self.lifecycle_failure_text(&failure))?;
-            install(
-                &mut self.routes.lock().unwrap_or_else(|p| p.into_inner()),
-                Some(new.token()),
-            );
+            let new = {
+                let mut routes = self.routes.lock().unwrap_or_else(|p| p.into_inner());
+                let new = self
+                    .connection
+                    .prepare_subscription(&addresses)
+                    .map_err(|failure| self.lifecycle_failure_text(&failure))?;
+                install(&mut routes, new.token());
+                new
+            };
             LinkCounters::add(
                 &self.counters.regist_frames,
                 wanted.difference(&held).count(),
@@ -1328,12 +1363,12 @@ mod imp {
                     let _ =
                         reply.send(
                             session.subscribe(Which::Meters, addresses, |routes, token| {
-                                routes.meters = token.map(|token| (token, channel));
+                                routes.meters.switch(token, channel);
                             }),
                         );
                 }
                 Ok(Cmd::MetersUnsubscribe) => {
-                    session.unsubscribe(Which::Meters, |routes| routes.meters = None)
+                    session.unsubscribe(Which::Meters, |routes| routes.meters.clear())
                 }
                 Ok(Cmd::ParamsSubscribe {
                     addrs,
@@ -1345,12 +1380,12 @@ mod imp {
                     let _ =
                         reply.send(
                             session.subscribe(Which::Params, addresses, |routes, token| {
-                                routes.params = token.map(|token| (token, channel));
+                                routes.params.switch(token, channel);
                             }),
                         );
                 }
                 Ok(Cmd::ParamsUnsubscribe) => {
-                    session.unsubscribe(Which::Params, |routes| routes.params = None)
+                    session.unsubscribe(Which::Params, |routes| routes.params.clear())
                 }
                 Ok(Cmd::ProbeSubscribe {
                     addrs,
@@ -1360,7 +1395,7 @@ mod imp {
                     let addresses = parameter_addresses(addrs);
                     let _ =
                         reply.send(session.subscribe(Which::Probe, addresses, |routes, token| {
-                            routes.probe = token.map(|token| (token, channel));
+                            routes.probe.switch(token, channel);
                         }));
                 }
                 Ok(Cmd::WatchLink { channel }) => link_ch = Some(channel),
@@ -1411,7 +1446,7 @@ mod imp {
             get, get_str, meters_subscribe, params_subscribe, probe_subscribe, set, set_str,
             watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
         };
-        use super::{link_failure_text, worker_at, BROKER_UNRESPONSIVE};
+        use super::{link_failure_text, worker_at, Route, BROKER_UNRESPONSIVE};
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
@@ -1886,6 +1921,59 @@ mod imp {
             let (third, _) = capture::<Vec<super::super::ParamUpdate>>();
             params_subscribe(tx, vec![(1, 0, 0)], third).unwrap();
             assert_eq!(counters.read().unregist_frames, released);
+        }
+
+        // A replacement switches to the new token while the old one can still have
+        // notifications queued, received before the switch: those go out on the old token's
+        // channel, one both tokens received goes out once on the new one, and nothing older
+        // than the channel before the current one is kept.
+        #[test]
+        fn a_route_keeps_the_channel_before_a_switch_for_what_its_token_received() {
+            let update = |value| super::super::ParamUpdate {
+                param_id: 1,
+                x: 0,
+                y: 0,
+                value,
+                value_str: None,
+            };
+            let (old, old_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            let (new, new_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            let mut route: Route<super::super::ParamUpdate, u64> = Route::default();
+            assert_eq!(route.pick(&[1]), None);
+            route.switch(1, old);
+            route.switch(2, new);
+            assert_eq!(
+                route.pick(&[1, 2]),
+                Some(0),
+                "both tokens: once, on the new channel"
+            );
+            assert_eq!(route.pick(&[2]), Some(0));
+            assert_eq!(
+                route.pick(&[1]),
+                Some(1),
+                "the old token's: the old channel"
+            );
+            assert_eq!(route.pick(&[3]), None);
+            route.send([vec![update(5)], vec![update(6)]]);
+            assert_eq!(
+                next(&new_seen),
+                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
+            );
+            assert_eq!(
+                next(&old_seen),
+                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 6 }])
+            );
+            route.send([Vec::new(), Vec::new()]);
+            assert!(
+                new_seen.recv_timeout(Duration::from_millis(50)).is_err(),
+                "an empty batch is not sent"
+            );
+            let (third, _) = capture::<Vec<super::super::ParamUpdate>>();
+            route.switch(3, third);
+            assert_eq!(route.pick(&[1]), None, "two switches back is not kept");
+            assert_eq!(route.pick(&[2]), Some(1));
+            route.clear();
+            assert_eq!(route.pick(&[2, 3]), None);
         }
 
         #[test]
