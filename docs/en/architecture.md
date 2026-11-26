@@ -3893,7 +3893,8 @@ action connecting over that read.
 
 The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
-unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
+unregisters and the close to reach the wire. The worker is handed the instant that wait ends, and its read of what
+the broker still has queued stops one read's timeout ahead of it, however the frames arrive. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the

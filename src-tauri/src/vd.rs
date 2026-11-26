@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -267,8 +267,10 @@ pub enum Cmd {
     /// Unregister everything this session registered, close the socket, and exit.
     /// `done` is signalled once that has actually happened — only the app-exit path
     /// passes one, because it is the only caller whose process may not outlive the
-    /// worker. Everywhere else the worker keeps running and finishes on its own.
-    Shutdown { done: Option<Sender<()>> },
+    /// worker. Everywhere else the worker keeps running and finishes on its own. It
+    /// comes with the instant that caller stops waiting, which the close drain ends
+    /// ahead of, so the signal is in time.
+    Shutdown { done: Option<(Sender<()>, Instant)> },
 }
 
 /// The installed connection: the channel to the live worker (if any) and the
@@ -597,11 +599,15 @@ pub fn shutdown_blocking(state: &VdState) {
     // step added there reaches app quit too — which is the one teardown with no second
     // chance to run it.
     let (done, wait) = mpsc::channel();
-    let sent = stop(&mut state.conn.lock().unwrap(), Some(done));
+    let by = Instant::now() + EXIT_TEARDOWN_WAIT;
+    let sent = stop(&mut state.conn.lock().unwrap(), Some((done, by)));
     if !sent {
         return; // nothing installed, or the worker is already gone
     }
-    if wait.recv_timeout(EXIT_TEARDOWN_WAIT).is_err() {
+    if wait
+        .recv_timeout(by.saturating_duration_since(Instant::now()))
+        .is_err()
+    {
         eprintln!("vd: the broker session did not close within the exit teardown window");
     }
 }
@@ -610,7 +616,7 @@ pub fn shutdown_blocking(state: &VdState) {
 /// channel to signal once it has. The one spelling of a teardown, so a step added to it
 /// (dropping a channel eagerly, bumping the epoch) cannot reach one caller and miss
 /// another. Returns whether a live worker was actually told. Caller holds the lock.
-fn stop(c: &mut Conn, done: Option<Sender<()>>) -> bool {
+fn stop(c: &mut Conn, done: Option<(Sender<()>, Instant)>) -> bool {
     c.owner = None;
     let Some(tx) = c.tx.take() else { return false };
     tx.send(Cmd::Shutdown { done }).is_ok()
@@ -801,7 +807,7 @@ mod imp {
         let mut health = Health::new(Arc::clone(&counters));
         // Set by the app-exit teardown, which waits for it: the socket has to be
         // unregistered and closed before the process goes away, not merely told to be.
-        let mut exit_done: Option<Sender<()>> = None;
+        let mut exit_done: Option<(Sender<()>, Instant)> = None;
         loop {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
@@ -993,9 +999,13 @@ mod imp {
         // The shutdown ends this side's half; the drain below reads what the broker
         // still has queued until its EOF, so the socket is not dropped mid-stream.
         link.begin_close();
+        // The app-exit teardown's caller stops waiting at its instant, so the drain ends
+        // one READ_TIMEOUT ahead of it, however the frames arrive: whole lines no longer
+        // than that apart would otherwise keep it reading to CLOSE_FRAMES.
+        let close_by = exit_done.as_ref().map(|(_, by)| *by - READ_TIMEOUT);
         let mut frames = 0;
         let mut progress = Instant::now();
-        while frames < CLOSE_FRAMES {
+        while frames < CLOSE_FRAMES && close_by.is_none_or(|by| Instant::now() < by) {
             // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
             // peer has nothing queued, so its EOF is not coming and there is nothing
             // left to drain. Counting those against the budget would spend 64 × that on
@@ -1008,7 +1018,11 @@ mod imp {
             // straggler too early, this one must not hold Quit, and shorter is the
             // right direction for it. Said out loud so the next change to READ_TIMEOUT
             // knows it is moving this too.
-            match link.read_frame() {
+            let read = match close_by {
+                Some(by) => link.read_frame_before(by),
+                None => link.read_frame(),
+            };
+            match read {
                 Ok(Some(_)) => {
                     frames += 1;
                     progress = Instant::now();
@@ -1022,7 +1036,7 @@ mod imp {
         }
         // Sent LAST, so the app-exit path is released by the close having happened and
         // not merely by the intent to close.
-        if let Some(done) = exit_done.take() {
+        if let Some((done, _)) = exit_done.take() {
             let _ = done.send(());
         }
     }
@@ -2930,7 +2944,7 @@ mod imp {
         // before the pump first reads, and a case that waits on the worker waits for
         // what the worker sends back, under a bound, so no case depends on a peer's
         // timing.
-        use super::super::{watch_link, Cmd, LinkCounters};
+        use super::super::{watch_link, Cmd, LinkCounters, EXIT_TEARDOWN_WAIT};
         use super::{
             arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, handshake,
             pump, serve, synchronize_lost, LineReader, Link, Subs, DEVICE_LOST_PREFIX,
@@ -2938,7 +2952,7 @@ mod imp {
         };
         use serde_json::{json, Value};
         use std::io::Write;
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Read};
         use std::net::{TcpListener, TcpStream};
         use std::sync::{mpsc, Arc};
         use std::time::{Duration, Instant};
@@ -3406,7 +3420,10 @@ mod imp {
             std::thread::sleep(Duration::from_millis(100));
             let (done, closed) = mpsc::channel();
             let started = Instant::now();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("the session closes");
@@ -3417,6 +3434,57 @@ mod imp {
             );
             worker.join().unwrap();
             drop(trickle);
+        }
+
+        // The app-exit teardown's caller stops waiting at its instant, and the close drain
+        // ends ahead of it however the broker's frames arrive: whole lines 32 ms apart, or
+        // whole lines and then pieces of one that never ends. Read to CLOSE_FRAMES, those
+        // whole lines alone would hold the drain about two seconds.
+        #[test]
+        fn the_close_drain_ends_before_the_exit_teardowns_caller_stops_waiting() {
+            for never_ends_after in [None, Some(47)] {
+                let (link, mut peer) = vdp_link();
+                let (tx, rx) = mpsc::channel();
+                let worker =
+                    std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+                let (done, closed) = mpsc::channel();
+                let by = Instant::now() + EXIT_TEARDOWN_WAIT;
+                tx.send(Cmd::Shutdown {
+                    done: Some((done, by)),
+                })
+                .unwrap();
+                let feed = std::thread::spawn(move || {
+                    // The close is under way once this side's write half is shut.
+                    let mut byte = [0u8; 1];
+                    while peer.read(&mut byte).is_ok_and(|n| n > 0) {}
+                    for i in 0..60 {
+                        let line = if never_ends_after.is_some_and(|after| i >= after) {
+                            " ".to_string()
+                        } else {
+                            format!(
+                                "{}\n",
+                                json!({ "vdp": {
+                                    "method": "notify",
+                                    "uri": format!("/vd/meters/{i}:0"),
+                                    "data": { "current_value": -60 }
+                                }})
+                            )
+                        };
+                        if peer.write_all(line.as_bytes()).is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(32));
+                    }
+                });
+                assert!(
+                    closed
+                        .recv_timeout(by.saturating_duration_since(Instant::now()))
+                        .is_ok(),
+                    "{never_ends_after:?}: the close outlasted its caller's wait"
+                );
+                worker.join().unwrap();
+                drop(feed);
+            }
         }
 
         // Half a line and then silence at close: the close drain ends at the read that
@@ -3431,7 +3499,10 @@ mod imp {
             std::thread::sleep(Duration::from_millis(100));
             let (done, closed) = mpsc::channel();
             let started = Instant::now();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("the session closes");
@@ -3904,7 +3975,10 @@ mod imp {
             assert!(asked.elapsed() < Duration::from_secs(1));
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a lost session still closes on Shutdown");
@@ -4005,7 +4079,10 @@ mod imp {
             );
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
         }
@@ -4042,7 +4119,10 @@ mod imp {
             ask(&tx, params(vec![(1, 0, 0), (3, 0, 0)])).unwrap();
             tx.send(Cmd::ParamsUnsubscribe).unwrap();
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
 
@@ -4110,7 +4190,10 @@ mod imp {
             );
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a lost session still closes on Shutdown");
