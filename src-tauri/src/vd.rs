@@ -1730,6 +1730,10 @@ mod imp {
         let mut parts = addr.split(':');
         let (id, xs) = (parts.next()?, parts.next()?);
         let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
+        // Two coordinates exactly: one with more is another address, not this one.
+        if parts.next().is_some() {
+            return None;
+        }
         // Drop the frame rather than substituting a value, like parse_param does:
         // 0 here is not "no reading", it is 0.0 dBFS, so a malformed frame would
         // slam the bar to full scale and read as clipping that never happened.
@@ -1756,6 +1760,10 @@ mod imp {
             xs.parse::<i64>().ok()?,
             ys.parse::<i64>().ok()?,
         );
+        // Three coordinates exactly, as for a meter's two.
+        if parts.next().is_some() {
+            return None;
+        }
         // Integer first — that is every notify but the name ones, and it must stay
         // the cheap path. A frame carrying neither is still dropped, as before.
         let raw = vdp.pointer("/data/current_value")?;
@@ -2014,7 +2022,10 @@ mod imp {
         // batch must flush on the pump cadence. Plus reply_for, which is where a
         // frame absorb declined lands — the two together decide whether a notify
         // can be mistaken for the answer to a command.
-        use super::{reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET, READ_TIMEOUT};
+        use super::{
+            parse_meter, parse_param, reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET,
+            READ_TIMEOUT,
+        };
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
@@ -2443,6 +2454,32 @@ mod imp {
                     "a get reply with {query:?}"
                 );
             }
+        }
+
+        /// A notify names the address it is about with exactly the coordinates of its
+        /// kind: three for a parameter, two for a meter. One with more is not read as
+        /// the shorter address, which would forward another address's value as this one's.
+        #[test]
+        fn a_notify_with_more_coordinates_than_its_kind_is_not_an_update() {
+            for uri in [
+                "/vd/parameters/142:0:1:9",
+                "/vd/parameters/142:0:1:",
+                "/vd/parameters/142:0:1:x",
+            ] {
+                assert!(parse_param(&notify(uri.into(), 1)).is_none(), "{uri}");
+            }
+            for uri in ["/vd/meters/7:-1:0", "/vd/meters/7:-1:", "/vd/meters/7:-1:x"] {
+                assert!(parse_meter(&notify(uri.into(), 1)).is_none(), "{uri}");
+            }
+            let param = parse_param(&notify("/vd/parameters/142:0:1?x=1".into(), 4))
+                .expect("three coordinates are a parameter address");
+            assert_eq!(
+                (param.param_id, param.x, param.y, param.value),
+                (142, 0, 1, 4)
+            );
+            let meter = parse_meter(&notify("/vd/meters/7:-1".into(), -60))
+                .expect("two coordinates are a meter address");
+            assert_eq!((meter.meter_id, meter.x, meter.value), (7, -1, -60));
         }
     }
 
