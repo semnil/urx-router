@@ -13,7 +13,9 @@
 // places to remember and a missed one is an edit that silently cannot be undone.
 
 import { t } from "../i18n";
+import { SDREC_NODE_ID } from "../core/plan";
 import type { Plan } from "../core/plan";
+import { trackCountAtRate } from "../core/constraints";
 import type { PatchTouch, PlanPatch } from "../core/plan-history";
 import { applyPatch, patchTouch, PlanHistoryStack, patchContestNames } from "../core/plan-history";
 import type { RateHold } from "../core/sim-locks";
@@ -72,6 +74,11 @@ export interface PlanHistoryHooks {
    *  once the operator has agreed to the rate the entry would leave, or null when nothing needs
    *  asking. The entry stays on the stack while the question is open. */
   confirmRate?: (rate: number) => Promise<boolean> | null;
+  /** Whether the plan's recorder Track Count is the unit's: during a session nothing writes it,
+   *  and the unit lowers it to a rate's ceiling and never raises it back. While it is, an undo or
+   *  redo leaves the count where it is, under the ceiling of the rate it lands on, rather than
+   *  restoring the one the entry recorded. */
+  unitHoldsTrackCount?: () => boolean;
   /** Display name for a node id, for the status line. */
   labelOf: (nodeId: string) => string;
   onStatus: (msg: string) => void;
@@ -445,7 +452,15 @@ export class PlanHistory {
   private apply(patch: PlanPatch, touch: PatchTouch): void {
     this.applying = true;
     try {
-      const missing = applyPatch(this.hooks.getPlan(), patch);
+      const plan = this.hooks.getPlan();
+      const held = this.hooks.unitHoldsTrackCount?.() ? plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount : undefined;
+      const missing = applyPatch(plan, patch);
+      if (held !== undefined) {
+        plan.nodeParams[SDREC_NODE_ID] = {
+          ...plan.nodeParams[SDREC_NODE_ID],
+          sdRecTrackCount: trackCountAtRate(held, plan.sampleRate),
+        };
+      }
       if (missing.length) {
         // The plan moved on under the entry (a wire removed since). What could be
         // applied was; the rest has nowhere to land.

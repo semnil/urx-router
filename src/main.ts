@@ -5192,6 +5192,7 @@ planHistory = new PlanHistory({
   // off, once the operator has agreed to it.
   rateHeld: () => rateHold(rateHoldState()),
   confirmRate: (rate) => confirmLiveRate(rate),
+  unitHoldsTrackCount: () => liveSessionUp,
   // Asked of the state the entry would leave behind rather than of the keys it carries: an
   // undo turns a switch on as much as the gesture it reverses did, and which of the two an
   // entry moved does not decide the answer. The patch is applied to a copy, which is the

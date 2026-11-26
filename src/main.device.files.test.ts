@@ -22,6 +22,7 @@ import { t } from "./i18n";
 import {
   SLOW,
   bootDevice,
+  chooseRate,
   invoked,
   live,
   fetchEnded,
@@ -665,6 +666,35 @@ describe("importing a settings file", () => {
       await importDone(shell);
       expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 });
       expect(written(shell, RATE, from)).toEqual([]);
+    });
+
+    // The unit lowers its Track Count to a rate's ceiling and never raises it back, so undoing a
+    // rate that lowered it during the session leaves the plan at the count the unit kept — the
+    // rate an import took and the one the picker took alike — and redoing it keeps that too.
+    it.each([
+      ["an import", true],
+      ["the rate picker", false],
+    ])("keeps the Track Count a rate lowered when %s's rate is undone and redone", SLOW, async (_, imports) => {
+      const shell = await liveImport(file(false, 96_000), unit(false, 48_000, 0, 16));
+      if (imports) {
+        const from = await importNow(shell);
+        await importDone(shell);
+        await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
+      } else {
+        const from = shell.invokes.length;
+        chooseRate(96_000);
+        await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
+        selectNode("ch1"); // the press that ends the edit's entry
+      }
+      expect(await savedRecorder(shell)).toEqual({ tracks: 8, rate: 96_000 });
+      for (const [step, rate] of [
+        [EDIT_UNDO_ID, 48_000],
+        [EDIT_REDO_ID, 96_000],
+      ] as const) {
+        const at = await editMenu(shell, step);
+        await vi.waitFor(() => expect(written(shell, RATE, at)).toContain(rate), { timeout: 15_000 });
+        expect(await savedRecorder(shell), `after ${step}`).toEqual({ tracks: 8, rate });
+      }
     });
 
     // What stays the unit's is still read from the file, so a value the file carries wrong or not

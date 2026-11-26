@@ -3646,7 +3646,10 @@ A failed read cancels the write, per the rule above: the rate decides which para
 statement of what a rate can carry, and `setPlanSampleRate` (`core/plan.ts`) is the only way the plan's rate moves:
 it lowers the stored Track Count to fit and never raises it back, because the unit does not either. Every path that
 moves the rate takes it — the picker, adopting the unit's rate, a device read, a fresh plan, and a LOAD, where it
-also normalises a document naming a rate and a count that cannot both be true. Applied when the rate CHANGES rather
+also normalises a document naming a rate and a count that cannot both be true. During a session an undo or redo that
+moves the rate holds to it as well: the count stays where it is, under the ceiling of the rate the entry lands on,
+rather than coming back to the one the entry recorded (`unitHoldsTrackCount` in `ui/history.ts`); away from a session
+the count is the plan's own and an undo restores it. Applied when the rate CHANGES rather
 than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would
 then describe a recorder the unit does not have. The Inspector offers only the counts the rate allows and says why
 the menu is short, and the graph gates the recorder's track slots on the ceiling as well as on the stored value, so
