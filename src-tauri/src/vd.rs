@@ -1008,6 +1008,8 @@ mod imp {
             // knows it is moving this too.
             match link.read_frame() {
                 Ok(Some(_)) => {}
+                // A line still arriving is read on to its end, within the same budget.
+                Ok(None) if link.mid_line() => {}
                 _ => break, // a closed / dead socket, or nothing more to read
             }
         }
@@ -1234,53 +1236,62 @@ mod imp {
             }
         }
 
-        /// One message, or None on read timeout or on a line that is not parseable
-        /// JSON — callers treat both as "nothing yet" and loop. Parsed in place out
-        /// of `pending`, so a frame is not copied into a `String` on its way to a
-        /// parser that would immediately take it apart again.
+        /// One message, or None on read timeout, on a line that is not parseable JSON,
+        /// or when the one read this call makes leaves the line unfinished — callers
+        /// treat all three as "nothing yet" and loop. A call reads the socket at most
+        /// once, so a caller's deadline is checked after every read, even while a line
+        /// keeps arriving in pieces. Parsed in place out of `pending`, so a frame is not
+        /// copied into a `String` on its way to a parser that would immediately take it
+        /// apart again.
         ///
         /// Generic over the source rather than taking the `TcpStream` both callers
         /// pass, so the chunk-boundary rejoin and the `MAX_PENDING` refusal can be
         /// driven from a byte source a test owns. Neither of those is reachable
         /// through a socket without a peer that misbehaves on cue.
         fn read_json<R: Read>(&mut self, sock: &mut R) -> Result<Option<Value>, String> {
-            loop {
-                if let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
-                    let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
-                    self.pending.drain(..=nl);
-                    return Ok(parsed);
-                }
-                match sock.read(&mut self.chunk) {
-                    Ok(0) => return Err("broker-closed".into()),
-                    // Disjoint field borrows: reading into `chunk` and appending to
-                    // `pending` in one statement is fine, and a temporary between
-                    // them would put back the copy this reader exists to avoid.
-                    Ok(n) => {
-                        self.pending.extend_from_slice(&self.chunk[..n]);
-                        // A peer that never sends a newline would otherwise grow this
-                        // buffer at socket speed for the life of the session — a silent
-                        // memory climb rather than an error anyone can act on. The bound
-                        // is far above any real frame (the largest this protocol carries
-                        // is a device list of a few KiB), so reaching it means the peer
-                        // is not speaking this protocol.
-                        if self.pending.len() > MAX_PENDING {
-                            return Err(format!(
-                                "broker-bad-response: {} bytes with no line break",
-                                self.pending.len()
-                            ));
-                        }
-                    }
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        return Ok(None)
-                    }
-                    Err(e) => return Err(format!("broker-io: {e}")),
-                }
+            if let Some(line) = self.take_line() {
+                return Ok(line);
             }
+            match sock.read(&mut self.chunk) {
+                Ok(0) => return Err("broker-closed".into()),
+                // Disjoint field borrows: reading into `chunk` and appending to
+                // `pending` in one statement is fine, and a temporary between
+                // them would put back the copy this reader exists to avoid.
+                Ok(n) => {
+                    self.pending.extend_from_slice(&self.chunk[..n]);
+                    // A peer that never sends a newline would otherwise grow this
+                    // buffer at socket speed for the life of the session — a silent
+                    // memory climb rather than an error anyone can act on. The bound
+                    // is far above any real frame (the largest this protocol carries
+                    // is a device list of a few KiB), so reaching it means the peer
+                    // is not speaking this protocol.
+                    if self.pending.len() > MAX_PENDING {
+                        return Err(format!(
+                            "broker-bad-response: {} bytes with no line break",
+                            self.pending.len()
+                        ));
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(None)
+                }
+                Err(e) => return Err(format!("broker-io: {e}")),
+            }
+            Ok(self.take_line().flatten())
+        }
+
+        /// The first complete line in `pending`, removed from it and parsed (`Some(None)`
+        /// for a line that is not JSON), or `None` while no line is complete.
+        fn take_line(&mut self) -> Option<Option<Value>> {
+            let nl = self.pending.iter().position(|&b| b == b'\n')?;
+            let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
+            self.pending.drain(..=nl);
+            Some(parsed)
         }
     }
 
@@ -1340,10 +1351,16 @@ mod imp {
             let _ = self.sock.shutdown(std::net::Shutdown::Write);
         }
 
-        /// One inbound message, or None on read timeout or on a line that is not
-        /// parseable JSON — callers treat both as "nothing yet" and loop.
+        /// One inbound message, or None on read timeout, on a line that is not
+        /// parseable JSON, or while a line is still arriving — callers treat all three
+        /// as "nothing yet" and loop. One socket read at most (see read_json).
         fn read_frame(&mut self) -> Result<Option<Value>, String> {
             self.reader.read_json(&mut self.sock)
+        }
+
+        /// Whether part of a line has arrived and its end has not.
+        fn mid_line(&self) -> bool {
+            !self.reader.pending.is_empty()
         }
     }
 
@@ -1570,7 +1587,8 @@ mod imp {
                         return None; // the straggler is consumed; the socket is clean again
                     }
                 }
-                // A read timeout is silence, not the end: keep waiting until the floor.
+                // A read timeout is silence, not the end, and a line still arriving is
+                // not a reply yet: keep waiting until the floor.
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         return None;
@@ -1936,7 +1954,8 @@ mod imp {
             // re-parsing per consumer).
             //
             // `None` ends this pump. It means the socket is drained (its 50 ms
-            // read timeout) — but it also covers a line that is not JSON, which is
+            // read timeout), or that the one read left a line unfinished, whose rest
+            // the next pump reads — but it also covers a line that is not JSON, which is
             // dropped rather than failed on: on the idle link it is noise rather than
             // a failed operation (architecture.md "Aborting on failure", exception 3).
             // It carries no notify, and the worker re-enters pump on its next 5 ms
@@ -2546,10 +2565,30 @@ mod imp {
             let mut reader = LineReader::new();
             let mut sock = Chunks::of(&["{\"vddp\":{\"seq\"", ":7}}\n"]);
 
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "half a line");
             assert_eq!(
                 reader.read_json(&mut sock).unwrap(),
                 Some(json!({ "vddp": { "seq": 7 } }))
             );
+        }
+
+        // Every caller checks its own deadline between calls, so a call reads at most
+        // once: a line that keeps arriving in pieces hands control back after each piece
+        // instead of holding the caller until the line ends or reaches the cap.
+        #[test]
+        fn a_line_still_arriving_hands_control_back_after_each_read() {
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["{\"a\"", ":1", "}\n{\"b\":2}\n"]);
+
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
+            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
+            assert_eq!(
+                reader.read_json(&mut sock).unwrap(),
+                Some(json!({"b": 2})),
+                "buffered, no read"
+            );
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "then quiet");
         }
 
         // …and the same buffer is what lets two messages arrive in one read. The second
@@ -2597,9 +2636,14 @@ mod imp {
             }
 
             let mut reader = LineReader::new();
-            let err = reader
-                .read_json(&mut Noise(0))
-                .expect_err("an unterminated stream must end as an error, not as memory");
+            let mut noise = Noise(0);
+            let err = loop {
+                match reader.read_json(&mut noise) {
+                    Ok(None) => continue,
+                    Ok(Some(msg)) => panic!("no line was ever terminated, yet read {msg}"),
+                    Err(e) => break e,
+                }
+            };
 
             assert!(
                 err.starts_with("broker-bad-response:"),
@@ -2621,7 +2665,10 @@ mod imp {
             let mut reader = LineReader::new();
             let mut sock = Chunks::of(&["{\"note\":\"", &big, "\"}\n"]);
 
-            let msg = reader.read_json(&mut sock).unwrap().expect("one frame");
+            // One call per read, as the reply loops make them: the frame spans several.
+            let msg = (0..64)
+                .find_map(|_| reader.read_json(&mut sock).unwrap())
+                .expect("one frame");
             assert_eq!(msg["note"].as_str().map(str::len), Some(big.len()));
         }
 
@@ -2908,6 +2955,22 @@ mod imp {
             assert!(err.starts_with("broker-rejected:"), "{err}");
         }
 
+        // The close drain reads on past `None` while a line is still arriving, and stops
+        // at `None` once nothing is pending: `mid_line` is what tells the two apart.
+        #[test]
+        fn a_line_still_arriving_is_mid_line_until_its_end() {
+            let (mut link, mut peer) = vdp_link();
+            assert!(!link.mid_line());
+            peer.write_all(b"{\"vdp\":").unwrap();
+            assert_eq!(link.read_frame(), Ok(None));
+            assert!(link.mid_line(), "half a line has arrived");
+            peer.write_all(b"{}}\n").unwrap();
+            assert_eq!(link.read_frame(), Ok(Some(json!({ "vdp": {} }))));
+            assert!(!link.mid_line());
+            assert_eq!(link.read_frame(), Ok(None), "a quiet link");
+            assert!(!link.mid_line());
+        }
+
         /// A device-list endpoint on a free port, answering the one request with `frames`
         /// and holding the connection open until the reader closes it.
         fn device_list(frames: Vec<Value>) -> u16 {
@@ -2970,6 +3033,30 @@ mod imp {
                 "answered at once, not at the deadline: {:?}",
                 started.elapsed()
             );
+        }
+
+        // A peer that keeps sending bytes and never ends the line. The wait for the list
+        // ends at its 3 s deadline, as it does on a silent link, instead of lasting as
+        // long as the bytes keep coming.
+        #[test]
+        fn a_wait_ends_at_its_deadline_while_a_line_keeps_arriving() {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (mut sock, _) = listener.accept().unwrap();
+                let until = Instant::now() + Duration::from_secs(12);
+                while Instant::now() < until && sock.write_all(b"x").is_ok() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            let started = Instant::now();
+            let err = discover_vdp_targets(port).unwrap_err();
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_secs(5),
+                "the 3 s deadline held while bytes kept arriving: {took:?} ({err})"
+            );
+            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
         }
 
         /// A line from the broker that is not JSON.
