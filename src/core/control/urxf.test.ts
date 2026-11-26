@@ -5,10 +5,13 @@
 
 import { describe, expect, it } from "vitest";
 import { getModel } from "../../models";
-import { emptyPlan } from "../plan";
+import { emptyPlan, ensureFixedConnections } from "../plan";
+import type { Plan } from "../plan";
 import { PARAMS } from "./params";
 import { applySourceState } from "./readback";
+import { planToCommands } from "./translate";
 import { parseUrxf, paramSourceOf } from "./urxf";
+import type { UrxfChunk } from "./urxf";
 import {
   BLOCK_HEADER,
   buildUrxf,
@@ -493,5 +496,54 @@ describe("a file written before System 1.5", () => {
     expect(limits(plan, "bus.stereo")).toEqual([3, 3]);
     expect(limits(plan, "bus.mix1")).toEqual([3, 3]);
     expect(limits(plan, "bus.mix2")).toEqual([3, 3]);
+  });
+});
+
+// The SSMCS compressor's internal Threshold and Makeup come off a file through the read the
+// device readback uses (`readSsmcsInternal`), not through a reader of the import's own: a value
+// in 0..200 reaches the plan, and one outside it fails the channel the way it does off the unit.
+describe("a file's SSMCS internal settings", () => {
+  const model = getModel("URX44V");
+  // A CURRENT chunk holding every address a full read asks for, at the value the plan's write
+  // leaves there and 0 where it writes none.
+  const chunkFor = async (plan: Plan): Promise<UrxfChunk> => {
+    const written = new Map(planToCommands(model, plan).map((c) => [`${c.paramId}:${c.x}:${c.y}`, c.vdValue]));
+    const numbers = new Map<number, number[]>();
+    const strings = new Map<number, string[]>();
+    const put = <T>(into: Map<number, T[]>, id: number, y: number, value: T, fill: T): T => {
+      const values = into.get(id) ?? [];
+      while (values.length <= y) values.push(fill);
+      values[y] = value;
+      into.set(id, values);
+      return value;
+    };
+    await applySourceState(model, emptyPlan("URX44V"), {
+      get: async (id, x, y) => put(numbers, id + x, y, written.get(`${id}:${x}:${y}`) ?? 0, 0),
+      getStr: async (id, x, y) => put(strings, id + x, y, "", ""),
+    });
+    return { name: "CURRENT", label: "", params: new Map<number, number[] | string[]>([...numbers, ...strings]) };
+  };
+  const fileWith = (threshold: number, makeup: number) => {
+    const plan = emptyPlan("URX44V");
+    ensureFixedConnections(model, plan);
+    plan.nodeParams.ch2 = { compEqType: 1, ssmcs: { comp: { threshold, makeup } } };
+    return chunkFor(plan);
+  };
+
+  it.each([0, 200])("imports %d", async (v) => {
+    const plan = emptyPlan("URX44V");
+    const result = await applySourceState(model, plan, paramSourceOf(await fileWith(v, v)));
+    expect(result.errors.filter((e) => e.includes("SSMCS_COMP_"))).toEqual([]);
+    expect(plan.nodeParams.ch2?.ssmcs?.comp).toMatchObject({ threshold: v, makeup: v });
+  });
+
+  it("refuses a value outside 0..200 and leaves the channel unread", async () => {
+    const chunk = await fileWith(100, 70);
+    (chunk.params.get(PARAMS.SSMCS_COMP_MAKEUP.id) as number[])[1] = 250;
+    const plan = emptyPlan("URX44V");
+    const result = await applySourceState(model, plan, paramSourceOf(chunk));
+    expect(result.errors).toContainEqual(expect.stringContaining("SSMCS_COMP_MAKEUP: read 250"));
+    expect(result.unreadNodes.has("ch2")).toBe(true);
+    expect(plan.nodeParams.ch2?.ssmcs).toBeUndefined();
   });
 });

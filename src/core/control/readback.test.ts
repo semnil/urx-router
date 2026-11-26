@@ -254,6 +254,45 @@ describe("applyDeviceState round-trip", () => {
     expect(target.nodeParams.ch1.eqBands).toBeUndefined();
   });
 
+  // The SSMCS compressor's internal Threshold and Makeup go through their own read: the address
+  // once per channel, and a reading outside 0..200 fails the channel instead of reaching the plan.
+  describe("the SSMCS internal settings", () => {
+    const ssmcsSource = (threshold: number, makeup: number) => {
+      const source = emptyPlan("URX44V");
+      ensureFixedConnections(model, source);
+      source.nodeParams.ch2 = { compEqType: 1, ssmcs: { comp: { threshold, makeup } } };
+      return deviceTableFor(source);
+    };
+    const readsOf = (paramId: number) => vi.mocked(vdGet).mock.calls.filter(([id]) => id === paramId);
+
+    it.each([0, 200])("read %d once each, at x 0 and the channel's y", async (v) => {
+      mockVdGetFrom(ssmcsSource(v, v));
+      const target = emptyPlan("URX44V");
+      const result = await applyDeviceState(model, target);
+      expect(result.errors).toEqual([]);
+      expect(target.nodeParams.ch2.ssmcs?.comp).toMatchObject({ threshold: v, makeup: v });
+      // Only ch2 is in SSMCS mode, so only its y is read.
+      expect(readsOf(100)).toEqual([[100, 0, 1]]);
+      expect(readsOf(101)).toEqual([[101, 0, 1]]);
+    });
+
+    it.each([
+      ["above the range", 100, 201],
+      ["below the range", 101, -1],
+      ["a fraction", 100, 99.5],
+    ])("fail the channel's read on a reading %s", async (_, paramId, reading) => {
+      const table = ssmcsSource(100, 70);
+      table.set(`${paramId}:0:1`, reading);
+      mockVdGetFrom(table);
+      const target = emptyPlan("URX44V");
+      const result = await applyDeviceState(model, target);
+      const name = paramId === 100 ? "SSMCS_COMP_THRESHOLD" : "SSMCS_COMP_MAKEUP";
+      expect(result.errors).toEqual([expect.stringContaining(`${name}: read ${reading}`)]);
+      expect(result.unreadNodes.has("ch2")).toBe(true);
+      expect(target.nodeParams.ch2?.ssmcs).toBeUndefined();
+    });
+  });
+
   it("reconstructs the same wire set (sends, OSC assign, routing) as the source plan", async () => {
     const source = richPlan();
     mockVdGetFrom(deviceTableFor(source));

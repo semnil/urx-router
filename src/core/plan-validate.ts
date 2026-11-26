@@ -167,7 +167,9 @@ export function insertFxPairProblems(model: DeviceModel, plan: Plan): InsertFxPa
  *  raw this app's range excludes, because its own encoder stops at the window but the wire
  *  does not. A `.urxf` import takes the same exemption for the same reason and by the same
  *  route — it is a FILE, but one the unit wrote, and it reaches the plan through the readback
- *  rather than through this funnel.
+ *  rather than through this funnel. The SSMCS internal Threshold and Makeup are an exception:
+ *  their read refuses a value outside the set the write takes
+ *  (`readSsmcsInternal`), so neither path brings one to the plan.
  *
  *  SCOPE: the FX channel effect; on every node the model's factory values describe, a leaf or
  *  group whose kind is not the factory value's at that path (`where: "node"`, dropped, so the

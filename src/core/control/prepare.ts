@@ -30,7 +30,7 @@ import { vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
 import { captureDeviceState, floorSilent, sweepInputSource } from "./selftest";
 import { stoppedByConsoleLock, watchRun, type RunWatch } from "./console-lock";
-import { selectableInputIds } from "./translate";
+import { selectableInputIds, SSMCS_INTERNAL_SETTINGS } from "./translate";
 import type { VdCommand } from "./translate";
 import type { ParamName } from "./params";
 import {
@@ -62,8 +62,6 @@ import {
   SSMCS_ATTACK_RAW_MIN,
   SSMCS_COMP_DRIVE_MAX,
   SSMCS_COMP_DRIVE_MIN,
-  SSMCS_COMP_INTERNAL_MAX,
-  SSMCS_COMP_INTERNAL_MIN,
   SSMCS_FREQ_RAW_MAX,
   SSMCS_FREQ_RAW_MIN,
   SSMCS_GAIN_MAX,
@@ -140,8 +138,7 @@ const RANGES: Record<string, [number, number]> = {
   "ssmcs.comp.attack": [SSMCS_ATTACK_RAW_MIN, SSMCS_ATTACK_RAW_MAX],
   "ssmcs.comp.release": [SSMCS_RELEASE_RAW_MIN, SSMCS_RELEASE_RAW_MAX],
   "ssmcs.comp.ratio": [SSMCS_RATIO_RAW_MIN, SSMCS_RATIO_RAW_MAX],
-  "ssmcs.comp.threshold": [SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX],
-  "ssmcs.comp.makeup": [SSMCS_COMP_INTERNAL_MIN, SSMCS_COMP_INTERNAL_MAX],
+  ...Object.fromEntries(SSMCS_INTERNAL_SETTINGS.map((s) => [`ssmcs.comp.${s.key}`, [s.min, s.max]])),
   "ssmcs.sc.q": [SSMCS_Q_RAW_MIN, SSMCS_Q_RAW_MAX],
   "ssmcs.sc.freq": [SSMCS_FREQ_RAW_MIN, SSMCS_FREQ_RAW_MAX],
   "ssmcs.sc.gain": [SSMCS_GAIN_MIN, SSMCS_GAIN_MAX],
