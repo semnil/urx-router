@@ -1101,11 +1101,11 @@ mod imp {
     /// The `:51770` lookup that names this session's `vdp` ports, one per listed
     /// device. Its own short-lived connection: it speaks a different envelope (`vddp`)
     /// and a different uri space (`/vddp_srv*`) from everything else here.
-    fn discover_vdp_targets() -> Result<Vec<(u16, String)>, String> {
-        let mut sock = TcpStream::connect(("127.0.0.1", VDDP_SRV_PORT))
+    fn discover_vdp_targets(port: u16) -> Result<Vec<(u16, String)>, String> {
+        let mut sock = TcpStream::connect(("127.0.0.1", port))
             .map_err(|e| format!("broker-unreachable: {e}"))?;
         arm_socket(&sock, DISCOVERY_TIMEOUT)?;
-        let req = json!({ "vddp": { "method": "get", "uri": "/vddp_srv/devices" } });
+        let req = json!({ "vddp": { "method": "get", "uri": DEVICE_LIST } });
         sock.write_all(format!("{req}\n").as_bytes())
             .map_err(|e| format!("broker-io: {e}"))?;
 
@@ -1115,9 +1115,20 @@ mod imp {
             let Some(msg) = reader.read_json(&mut sock)? else {
                 continue;
             };
-            let Some(data) = msg.get("vddp").and_then(|v| v.get("data")) else {
+            // Only the `get` reply for the list is the list; it answers at once, with
+            // or without the data it should carry.
+            let Some(vddp) = msg.get("vddp") else {
                 continue;
             };
+            let uri = vddp.get("uri").and_then(Value::as_str).unwrap_or("");
+            if vddp.get("method").and_then(Value::as_str) != Some("get")
+                || uri.split('?').next() != Some(DEVICE_LIST)
+            {
+                continue;
+            }
+            let data = vddp
+                .get("data")
+                .ok_or_else(|| format!("broker-bad-response: no data for {DEVICE_LIST}"))?;
             return vdp_targets(data);
         }
         Err("broker-no-vdpport: the device list did not answer".into())
@@ -1276,6 +1287,9 @@ mod imp {
     /// Device Center's device-list port. Fixed, unlike the `vdp` port it hands out.
     const VDDP_SRV_PORT: u16 = 51770;
 
+    /// The device list's uri on that port.
+    const DEVICE_LIST: &str = "/vddp_srv/devices";
+
     impl Link {
         /// Open the link to the device `choose_online` picks (`preferred` is the model
         /// selected in the app), and report what the endpoint says the unit is.
@@ -1287,7 +1301,7 @@ mod imp {
         /// it could be the online unit, and leaving it out could pick another one.
         fn open(preferred: &str) -> Result<(Link, DeviceSummary), String> {
             let mut online = Vec::new();
-            for (port, model) in discover_vdp_targets()? {
+            for (port, model) in discover_vdp_targets(VDDP_SRV_PORT)? {
                 let sock = TcpStream::connect(("127.0.0.1", port))
                     .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
                 arm_socket(&sock, READ_TIMEOUT)?;
@@ -2771,11 +2785,12 @@ mod imp {
         // timing.
         use super::super::{watch_link, Cmd, LinkCounters};
         use super::{
-            arm_socket, do_get_value, do_set, drain_late_reply, pump, serve, LineReader, Link,
-            Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, pump, serve,
+            LineReader, Link, Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
+        use std::io::{BufRead, BufReader};
         use std::net::{TcpListener, TcpStream};
         use std::sync::{mpsc, Arc};
         use std::time::{Duration, Instant};
@@ -2891,6 +2906,70 @@ mod imp {
             send(&mut peer, post("value", 400));
             let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
             assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
+        /// A device-list endpoint on a free port, answering the one request with `frames`
+        /// and holding the connection open until the reader closes it.
+        fn device_list(frames: Vec<Value>) -> u16 {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().unwrap();
+                let mut lines = BufReader::new(sock.try_clone().unwrap());
+                let mut request = String::new();
+                lines.read_line(&mut request).unwrap();
+                let mut out = sock;
+                for frame in frames {
+                    out.write_all(format!("{frame}\n").as_bytes()).unwrap();
+                }
+                let mut rest = String::new();
+                while lines.read_line(&mut rest).is_ok_and(|n| n > 0) {}
+            });
+            port
+        }
+
+        fn list_reply(uri: &str, method: &str, data: Option<Value>) -> Value {
+            let mut vddp = json!({ "method": method, "uri": uri });
+            if let Some(data) = data {
+                vddp["data"] = data;
+            }
+            json!({ "vddp": vddp })
+        }
+
+        // Only the `get` reply for `/vddp_srv/devices` is the device list. Another vddp
+        // frame that carries `data` — a notify, or the reply to another uri — does not
+        // decide which units this session asks about.
+        #[test]
+        fn the_device_list_is_only_the_list_reply() {
+            let decoy = json!({ "list": [{ "vdpport": 1, "model": "URX44V" }] });
+            let port = device_list(vec![
+                list_reply("/vddp_srv/devices", "notify", Some(decoy.clone())),
+                list_reply("/vddp_srv/other", "get", Some(decoy)),
+                list_reply(
+                    "/vddp_srv/devices",
+                    "get",
+                    Some(json!({ "list": [{ "vdpport": 51234, "model": "URX22" }] })),
+                ),
+            ]);
+            assert_eq!(
+                discover_vdp_targets(port),
+                Ok(vec![(51234, "URX22".to_string())])
+            );
+        }
+
+        // The list reply without `data` is a bad answer as soon as it arrives, rather than
+        // a wait that runs out its deadline as if nothing had answered.
+        #[test]
+        fn a_list_reply_without_data_is_a_bad_response_at_once() {
+            let port = device_list(vec![list_reply("/vddp_srv/devices", "get", None)]);
+            let started = Instant::now();
+            let err = discover_vdp_targets(port).unwrap_err();
+            assert!(err.starts_with("broker-bad-response:"), "{err}");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "answered at once, not at the deadline: {:?}",
+                started.elapsed()
+            );
         }
 
         /// A line from the broker that is not JSON.
