@@ -1123,8 +1123,7 @@ const COMP_FIELDS: EmittedDynField[] = [
     steps: DYN_RELEASE_STOPS_MS,
   },
 ];
-// Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
-// hold; decay shares the ×10 release scale with a wider range. Ordered as the
+
 /**
  * One band of the 4-band PEQ, in the order the unit's own screen reads it (Q, Freq, Gain).
  * The set depends on the filter type only in which of them the device reads — a pass filter
@@ -1249,6 +1248,8 @@ export function ssmcsEqBandFields(band: SsmcsEqBandName): DynField[] {
   ];
 }
 
+// Ducker detail (260-263, stereo channel sidechain). Same shapes as GATE but no
+// hold; decay shares the ×10 release scale with a wider range. Ordered as the
 // device DUCKER screen reads them (Range / Attack / Decay graph handles, then the
 // Threshold box); each field carries its own param name, so order is display-only.
 export const DUCKER_FIELDS: EmittedDynField[] = [
