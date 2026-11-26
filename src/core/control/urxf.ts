@@ -292,6 +292,10 @@ function readValues(
       if (!signed && desc.typecode !== TC_UNSIGNED) {
         throw new UrxfError("badDescriptor", `typecode ${desc.typecode} on parameter ${desc.id}`);
       }
+      // Checked on the descriptor, so an array of no elements cannot carry an illegal width.
+      if (!NUMBER_WIDTHS.includes(desc.elemSize)) {
+        throw new UrxfError("badDescriptor", `element size ${desc.elemSize} on parameter ${desc.id}`);
+      }
       const values: number[] = [];
       for (let i = 0; i < desc.count; i++)
         values.push(readNumber(view, cursor + i * desc.elemSize, desc.elemSize, signed));
@@ -303,6 +307,9 @@ function readValues(
   if (cursor !== at + len) throw new UrxfError("lengthMismatch", `values end at ${cursor}, block at ${at + len}`);
   return params;
 }
+
+/** The element widths a numeric parameter may have. */
+const NUMBER_WIDTHS: readonly number[] = [1, 2, 4];
 
 function readNumber(view: DataView, at: number, size: number, signed: boolean): number {
   switch (size) {

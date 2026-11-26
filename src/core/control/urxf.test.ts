@@ -209,6 +209,46 @@ describe("parseUrxf", () => {
       expect(() => parseUrxf(file), label).toThrow(expect.objectContaining({ code: "truncated" }));
     }
   });
+
+  // A numeric element is 1, 2 or 4 bytes wide. The width is checked on the descriptor,
+  // so an array of no elements cannot carry an illegal one past the parse.
+  it("rejects an illegal numeric width even on an array of no elements", () => {
+    const withEmptyArray = (typecode: number, elemSize: number): Uint8Array => {
+      const bytes = buildUrxf([
+        {
+          chunk: "CURRENT",
+          block: "CSF_BACKUP",
+          label: "",
+          fields: [
+            { id: 18, typecode: 4, elemSize: 1, values: ["", ""] },
+            { id: 96, typecode: 1, elemSize: 2, values: [0] },
+          ],
+        },
+      ]);
+      const view = new DataView(bytes.buffer);
+      const fPayload = FILE_HEADER + CHUNK_HEADER + BLOCK_HEADER;
+      // The ASCII array record (8 bytes) becomes a numeric array of no elements; the scalar
+      // record after it (6 bytes) widens to 4 so the values block, 2 + 2 bytes, still balances.
+      view.setUint8(fPayload + 3, typecode);
+      view.setUint16(fPayload + 4, elemSize, false);
+      view.setUint16(fPayload + 6, 0, false);
+      view.setUint16(fPayload + 8 + 4, 4, false);
+      return bytes;
+    };
+    for (const typecode of [1, 2]) {
+      for (const size of [3, 5, 8]) {
+        expect(() => parseUrxf(withEmptyArray(typecode, size)), `typecode ${typecode} width ${size}`).toThrow(
+          expect.objectContaining({ code: "badDescriptor" }),
+        );
+      }
+      for (const size of [1, 2, 4]) {
+        expect(
+          parseUrxf(withEmptyArray(typecode, size)).chunks[0]!.params.get(18),
+          `typecode ${typecode} width ${size}`,
+        ).toEqual([]);
+      }
+    }
+  });
 });
 
 // The builder's own guards. Each is a mistake the FILE takes without complaint — the
