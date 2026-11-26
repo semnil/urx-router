@@ -2915,8 +2915,12 @@ holds by construction instead of by that inventory staying true.
 
 Without a request from the flush, an address a mode change adds would stay unheard until the next reconcile
 happens to run. The flush asks the follow layer to re-subscribe at its END, never inside itself: a
-re-registration unsubscribes before it subscribes, and doing that mid-flush would drop the notifies the refetch's
-settle is waiting for. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
+re-registration replaces the subscription, registering the new set's addresses and releasing the old set's one at a
+time on the worker that carries the flush's writes, and doing that mid-flush would put those requests between the
+writes and the notifies the refetch's settle is waiting for. It is a replacement and not an unsubscribe followed by
+a subscribe: an address both sets hold stays registered throughout, where unsubscribing first would leave the unit
+unheard from until the new registrations were in, and a Console Lock or a scene recall made in that gap would never
+reach the plan. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
 when it has not moved, so an ordinary flush costs one comparison and no traffic; it is deliberately not `begin`,
 whose generation bump is how an in-flight registration tells a dead session from a live one. Registrations run one
 at a time within a generation: `refresh` is fire-and-forget from a flush and shares no lock with the other two

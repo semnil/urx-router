@@ -525,6 +525,10 @@ describe("DeviceFollow", () => {
     // The reconcile grew the set, so the post-reconcile subscribe re-registers.
     expect(h.subscribeCalls).toBe(2);
     expect(h.addrs).toEqual([ADDR, [140, 0, 0]]);
+    // A replacement, not an unsubscribe and a subscribe: the shell switches to the new set
+    // before it lets the old one go, and unsubscribing first would leave the unit unheard
+    // from until the new registrations were in.
+    expect(h.unsub).not.toHaveBeenCalled();
   });
 
   // `refresh()` is what a flush calls at its end when its capture moved the address set
