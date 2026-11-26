@@ -4219,6 +4219,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "urx-device-transport"
+version = "0.1.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "urx-router"
 version = "0.0.0"
 dependencies = [
@@ -4234,6 +4241,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "urx-device-transport",
  "windows-sys 0.61.2",
 ]
 

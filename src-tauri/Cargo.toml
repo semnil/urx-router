@@ -23,6 +23,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The shared Device Center transport (urx-device), from the vendor/urx-device submodule at its
+# pinned release. Its own dependencies are serde_json alone.
+urx-device-transport = { path = "../vendor/urx-device/crates/transport" }
 # Decodes the percent-encoded x-file-path IPC header (already in the tree via
 # tauri -> url, so this adds no new crate to the build).
 percent-encoding = "2"
