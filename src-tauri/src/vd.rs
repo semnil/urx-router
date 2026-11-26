@@ -883,6 +883,11 @@ mod imp {
         if code == RequestCause::ResponseTimeout {
             return format!("{BROKER_TIMEOUT_PREFIX}: {at}");
         }
+        // The unit's own refusal settled this request; an end that came after it is the
+        // next request's to report.
+        if let (RequestCause::DeviceRejected, Evidence::Rejected(response)) = (code, &evidence) {
+            return format!("broker-rejected: {at} response_code {response}");
+        }
         if let Some(ended) = connection.terminal() {
             // Whatever this request met, the connection's end is what the session died of.
             return ended_text(connection, ended);
@@ -1446,7 +1451,10 @@ mod imp {
             get, get_str, meters_subscribe, params_subscribe, probe_subscribe, set, set_str,
             watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
         };
-        use super::{link_failure_text, worker_at, Route, BROKER_UNRESPONSIVE};
+        use super::{
+            link_failure_text, request_text, worker_at, Route, BROKER_UNRESPONSIVE,
+            CONNECT_DEADLINE, DEVICE_LOST_PREFIX,
+        };
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
@@ -1454,8 +1462,11 @@ mod imp {
         use std::thread;
         use std::time::{Duration, Instant};
         use tauri::ipc::{Channel, InvokeResponseBody};
-        use urx_device_transport::connection::{LinkFailure, LinkLoss};
-        use urx_device_transport::lifecycle::{Cause, Failure, Phase};
+        use urx_device_transport::connection::{
+            open_with, ConnectionOptions, LinkFailure, LinkLoss,
+        };
+        use urx_device_transport::lifecycle::{Cause, Control, Failure, Phase};
+        use urx_device_transport::request::{Evidence, RequestCause, RequestFailure, RequestPhase};
 
         type Answer = Arc<dyn Fn(&Value) -> Vec<Value> + Send + Sync>;
 
@@ -1974,6 +1985,44 @@ mod imp {
             assert_eq!(route.pick(&[2]), Some(1));
             route.clear();
             assert_eq!(route.pick(&[2, 3]), None);
+        }
+
+        // The unit's own refusal settles the request it answers: an end of the link that
+        // comes after the reply, before the error is worded, is the next request's to report.
+        #[test]
+        fn a_refusal_the_unit_gave_stands_when_the_link_ends_after_it() {
+            let unit = Unit::start("<device-id-a>", plain);
+            let options = ConnectionOptions {
+                connect_deadline: CONNECT_DEADLINE,
+                handshake_request_deadline: DEADLINE,
+                send_deadline: DEADLINE,
+                response_deadline: DEADLINE,
+            };
+            let connection = open_with(unit.port, "<device-id-a>", &options, &Control::new(), None)
+                .unwrap_or_else(|_| panic!("the unit opens"));
+            unit.push(synchronize("lost"));
+            let ended = Instant::now() + Duration::from_secs(5);
+            while connection.terminal().is_none() {
+                assert!(Instant::now() < ended, "the push ends the connection");
+                thread::sleep(Duration::from_millis(5));
+            }
+            let rejected = RequestFailure::Cause {
+                code: RequestCause::DeviceRejected,
+                phase: RequestPhase::Response,
+            };
+            assert_eq!(
+                request_text(&connection, rejected, Evidence::Rejected(400), "1:0:0"),
+                "broker-rejected: 1:0:0 response_code 400"
+            );
+            let lost = RequestFailure::Cause {
+                code: RequestCause::ConnectionLost,
+                phase: RequestPhase::Response,
+            };
+            assert!(
+                request_text(&connection, lost, Evidence::Unconfirmed, "1:0:0")
+                    .starts_with(DEVICE_LOST_PREFIX),
+                "a request the end met is told by the end"
+            );
         }
 
         #[test]
