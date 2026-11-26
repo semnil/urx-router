@@ -1626,7 +1626,7 @@ mod imp {
             let Some(vdp) = reply_for(subs, &msg, &base, verb, Some(operation)) else {
                 continue;
             };
-            return write_verdict(&vdp, param_id, x, y);
+            return write_verdict(vdp, param_id, x, y);
         }
         Err(
             drain_late_reply(link, subs, late, &base, verb, Some(operation))
