@@ -1414,6 +1414,44 @@ describe("runSelfTest and the side of a mic strip the unit is not using", () => 
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
   });
 
+  // The capture's read of CH 1 fails first (its CH ON times out once), so CH 1 is a node the capture
+  // could not read; the unused side's read then refuses an internal value. That is a failure of its
+  // own, and the run stops before its first write whatever the capture's read did.
+  it.each([
+    ["SSMCS_COMP_THRESHOLD", PARAMS.SSMCS_COMP_THRESHOLD.id, 201],
+    ["SSMCS_COMP_MAKEUP", PARAMS.SSMCS_COMP_MAKEUP.id, -1],
+  ])(
+    "stops before writing when the unused side refuses %s after the capture failed on CH 1",
+    async (name, paramId, value) => {
+      installRefillingDevice();
+      answering(`${paramId}:0:${y}`, (n) => (n === 1 ? value : undefined));
+      const read = vi.mocked(vdGet).getMockImplementation()!;
+      let onReads = 0;
+      vi.mocked(vdGet).mockImplementation((id, x, yy) =>
+        id === PARAMS.CH_ON.id && yy === y && ++onReads === 1 ? Promise.reject(new Error("timeout")) : read(id, x, yy),
+      );
+      const report = await runSelfTest(model, 0);
+      expect(onReads, "the premise: the capture read CH 1's ON and failed").toBeGreaterThan(0);
+      expect(report.phase).toBe("refused");
+      expect(report.errors).toContain(`unused-side read CH 1: ${name}: read ${value}, not an integer from 0 to 200`);
+      expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    },
+  );
+
+  // CH 2 in SSMCS mode, its Threshold read by the capture itself: a refused answer there leaves the
+  // strip unread, and the run stops before its first write.
+  it("stops before writing when the capture's own read of the internal Threshold is refused", async () => {
+    const table = installRefillingDevice();
+    const y2 = channelControl(model, "ch2")!.y;
+    const ch2 = `${PARAMS.SSMCS_COMP_THRESHOLD.id}:0:${y2}`;
+    table.set(`${TYPE}:0:${y2}`, COMP_EQ_SSMCS).set(ch2, 23);
+    answering(ch2, (n) => (n === 1 ? 201 : undefined));
+    const report = await runSelfTest(model, 0);
+    expect(report.errors).toContain("CH 2: SSMCS_COMP_THRESHOLD: read 201, not an integer from 0 to 200");
+    expect(report.phase).toBe("refused");
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+  });
+
   it("keeps no out-of-range reading of the internal Threshold to write back", async () => {
     // The unused side's read takes it through the readback (23), the pre-sweep read answers 201.
     installRefillingDevice();

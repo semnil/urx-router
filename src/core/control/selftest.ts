@@ -101,6 +101,9 @@ import {
   hpfFreqLeftOut,
   planToCommands,
   selectableInputIds,
+  SSMCS_INTERNAL_SETTINGS,
+  ssmcsInternalReadRefusal,
+  ssmcsInternalTarget,
   UNVERIFIED_MAPPINGS,
   unverifiedAddresses,
 } from "./translate";
@@ -1414,7 +1417,10 @@ export function idleEngineOnCommands(model: DeviceModel, plan: Plan, unreadNodes
  * command for is dropped. Nothing is written, and the unit's type is not touched.
  *
  * `unread` names the nodes whose other side could not be read although the capture itself
- * read them: a pass could change that side and nothing would hold what it was.
+ * read them: a pass could change that side and nothing would hold what it was. A node whose
+ * other side answered a value an SSMCS internal setting refuses is named whatever the capture
+ * did with it: that is not the capture's failure coming round again, and it leaves the side
+ * with no command, so nothing else would stop the run from changing it.
  */
 async function unusedSideCommands(
   model: DeviceModel,
@@ -1422,9 +1428,16 @@ async function unusedSideCommands(
   captureUnread: ReadonlySet<string>,
   signal: AbortSignal | undefined,
 ): Promise<{ commands: VdCommand[]; unread: string[]; errors: string[] }> {
+  // The strips whose other side answered an internal setting with a value it refuses.
+  const refusedStrips = new Set<string>();
   const otherSide: ParamSource = {
     get: async (paramId, x, y) => {
       const value = await vdGet(paramId, x, y);
+      const setting = x === 0 ? SSMCS_INTERNAL_SETTINGS.find((s) => PARAMS[s.name].id === paramId) : undefined;
+      if (setting && ssmcsInternalReadRefusal(setting.name, value) !== null) {
+        const node = model.nodes.find((n) => ssmcsInternalTarget(model, n.id) === y);
+        if (node) refusedStrips.add(node.id);
+      }
       if (paramId !== PARAMS.COMP_EQ_TYPE.id) return value;
       return value === COMP_EQ_SSMCS ? COMP_EQ_COMP_FIRST : COMP_EQ_SSMCS;
     },
@@ -1433,16 +1446,17 @@ async function unusedSideCommands(
   const shadow = emptyPlan(model.id);
   const read = await applySourceState(model, shadow, otherSide, signal);
   const strips = new Set(model.nodes.filter((n) => channelControl(model, n.id)?.hasMicStrip).map((n) => n.id));
+  const named = (id: string): boolean => !captureUnread.has(id) || refusedStrips.has(id);
   return {
     // Only what the strips themselves carry: this second read fails wherever the capture's
     // did, and what it leaves at its default elsewhere is not a side anything is not using.
     commands: planToCommands(model, shadow, "all", RESTORE_EMIT).filter(
       (c) => c.node !== undefined && strips.has(c.node) && !captured.has(cmdAddr(c)),
     ),
-    unread: [...read.unreadNodes].filter((id) => strips.has(id) && !captureUnread.has(id)),
+    unread: [...read.unreadNodes].filter((id) => strips.has(id) && named(id)),
     // The failures behind `unread`, as the read words them (`<node label>: <cause>`).
     errors: read.errors.filter((line) =>
-      model.nodes.some((n) => strips.has(n.id) && !captureUnread.has(n.id) && line.startsWith(`${n.label}: `)),
+      model.nodes.some((n) => strips.has(n.id) && named(n.id) && line.startsWith(`${n.label}: `)),
     ),
   };
 }
