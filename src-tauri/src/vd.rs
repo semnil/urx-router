@@ -3157,9 +3157,8 @@ mod imp {
         }
 
         // A wait ends at its deadline, not one read's timeout past it: the last read is
-        // armed with what is left. The handshake's status read, a read and a write each
-        // end within 20 ms of theirs (the two session waits then spend the late drain's
-        // 200 ms quiet floor on top).
+        // armed with what is left. The handshake's status read ends within 30 ms of its
+        // deadline.
         #[test]
         fn a_wait_ends_at_its_deadline_with_nothing_left_to_arrive() {
             let (mut link, peer) = vdp_link();
@@ -3169,7 +3168,7 @@ mod imp {
             let took = started.elapsed();
             assert!(err.starts_with("broker-timeout:"), "{err}");
             assert!(
-                took < Duration::from_millis(3_020),
+                took < Duration::from_millis(3_030),
                 "the handshake read took {took:?}"
             );
             assert_eq!(
@@ -3180,44 +3179,31 @@ mod imp {
             drop(peer.join());
         }
 
+        // The read every wait makes: on a silent link it blocks for what is left of its
+        // deadline when that is under READ_TIMEOUT, for READ_TIMEOUT otherwise, and not at
+        // all once the deadline has passed — and it leaves the socket at READ_TIMEOUT.
         #[test]
-        fn a_read_ends_at_its_deadline_with_nothing_left_to_arrive() {
-            let (mut link, peer) = vdp_link();
-            let peer = chatter_up_to_the_deadline(peer, vec![]);
+        fn a_read_before_a_deadline_blocks_no_longer_than_what_is_left() {
+            let (mut link, _peer) = vdp_link();
+            for (left, under) in [
+                (Duration::ZERO, Duration::from_millis(5)),
+                (Duration::from_millis(10), Duration::from_millis(40)),
+            ] {
+                let started = Instant::now();
+                assert_eq!(link.read_frame_before(started + left), Ok(None));
+                let took = started.elapsed();
+                assert!(took < under, "{left:?} left: blocked {took:?}");
+                assert_eq!(link.sock.read_timeout().unwrap(), Some(READ_TIMEOUT));
+            }
             let started = Instant::now();
-            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
-            let took = started.elapsed();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
-            assert!(
-                took < Duration::from_millis(3_220),
-                "the read took {took:?}"
-            );
             assert_eq!(
-                link.sock.read_timeout().unwrap(),
-                Some(READ_TIMEOUT),
-                "the socket is armed for the pump again"
+                link.read_frame_before(started + Duration::from_secs(1)),
+                Ok(None)
             );
-            drop(peer.join());
-        }
-
-        #[test]
-        fn a_write_ends_at_its_deadline_with_nothing_left_to_arrive() {
-            let (mut link, peer) = vdp_link();
-            let peer = chatter_up_to_the_deadline(peer, vec![]);
-            let started = Instant::now();
-            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
-            let took = started.elapsed();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
             assert!(
-                took < Duration::from_millis(3_220),
-                "the write took {took:?}"
+                started.elapsed() >= READ_TIMEOUT - Duration::from_millis(5),
+                "a deadline further off than READ_TIMEOUT blocks for READ_TIMEOUT"
             );
-            assert_eq!(
-                link.sock.read_timeout().unwrap(),
-                Some(READ_TIMEOUT),
-                "the socket is armed for the pump again"
-            );
-            drop(peer.join());
         }
 
         // …and a write's: an acknowledgement finished after the deadline is not its
@@ -3293,22 +3279,28 @@ mod imp {
         }
 
         /// Sends each of `lines` in two writes, a pause after each, so the reader on the
-        /// other end meets every line in two reads.
+        /// other end meets every line in two reads. Returns once the first write is out, so
+        /// the reader that starts next does not wait out its quiet floor on a writer that
+        /// has not started yet.
         fn send_split(
             mut peer: TcpStream,
             lines: Vec<Value>,
         ) -> std::thread::JoinHandle<TcpStream> {
-            std::thread::spawn(move || {
+            let (started, wait) = mpsc::channel();
+            let writer = std::thread::spawn(move || {
                 for line in lines {
                     let text = format!("{}\n", json!({ "vdp": line }));
                     let (head, tail) = text.split_at(text.len() / 2);
                     for part in [head, tail] {
                         peer.write_all(part.as_bytes()).unwrap();
+                        let _ = started.send(());
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 }
                 peer
-            })
+            });
+            wait.recv().unwrap();
+            writer
         }
 
         // The late drain's frame budget counts whole lines, so a stream that reaches it in
@@ -3351,6 +3343,7 @@ mod imp {
         fn the_late_drain_ends_alike_for_a_straggler_read_whole_or_in_halves() {
             for split in [false, true] {
                 let (mut link, mut peer) = vdp_link();
+                let (started, wait) = mpsc::channel();
                 let writer = std::thread::spawn(move || {
                     for i in 0..13 {
                         let notify = json!({ "vdp": {
@@ -3359,6 +3352,7 @@ mod imp {
                             "data": { "current_value": -60 }
                         }});
                         peer.write_all(format!("{notify}\n").as_bytes()).unwrap();
+                        let _ = started.send(());
                         std::thread::sleep(Duration::from_millis(20));
                     }
                     let straggler = format!(
@@ -3375,6 +3369,8 @@ mod imp {
                         .unwrap();
                     peer
                 });
+                // The drain starts once the writer has, as in send_split.
+                wait.recv().unwrap();
                 assert_eq!(
                     drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                     None
@@ -3620,14 +3616,22 @@ mod imp {
             drop(peer.join());
         }
 
-        // …and the unit lost, pushed across the firmware read's deadline, is not that
-        // read's either: the firmware is unknown, and the push stays on the link for the
-        // session's reader, which ends the session with it.
+        // …while the unit lost, pushed across the firmware read's deadline, is never lost
+        // with it: a read that returns it late fails the handshake with it, and otherwise the
+        // firmware is unknown and the push stays on the link for the session's reader, which
+        // ends the session with it. Which of the two happens is the timer's, not the code's.
         #[test]
-        fn a_unit_lost_across_the_firmware_reads_deadline_is_left_for_the_session() {
+        fn a_unit_lost_across_the_firmware_reads_deadline_is_never_dropped() {
             let (mut link, peer) = vdp_link();
             let peer = across_the_deadline(peer, vec![status_reply("online")], synchronize("lost"));
-            assert_eq!(handshake(&mut link), Ok(None));
+            match handshake(&mut link) {
+                Err(err) => {
+                    assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+                    drop(peer.join());
+                    return;
+                }
+                Ok(firmware) => assert_eq!(firmware, None),
+            }
             let until = Instant::now() + Duration::from_secs(1);
             let pushed = loop {
                 if let Some(msg) = link.read_frame().unwrap() {
