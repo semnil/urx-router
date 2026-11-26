@@ -27,16 +27,15 @@ import { IDLE_FULL_MS } from "../../src/core/control/follow";
 //
 // It replaces __TAURI_INTERNALS__ wholesale, so the Rust bridge is not in its path:
 // anything the bridge filters has to be reproduced here or a case measures a stimulus
-// the shipped app cannot receive. `pushNotify` mirrors src-tauri/src/vd.rs
-// `Subs::absorb` — a param notify reaches the frontend only while a subscription is
-// installed and only for an address THIS session registered, plus the BULK_CHANGE
-// sentinel, which belongs to no address and is the one update that bypasses the
-// registered-set filter. Pinned on the Rust side by
-// absorb_drops_notifies_for_addresses_this_session_did_not_register and
-// absorb_forwards_the_bulk_change_notify_as_the_sentinel.
+// the shipped app cannot receive. `pushNotify` mirrors what src-tauri/src/vd.rs sends on
+// from the transport's per-token delivery — a param notify reaches the frontend only
+// while a subscription is installed and only for an address THIS session registered,
+// plus the BULK_CHANGE sentinel, which belongs to no address and is the one update that
+// bypasses the registered-set filter. Pinned on the Rust side by
+// notifies_reach_the_channel_of_the_subscription_that_registered_them.
 //
-// `pushMeters` mirrors the other half of the same `absorb`: a meter reading reaches the
-// frontend only while `meter_ch` is installed and only for a `(meter_id, x)` this
+// `pushMeters` mirrors the other half of the same delivery: a meter reading reaches the
+// frontend only while the meter channel is installed and only for a `(meter_id, x)` this
 // session registered — there is no sentinel on the meter side. The same Rust test pins
 // both halves: it asserts meter 115:1 is dropped and 115:0 delivered. The filter lives here
 // rather than in each driver so an unreachable frame leaves a trace record instead of
@@ -357,10 +356,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // fields, so (0,-1,-1) carrying a non-zero value is NOT the sentinel.
       const BULK: [number, number, number, number] = [0, -1, -1, 0];
       // The registered set as vd.rs holds it: ParamsSubscribe replaces it wholesale.
-      // Divergence kept, vd.rs:429/446-454: absorb batches notifies and flushes on the
-      // PUMP_BUDGET cadence, so a push here reaches the app one batch earlier than it
-      // would through the bridge. Nothing is ever pending in the fake, which is also
-      // why `subs.params.clear()` (vd.rs:611) has no counterpart below.
+      // Divergence kept: the transport hands notifications over in batches, grouping what
+      // arrived together, and vd.rs sends each batch on as one message; a push here
+      // reaches the app alone. Nothing is ever pending in the fake.
       let registered = new Set<string>();
       const notifyRefusal = (id: number, x: number, y: number, v: number): string => {
         if (!paramChannel) return "no-subscription";
@@ -382,7 +380,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       /** The string half of `pushNotify`, shared by the write's own announcement and by
        *  a case's scripted push so the two cannot describe different devices. A name
        *  notify carries its text in `value_str` and a numeric `value` of 0, and passes
-       *  the same `Subs::absorb` filter as any other — an address this session did not
+       *  the same per-token filter as any other — an address this session did not
        *  register is dropped here, which is what still happens to Sweet Spot Data. */
       const emitNameNotify = (param_id: number, x: number, y: number, value: string): string[] => {
         const w = notifyRefusal(param_id, x, y, 0);
@@ -462,7 +460,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         setLatency: (patch) => Object.assign(config.latency, patch),
         mark: (detail) => void put("mark", { detail }),
         pushNotify: (list, origin) => {
-          // absorb() filters ENTRIES, not frames: a batch carrying one registered and
+          // The delivery filters ENTRIES, not frames: a batch carrying one registered and
           // one unregistered address delivers the first and drops the second.
           const why: string[] = [];
           const passed: Array<{ param_id: number; x: number; y: number; value: number }> = [];
@@ -492,7 +490,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         },
         pushBulkChange: () => fake.pushNotify([[BULK[0], BULK[1], BULK[2], BULK[3]]]),
         pushMeters: (list) => {
-          // absorb() filters readings one by one, exactly as it does notifies: a batch
+          // The delivery filters readings one by one, exactly as it does notifies: a batch
           // carrying one registered and one unregistered address delivers the first and
           // drops the second.
           const why: string[] = [];
@@ -545,8 +543,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       let meterChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let linkCb: ((e: { reason: string }) => void) | null = null;
 
-      /** Replace a subscription — the assignments vd.rs makes at the tail of its
-       *  ParamsSubscribe / MetersSubscribe handler. Called from the queue point. */
+      /** Replace a subscription — the switch vd.rs's ParamsSubscribe / MetersSubscribe
+       *  handler makes to the new token before its registrations run. Called from the
+       *  queue point. */
       const install = (cmd: string, args: Record<string, unknown>): void => {
         const channel = args.channel as { onmessage: (b: unknown[]) => void };
         if (cmd === "vd_params_subscribe") {
@@ -563,10 +562,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         }
       };
 
-      /** Drop everything the worker owned. vd.rs:494 keeps the whole `Subs` — both
-       *  channels and both registered sets — inside the worker, and vd.rs:498 the link
-       *  watch, so a Shutdown (vd.rs:516) takes all four with it: nothing can be
-       *  delivered on that generation again. The fake's gate would otherwise be "the app
+      /** Drop everything the worker owned. vd.rs's worker holds the subscriptions — their
+       *  tokens, address sets and channels — and the link watch, and a Shutdown closes the
+       *  connection with them: nothing can be delivered on that generation again. The fake's gate would otherwise be "the app
        *  called unsubscribe" where the bridge's is "the worker is alive" — and the app's
        *  unsubscribe is fire-and-forget (src/core/platform.ts:343), so the two differ by
        *  a real window. The two address sets are kept for the reason
@@ -754,9 +752,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         return kind;
       };
 
-      // ONE worker, the way the bridge has one. vd.rs:504-556 is a single thread taking
-      // Cmds off one channel and answering each with a blocking address-matched round
-      // trip before it takes the next, so the shipped bridge cannot resolve a later cheap
+      // ONE worker, the way the bridge has one. vd.rs's worker is a single thread taking
+      // Cmds off one channel and waiting for each one's outcome from the transport, which
+      // sends one request at a time and matches its reply, before it takes the next, so the shipped bridge cannot resolve a later cheap
       // command ahead of an earlier expensive one, and a slow command is backpressure on
       // every subsystem queued behind it. A per-command setTimeout produced exactly that
       // impossible ordering: at get 25 / set 60, a read issued 5 ms after a write resolved
@@ -768,7 +766,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // documented contract and the reason an overtake is reachable at all.
       //
       // vd_connect is deliberately outside the queue — it INSTALLS the worker
-      // (vd.rs:193-200, where install() shuts the prior one down) rather than running on
+      // (`VdState::install_for_page` shuts the prior one down) rather than running on
       // one, so it cannot queue behind the work it replaces. So is everything the shell
       // routes elsewhere: the dialog plugin, the MIDI commands (midi.rs touches local OS
       // APIs on the caller's thread) and the menu pushes share no queue with the vd worker.
@@ -879,8 +877,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (now !== said) pending = () => announce(k, armed, now);
         } else if (cmd === "vd_params_unsubscribe" || cmd === "vd_meters_unsubscribe") {
           // A teardown is a queue-point effect for the same reason an install is, and it
-          // matters more: vd.rs's `param_ch = None` / `meter_ch = None` (vd.rs:586/619)
-          // run inside the worker whatever the LINK is doing, so a channel is dropped
+          // matters more: vd.rs's unsubscribe takes the channel off its route inside the
+          // worker whatever the LINK is doing, so a channel is dropped
           // even when the command that dropped it answers an error. Left at the resolve,
           // behind the device-lost latch, a session torn down over a dead link kept both
           // channels installed here and a later pushNotify / pushMeters was DELIVERED
@@ -888,38 +886,38 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           // fake. The command may still reject below; the effect has already happened.
           if (cmd === "vd_params_unsubscribe") {
             fake.counters.unsubscribes++;
-            // vd.rs:619 also does param_addrs.clear(). Deliberately not mirrored:
+            // vd.rs also releases the token and its address set. Deliberately not mirrored:
             // fake.paramAddrs is the harness's "addresses the app LAST registered"
             // observable, read by ~80 spec sites after a session ends, and the
             // no-subscription refusal is decided from paramChannel alone.
             paramChannel = null;
           } else {
             fake.counters.meterUnsubs++;
-            // vd.rs:586 also does meter_addrs.clear(). Not mirrored, same reason.
+            // vd.rs also releases the token and its address set. Not mirrored, same reason.
             meterChannel = null;
           }
         } else if (cmd === "vd_disconnect") {
-          // vd.rs:339-346 — disconnect names one generation, and a delayed teardown of a
+          // vd.rs `disconnect` names one generation, and a delayed teardown of a
           // superseded session is a no-op, so it cannot close the connection a later
           // activation opened. At the queue point, like the unsubscribes above: Cmd::
-          // Shutdown drops the whole Subs with the worker however the link is behaving.
+          // Shutdown closes the connection and its subscriptions with the worker however
+          // the link is behaving.
           if (Number(args.epoch ?? 0) === fake.counters.connects) teardown();
         } else if (cmd === "vd_params_subscribe" || cmd === "vd_meters_subscribe") {
           // A subscription is installed at the queue point too, and for the same reason.
-          // vd.rs:590-613 / 559-580: the handler only SENDS registrations (reg_param /
-          // reg_meter are fire-and-forget — the reply is drained later by pump,
-          // vd.rs:995-1038), so it performs no socket read and `absorb` cannot run
-          // inside it. A notify arriving while a registration is in flight is therefore
-          // evaluated afterwards, against the NEW set and through the NEW channel.
+          // vd.rs moves the channel to the new subscription's token as soon as the token
+          // exists, before its registrations run, and the token receives notifications
+          // from then on. A notify arriving while a registration is in flight is
+          // therefore evaluated against the NEW set and goes through the NEW channel.
           // Installing at the resolve instead would judge it by the OLD set and deliver
           // it to the OLD channel — wrong in both directions, and reachable through a
           // barrier on the command or a scripted `subscribe` latency.
           //
-          // Unconditional, ahead of the device-lost and refusal branches below: the two
-          // assignments run after the registration loop whatever it returned, and the
-          // failure travels back through `reply` alone (vd.rs:601-613), so a refused
-          // subscribe still replaces the subscription rather than leaving the previous
-          // one installed.
+          // Unconditional, ahead of the device-lost and refusal branches below. Divergence
+          // kept: after a refused subscribe vd.rs leaves neither set subscribed, where this
+          // keeps the new one; the refused meter registrations in t7-meter end the session
+          // and its teardown drops the channel, so the app observes no difference there
+          // (docs/{en,ja}/live-race-harness.md).
           install(cmd, args);
         }
 
@@ -963,8 +961,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         if (ctx.held) await ctx.held;
 
         // Both latches are read where the worker reads them: as it takes the command off
-        // the queue (vd.rs:518-556, `guard(&mut lost, …)` inside the loop), not as the
-        // app issues it.
+        // the queue (vd.rs's `Session::run` asks the connection for its end first), not as
+        // the app issues it.
         if (fake.deviceLost && cmd.startsWith("vd_")) {
           await wait(config.latency.get);
           done("device-lost");
@@ -1110,9 +1108,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             return cmd === "third_party_licenses" ? "" : null;
           case "vd_connect":
             await wait(config.latency.connect);
-            // vd.rs:193-200 — install() shuts any prior worker down, so the new
-            // generation starts from a fresh Subs rather than inheriting the old one's
-            // channels and registrations.
+            // `VdState::install_for_page` shuts any prior worker down, so the new
+            // generation starts from a fresh connection rather than inheriting the old
+            // one's channels and registrations.
             teardown();
             fake.counters.connects++;
             done();

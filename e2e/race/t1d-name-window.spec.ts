@@ -159,7 +159,7 @@ test.describe("T1d name window", () => {
 
   // The other half of the same address: a rename made on the UNIT must reach the app.
   // It could not, for the life of the follow layer — names are not in
-  // `planToCommands`, so they were in no registration and `Subs::absorb` dropped the
+  // `planToCommands`, so they were in no registration and the transport's per-token delivery dropped the
   // notify the unit does send — one notify on the renamed address, identical whether
   // the rename came from the LCD or a client. The app now registers them, so this is a
   // direct follow: the label changes with no readback.

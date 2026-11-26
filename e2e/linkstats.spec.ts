@@ -41,7 +41,7 @@ const ROWS: Record<LinkLedgerKey, RegExp> = {
   subscriptions: /Subscriptions\s*9\s*2 params · 7 meters/,
   frames: /Registration frames\s*320\s*300 regist · 20 unregist/,
   reads: /Full reads\s*1/,
-  noanswer: /No answer\s*6\s*1\/3 to cutoff/,
+  noanswer: /No answer\s*6\s*1\/1 to cutoff/,
   log: new RegExp(`Log\\s*${LOG_PATH}`),
 };
 

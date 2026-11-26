@@ -185,7 +185,7 @@ test.describe("T2 shape-change", () => {
     // Phase 3a — ONE notify on a band address the ON flush just dropped. It is out of
     // the write set AND out of the registration, together and in the same flush, so the
     // bridge refuses it: the announcement reaches the page at all only for an address
-    // the session registered (fake-device.ts, mirroring vd.rs Subs::absorb). The
+    // the session registered (fake-device.ts, mirroring the transport's per-token delivery). The
     // refusal is the assertion, which is why `pushNotify` is used for its verdict
     // rather than `pushNotifyDelivered` — the latter throws on exactly this.
     const regBeforeProbe = regKeys(await paramAddrsOf(page));
@@ -710,7 +710,7 @@ test.describe("T2 shape-change", () => {
     // current behaviour: this is the floor the scene-scope figure is read against.
     expect(fullCost).toBe(1);
     // Scene scope: the address is not in this session's registration, so the bridge
-    // never hands the notify to the page (src-tauri/src/vd.rs Subs::absorb). The
+    // never hands the notify to the page (the transport's per-token delivery that src-tauri/src/vd.rs sends on). The
     // preference does not double the cost of a device-side knob move — it makes the
     // move undeliverable. Nothing is read, nothing is reconciled, and the plan keeps a
     // MONITOR_LEVEL the unit no longer has.

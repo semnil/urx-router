@@ -66,7 +66,7 @@ const key = (a: readonly [number, number]): string => `${a[0]}:${a[1]}`;
 const regOf = async (page: Page): Promise<string[]> => (await meterAddrsOf(page)).map((a) => a.join(":"));
 
 // Every frame below goes through the fake bridge's registered-set filter (the meter half
-// of vd.rs `Subs::absorb`), so the driver never has to pre-filter: a frame for an address
+// of the transport's per-token delivery), so the driver never has to pre-filter: a frame for an address
 // nobody registered is dropped where a real unit would never have sent it, and leaves a
 // `meter-drop` record naming the reason. `pushMetersDelivered` is the form for a case
 // whose subject is the readout — it throws at the push instead of letting the expectation
@@ -715,8 +715,8 @@ test.describe("T7 meter", () => {
       await expect(meterReadout(page, "CH 1")).toHaveText("—");
 
       // Teardown quiescence, measured as the refusal it is: the tear-down's
-      // vd_meters_unsubscribe drops the channel in the bridge (vd.rs sets
-      // meter_ch = None), so a frame arriving after the session ended is refused at the
+      // vd_meters_unsubscribe drops the channel in the bridge (vd.rs takes it off
+      // its route), so a frame arriving after the session ended is refused at the
       // boundary and no callback in the app is reached at all — neither the console's
       // nor the superseded one the generation stamp exists to catch. That second line
       // of defence is therefore not observable from here; what is observable is that

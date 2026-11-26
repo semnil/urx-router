@@ -166,11 +166,10 @@ describe("errorText", () => {
       "control-worker-gone",
       "device-lost: sync_status offline",
       "broker-closed",
-      "broker-no-vdpport: the device list carried no port",
       "not-connected",
       "broker-timeout: value at 766:0:0",
-      // Latched by the worker after a run of deadlines, so it is raised bare — the
-      // detail belongs to the one command that timed out, not to the stall.
+      // Raised once the transport ends the connection after a run of deadlines, so it is
+      // raised bare — the detail belongs to the one command that timed out, not to the stall.
       "broker-unresponsive",
       "broker-rejected: 140:0:0 (response_code 500)",
       "broker-bad-response: no sync_status",

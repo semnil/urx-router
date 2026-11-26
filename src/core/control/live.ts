@@ -976,7 +976,7 @@ export class LiveSync {
     }
     // Name addresses join the registration set. They are not in `planToCommands`
     // (the app writes names through a separate string path), so for the life of the
-    // follow layer they were in no registration and `Subs::absorb` dropped every
+    // follow layer they were in no registration and the transport's per-token delivery dropped every
     // rename notify — the unit announces one, and nothing was listening. ~17
     // addresses against ~800, and a name notify only fires when someone renames, so
     // the steady-state cost is nil.

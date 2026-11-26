@@ -1640,7 +1640,7 @@ describe("confirmedAddrs", () => {
   });
 
   it("vouches for nothing when a side-effect head's answer never came", async () => {
-    // The shell SENDS before it waits (`vd.rs`, do_set), so a timeout, a device-lost push
+    // The shell SENDS before it waits (the transport `vd.rs` runs on), so a timeout, a device-lost push
     // mid-write or a closed link leaves the request on the wire with its fate unknown — the
     // head may have landed and reset the very address an earlier round confirmed. Only an
     // explicit refusal says otherwise, and treating the two alike adopted a value the unit no

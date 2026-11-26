@@ -260,7 +260,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
 /**
  * What became of one command, as far as the link can say.
  *
- * The three-way matters because the shell SENDS before it waits (`vd.rs`, `do_set`): the
+ * The three-way matters because the shell SENDS before it waits (the transport `vd.rs` runs on): the
  * request is already on the wire by the time anything can go wrong with the answer.
  *
  *  - "accepted": the broker answered 200. The write landed.

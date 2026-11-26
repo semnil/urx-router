@@ -565,8 +565,8 @@ test.describe("T5 drop", () => {
   //
   // Arm 1's stimulus has been replaced twice, and each replacement is a statement about
   // what the shipped app can actually receive. The original was five planExternal
-  // addresses, which the bridge drops before the page sees them (src-tauri/src/vd.rs
-  // Subs::absorb) — the measurement was of nothing, which is arm 3 now. The second was
+  // addresses, which the bridge drops before the page sees them (the transport's
+  // per-token delivery) — the measurement was of nothing, which is arm 3 now. The second was
   // the DROPPED WINDOW: a sideEffect edit's flush re-ran live.ts capture() (shrinking the
   // index) while follow.ts subscribe() ran at begin() and after a reconcile only, so the
   // broker kept delivering addresses live.lookup no longer resolved. That window is shut

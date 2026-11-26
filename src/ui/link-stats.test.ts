@@ -136,7 +136,7 @@ describe("LinkStatsView", () => {
     expect(pop.querySelector('[data-ledger-row="frames"]')?.textContent).toBe(
       "Registration frames320300 regist · 20 unregist",
     );
-    expect(pop.querySelector('[data-ledger-row="noanswer"]')?.textContent).toBe("No answer61/3 to cutoff");
+    expect(pop.querySelector('[data-ledger-row="noanswer"]')?.textContent).toBe("No answer61/1 to cutoff");
     expect(pop.querySelector('[data-ledger-row="log"]')?.textContent).toBe("Lognot written yet");
 
     setLogPath("/tmp/link-ledger.jsonl");
@@ -173,7 +173,7 @@ describe("LinkStatsView", () => {
         "Subscriptions: 9 2 params · 7 meters",
         "Registration frames: 320 300 regist · 20 unregist",
         "Full reads: 11",
-        "No answer: 6 1/3 to cutoff",
+        "No answer: 6 1/1 to cutoff",
         "Log: /tmp/link-ledger.jsonl",
       ].join("\n"),
     );

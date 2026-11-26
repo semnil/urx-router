@@ -25,7 +25,7 @@ use tauri::ipc::Channel;
 // message would reach a Japanese dialog in English. Codes: broker-unreachable,
 // no-device, multiple-devices, control-worker-gone, not-connected, device-lost, broker-closed,
 // broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response,
-// broker-io, broker-no-vdpport.
+// broker-io.
 //
 // This list is the Rust half of a two-sided inventory — src/i18n/index.ts asks to
 // keep it in step, and error-text.test.ts asserts the TypeScript half exhaustive
@@ -84,9 +84,9 @@ pub struct LinkCounters {
     regist_frames: AtomicU64,
     unregist_frames: AtomicU64,
     deadlines: AtomicU64,
-    /// The CURRENT consecutive-deadline run (Health.stalled), not a total: it is the
-    /// distance to the stall latch that ends the session, so it goes back to zero the
-    /// moment the broker answers anything.
+    /// The CURRENT consecutive-deadline run, not a total. The transport ends the
+    /// connection on its first response deadline (N1), so it is 1 once a deadline has
+    /// ended the session and 0 before.
     stalled: AtomicU64,
 }
 
@@ -95,17 +95,15 @@ impl LinkCounters {
         c.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A command ran out its deadline: one more on the total, and the consecutive run
-    /// set to where the stall latch has got to. Both here, in one notation, because
-    /// they are one event seen two ways.
-    fn note_deadline(&self, run: u32) {
-        Self::bump(&self.deadlines);
-        self.stalled.store(run.into(), Ordering::Relaxed);
+    fn add(c: &AtomicU64, n: usize) {
+        c.fetch_add(n as u64, Ordering::Relaxed);
     }
 
-    /// The broker answered, so the consecutive run is over.
-    fn clear_stall(&self) {
-        self.stalled.store(0, Ordering::Relaxed);
+    /// A command ran out its deadline, which ends the session: one more on the total,
+    /// and the run at the limit.
+    fn note_deadline(&self) {
+        Self::bump(&self.deadlines);
+        self.stalled.store(1, Ordering::Relaxed);
     }
 
     fn read(&self) -> LinkStats {
@@ -624,583 +622,519 @@ fn stop(c: &mut Conn, done: Option<(Sender<()>, Instant)>) -> bool {
 
 #[cfg(desktop)]
 mod imp {
+    //! The control worker over the shared transport (urx-device's `urx-device-transport`).
+    //!
+    //! The transport owns the wire: discovery, the connection's own worker and reader
+    //! threads, request/reply matching, the registration of notification addresses and
+    //! the delivery of what they announce. What stays here is the app's side of it: the
+    //! `Cmd` queue the Tauri commands feed, the error codes the frontend localizes, the
+    //! Tauri channels a notification goes out on, the link-lost event and the ledger.
     use super::{
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE,
+        CONTROL_WORKER_GONE,
     };
     use std::collections::HashSet;
-    use std::io::{Read, Write};
-    use std::net::TcpStream;
-    use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
-    use serde_json::{json, Value};
     use tauri::ipc::Channel;
+    use urx_device_transport::connection::{
+        open_with, Connection, ConnectionOptions, LinkFailure, LinkLoss, NotificationHandler,
+        Subscription,
+    };
+    use urx_device_transport::delivery::NotificationBatch;
+    use urx_device_transport::discovery::{discover, DiscoveryOptions, SystemFirmware};
+    use urx_device_transport::lifecycle::{Cause, Control, Failure, LifecycleFailure};
+    use urx_device_transport::request::{
+        Evidence, Outcome, ReadValue, Request, RequestCause, RequestFailure,
+    };
+    use urx_device_transport::subscription::{SubscriptionAddress, TokenId};
+    use urx_device_transport::wire::{MeterAddress, NameValue, Notification, ParameterAddress};
 
-    /// Active frontend subscriptions (meter / parameter channels) plus their
-    /// pending notify batches. Shared by the idle pump and the command await
-    /// loops (do_set / do_get_value): a notify that lands while a command waits
-    /// for its response is absorbed into the batch instead of discarded, so the
-    /// console meters keep streaming while a long command sequence (e.g. a
-    /// device-follow readback) holds the worker. Batches flush on the pump
-    /// cadence (PUMP_BUDGET) inside absorb itself, so batch latency stays
-    /// bounded even while commands run back-to-back, and the IPC boundary is
-    /// still crossed ~30×/s, never per reading.
-    struct Subs {
-        meter_ch: Option<Channel<Vec<MeterUpdate>>>,
-        param_ch: Option<Channel<Vec<ParamUpdate>>>,
-        /// The addresses this session registered with the broker. They serve two
-        /// jobs: unregistering the previous set when a subscription is replaced,
-        /// and filtering the inbound feed. A notify reaches **every** connected
-        /// client, not just the one that registered the address, so what arrives
-        /// here also carries another client's registrations and the unit's own
-        /// clock, which pushes a notify every 10 s for as long as the link is up.
-        /// Forwarding those hands the follow layer addresses outside the plan's
-        /// writable set, which it (correctly) escalates to a full device readback —
-        /// a full readback every 10 s, all session.
-        meter_addrs: HashSet<(u32, i64)>,
-        param_addrs: HashSet<(u32, i64, i64)>,
-        meters: Vec<MeterUpdate>,
-        params: Vec<ParamUpdate>,
-        /// The dev build's parameter watch (Cmd::ProbeSubscribe): its own channel, its
-        /// own registered set and its own batch, so a notify on a watched address
-        /// reaches the live-sync channel only when that subscription registered the
-        /// address too. An address in both sets is registered with the broker while
-        /// either holds it (see unregister_params / unregister_probe).
-        probe_ch: Option<Channel<Vec<ParamUpdate>>>,
-        probe_addrs: HashSet<(u32, i64, i64)>,
-        probe: Vec<ParamUpdate>,
-        last_flush: Instant,
+    /// Device Center's device-list port.
+    pub(super) const VDDP_SRV_PORT: u16 = 51770;
+
+    /// The whole discovery: the device list and each listed unit's identity check.
+    const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// Each request's send deadline and, once sent, its response deadline: the 3 s every
+    /// get and set has always had.
+    const REQUEST_DEADLINE: Duration = Duration::from_secs(3);
+
+    /// Opening: connecting, the identity check and the firmware read.
+    const CONNECT_DEADLINE: Duration = Duration::from_secs(6);
+
+    /// How long a close waits for the unregistrations and the threads when nothing
+    /// bounds it more tightly (the app-exit teardown does).
+    const CLOSE_TEARDOWN: Duration = Duration::from_secs(2);
+
+    /// Prefix every device-lost error carries: the unit went away while the link stayed.
+    pub(super) const DEVICE_LOST_PREFIX: &str = "device-lost";
+
+    /// Prefix the command whose response deadline passed carries. The transport ends
+    /// the connection on that deadline (N1), so the commands after it fail as
+    /// unresponsive.
+    pub(super) const BROKER_TIMEOUT_PREFIX: &str = "broker-timeout";
+
+    /// The code the session ends with once a response deadline has passed. Distinct
+    /// from device-lost: the unit may well be attached and fine — it is the broker that
+    /// has stopped talking to us.
+    pub(super) const BROKER_UNRESPONSIVE: &str = "broker-unresponsive";
+
+    /// The Tauri channels notifications go out on, each with the token whose addresses
+    /// it carries. A notification reaches a channel only when that channel's token is
+    /// among its recipients: the transport hands over only what a token registered, so a
+    /// notify meant for another client, or the unit's own clock, never reaches the
+    /// follow layer.
+    #[derive(Default)]
+    struct Routes {
+        meters: Option<(TokenId, Channel<Vec<MeterUpdate>>)>,
+        params: Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
+        probe: Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
     }
 
-    impl Subs {
-        fn new() -> Self {
-            Subs {
-                meter_ch: None,
-                param_ch: None,
-                meter_addrs: HashSet::new(),
-                param_addrs: HashSet::new(),
-                meters: Vec::new(),
-                params: Vec::new(),
-                probe_ch: None,
-                probe_addrs: HashSet::new(),
-                probe: Vec::new(),
-                last_flush: Instant::now(),
-            }
-        }
-
-        /// Whether any subscription is streaming (drives the worker's poll cadence).
-        fn active(&self) -> bool {
-            self.meter_ch.is_some() || self.param_ch.is_some() || self.probe_ch.is_some()
-        }
-
-        /// Collect a subscribed meter / parameter notify into its pending batch,
-        /// flushing on the pump cadence. Only addresses this session registered are
-        /// forwarded (see the address sets above); a notify for any other address is
-        /// still consumed — it is a notify frame, never a command reply — just
-        /// dropped rather than passed on. Returns true when the frame was consumed
-        /// (callers skip further matching).
-        fn absorb(&mut self, msg: &Value) -> bool {
-            if self.meter_ch.is_some() {
-                if let Some(m) = parse_meter(msg) {
-                    if self.meter_addrs.contains(&(m.meter_id, m.x)) {
-                        self.meters.push(m);
-                        self.flush_due();
-                    }
-                    return true;
-                }
-            }
-            if self.param_ch.is_some() || self.probe_ch.is_some() {
-                if let Some(p) = parse_param(msg) {
-                    let addr = (p.param_id, p.x, p.y);
-                    let bulk = p == BULK_CHANGE;
-                    let mut kept = false;
-                    if self.probe_ch.is_some() && (bulk || self.probe_addrs.contains(&addr)) {
-                        self.probe.push(p.clone());
-                        kept = true;
-                    }
-                    if self.param_ch.is_some() && (bulk || self.param_addrs.contains(&addr)) {
-                        self.params.push(p);
-                        kept = true;
-                    }
-                    if kept {
-                        self.flush_due();
-                    }
-                    return true;
-                }
-            }
-            false
-        }
-
-        /// Flush once the pump cadence has elapsed (bounds the batch latency).
-        fn flush_due(&mut self) {
-            if self.last_flush.elapsed() >= PUMP_BUDGET {
-                self.flush();
-            }
-        }
-
-        /// Send the pending batches (one channel send each; no-op when empty).
-        fn flush(&mut self) {
-            if let (Some(ch), false) = (self.meter_ch.as_ref(), self.meters.is_empty()) {
-                let _ = ch.send(std::mem::take(&mut self.meters));
-            }
-            if let (Some(ch), false) = (self.param_ch.as_ref(), self.params.is_empty()) {
-                let _ = ch.send(std::mem::take(&mut self.params));
-            }
-            if let (Some(ch), false) = (self.probe_ch.as_ref(), self.probe.is_empty()) {
-                let _ = ch.send(std::mem::take(&mut self.probe));
-            }
-            self.last_flush = Instant::now();
-        }
-    }
-
-    pub fn worker(
-        rx: Receiver<Cmd>,
-        ready: Sender<Result<DeviceSummary, String>>,
-        counters: Arc<LinkCounters>,
-        preferred: &str,
+    /// One batch the transport delivered, sent on as one IPC message per channel, then
+    /// acknowledged so the next batch can form.
+    fn forward(
+        routes: &Mutex<Routes>,
+        connection: &OnceLock<Arc<Connection>>,
+        batch: NotificationBatch,
     ) {
-        // Open the link, and learn the port for this Device Center session while
-        // doing it. The port is per-connection, so a reconnect repeats the lookup
-        // rather than reusing a number that a Device Center restart has already
-        // invalidated. Failures carry a stable code the frontend localizes; the raw
-        // cause stays in the log.
-        let (mut link, mut summary) = match Link::open(preferred) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("vd: could not open the device link: {e}");
-                let _ = ready.send(Err(e));
-                return;
+        let mut meters = Vec::new();
+        let mut params = Vec::new();
+        let mut probe = Vec::new();
+        {
+            let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
+            let has = |route: &Option<(TokenId, Channel<Vec<ParamUpdate>>)>,
+                       recipients: &[TokenId]| {
+                route
+                    .as_ref()
+                    .is_some_and(|(token, _)| recipients.contains(token))
+            };
+            for record in &batch.records {
+                match &record.payload {
+                    Notification::Meter { address, value } => {
+                        if routes
+                            .meters
+                            .as_ref()
+                            .is_some_and(|(token, _)| record.recipients.contains(token))
+                        {
+                            meters.push(MeterUpdate {
+                                meter_id: address.meter_id,
+                                x: address.x,
+                                value: *value,
+                            });
+                        }
+                    }
+                    payload => {
+                        let update = match payload {
+                            Notification::Numeric { address, value } => ParamUpdate {
+                                param_id: address.param_id,
+                                x: address.x,
+                                y: address.y,
+                                value: *value,
+                                value_str: None,
+                            },
+                            Notification::Text { address, value } => ParamUpdate {
+                                param_id: address.param_id,
+                                x: address.x,
+                                y: address.y,
+                                value: 0,
+                                value_str: Some(value.clone()),
+                            },
+                            Notification::BulkChange => BULK_CHANGE,
+                            Notification::Meter { .. } => unreachable!("matched above"),
+                        };
+                        if has(&routes.params, &record.recipients) {
+                            params.push(update.clone());
+                        }
+                        if has(&routes.probe, &record.recipients) {
+                            probe.push(update);
+                        }
+                    }
+                }
+            }
+            if let (Some((_, channel)), false) = (&routes.meters, meters.is_empty()) {
+                let _ = channel.send(meters);
+            }
+            if let (Some((_, channel)), false) = (&routes.params, params.is_empty()) {
+                let _ = channel.send(params);
+            }
+            if let (Some((_, channel)), false) = (&routes.probe, probe.is_empty()) {
+                let _ = channel.send(probe);
+            }
+        }
+        if let Some(connection) = connection.get() {
+            connection.adopt_notifications(batch.ticket);
+        }
+    }
+
+    /// The text a discovery's or an opening's failure reaches the frontend as. A link the
+    /// unit going offline ended is device-lost and a socket error is broker-io, kept apart
+    /// from the peer closing the stream as before the shared transport; `while_it_was` says
+    /// what the unit was going through.
+    fn link_failure_text(failed: &LinkFailure, while_it_was: &str) -> String {
+        match failed.lost_link {
+            Some(LinkLoss::UnitLost) => {
+                format!("{DEVICE_LOST_PREFIX}: the unit went offline while it was {while_it_was}")
+            }
+            Some(LinkLoss::SocketError(kind)) => format!("broker-io: {kind:?}"),
+            Some(LinkLoss::PeerClosed) | None => lifecycle_text(&failed.failure),
+        }
+    }
+
+    /// The text a failure reaches the frontend as: `<code>` or `<code>: <detail>`, the
+    /// codes `src/i18n/index.ts` (`SHELL_CODES`) localizes.
+    fn lifecycle_text(failure: &Failure) -> String {
+        match failure {
+            Failure::Cancelled { phase } => {
+                format!("{CONTROL_WORKER_GONE}: cancelled in {phase:?}")
+            }
+            Failure::Cause { code, phase } => match code {
+                Cause::ConnectionFailed => format!("broker-unreachable: {phase:?}"),
+                Cause::DiscoveryTimeout | Cause::ConnectTimeout => {
+                    format!("broker-timeout: {phase:?}")
+                }
+                Cause::SendTimeout | Cause::ResponseTimeout => format!("broker-timeout: {phase:?}"),
+                Cause::TeardownTimeout => "broker-timeout: teardown".to_string(),
+                Cause::DeviceNotFound => "no-device".to_string(),
+                Cause::InvalidResponse | Cause::IdentityError => {
+                    format!("broker-bad-response: {phase:?}")
+                }
+                Cause::DeviceRejected => format!("broker-rejected: {phase:?}"),
+                Cause::ConnectionLost => format!("broker-closed: {phase:?}"),
+                Cause::NotConnected => "not-connected".to_string(),
+                Cause::PreconditionFailed => format!("broker-io: {phase:?} refused locally"),
+                Cause::NotificationOverflow => "broker-io: notification overflow".to_string(),
+                Cause::InternalError => CONTROL_WORKER_GONE.to_string(),
+            },
+        }
+    }
+
+    /// The text of the cause that ended the connection, which every later command fails
+    /// with too.
+    fn ended_text(connection: &Connection, cause: RequestCause) -> String {
+        match cause {
+            RequestCause::ConnectionLost => match connection.lost_link() {
+                Some(LinkLoss::UnitLost) => format!("{DEVICE_LOST_PREFIX}: the unit went offline"),
+                Some(LinkLoss::PeerClosed) | None => "broker-closed".to_string(),
+                Some(LinkLoss::SocketError(kind)) => format!("broker-io: {kind:?}"),
+            },
+            // The command whose deadline passed failed as broker-timeout; the connection it
+            // ended answers everything after it as unresponsive.
+            RequestCause::ResponseTimeout => BROKER_UNRESPONSIVE.to_string(),
+            RequestCause::NotificationOverflow => "broker-io: notification overflow".to_string(),
+            RequestCause::InvalidResponse => "broker-bad-response: the link".to_string(),
+            RequestCause::SendTimeout | RequestCause::TeardownTimeout => {
+                format!("{BROKER_TIMEOUT_PREFIX}: sending")
+            }
+            RequestCause::InternalError => CONTROL_WORKER_GONE.to_string(),
+            other => format!("broker-io: {other:?}"),
+        }
+    }
+
+    /// The text one request's failure reaches its caller as. `at` names the address.
+    fn request_text(
+        connection: &Connection,
+        failure: RequestFailure,
+        evidence: Evidence,
+        at: &str,
+    ) -> String {
+        let RequestFailure::Cause { code, .. } = failure else {
+            return format!("{CONTROL_WORKER_GONE}: cancelled");
+        };
+        // The deadline that ran out the run is still this request's deadline; the
+        // commands after it fail with the session's end.
+        if code == RequestCause::ResponseTimeout {
+            return format!("{BROKER_TIMEOUT_PREFIX}: {at}");
+        }
+        if let Some(ended) = connection.terminal() {
+            // Whatever this request met, the connection's end is what the session died of.
+            return ended_text(connection, ended);
+        }
+        match code {
+            RequestCause::SendTimeout => format!("{BROKER_TIMEOUT_PREFIX}: sending {at}"),
+            RequestCause::DeviceRejected => match evidence {
+                Evidence::Rejected(response) => {
+                    format!("broker-rejected: {at} response_code {response}")
+                }
+                _ => format!("broker-rejected: {at}"),
+            },
+            RequestCause::InvalidResponse => format!("broker-bad-response: {at}"),
+            RequestCause::NotConnected => "not-connected".to_string(),
+            RequestCause::PreconditionFailed => format!("broker-io: {at} refused locally"),
+            RequestCause::InvalidInput => format!("broker-bad-response: {at} could not be framed"),
+            other => ended_text(connection, other),
+        }
+    }
+
+    /// One request, waited for, its result adopted at once.
+    fn request(connection: &Connection, request: Request) -> Outcome {
+        let operation = match connection.create_operation() {
+            Ok(operation) => operation,
+            Err(failure) => {
+                return Outcome::Failure {
+                    failure,
+                    evidence: Evidence::NotSent,
+                }
             }
         };
-
-        summary.firmware = match handshake(&mut link) {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
-            }
-        };
-        if ready.send(Ok(summary.clone())).is_err() {
-            return; // caller gave up
-        }
-        serve(link, rx, counters);
+        let (tx, rx) = mpsc::channel();
+        connection.submit(&operation, request, move |outcome, adoption| {
+            adoption.adopt();
+            let _ = tx.send(outcome);
+        });
+        rx.recv().unwrap_or(Outcome::Failure {
+            failure: RequestFailure::Cause {
+                code: RequestCause::InternalError,
+                phase: urx_device_transport::request::RequestPhase::Delivery,
+            },
+            evidence: Evidence::Unconfirmed,
+        })
     }
 
-    /// One opened session: answer commands until a Shutdown (or until every sender is
-    /// gone), drain the idle socket between them, and close the link on the way out.
-    fn serve(mut link: Link, rx: Receiver<Cmd>, counters: Arc<LinkCounters>) {
-        // Subscribed meter / parameter channels, the addresses registered with the
-        // broker, and the pending notify batches (see Subs).
-        let mut subs = Subs::new();
-        // Channel to push the one-shot link-lost event on, if the frontend is
-        // watching: a held-open live session is dropped instead of freezing when
-        // the broker link goes away while idle.
-        let mut link_ch: Option<Channel<LinkEvent>> = None;
-        // Latched once a device-lost push is seen. The push arrives exactly once,
-        // so the command that consumed it is the only one that could ever notice:
-        // without this, every later command keeps talking to a broker that still
-        // ACKs writes with no unit attached and answers reads from its cache, and
-        // the frontend is told a plan was written when nothing reached hardware.
-        // A failure the idle pump meets is latched here too, so the commands after
-        // it fail with that cause rather than finding the worker gone.
-        let mut health = Health::new(Arc::clone(&counters));
-        // Set by the app-exit teardown, which waits for it: the socket has to be
-        // unregistered and closed before the process goes away, not merely told to be.
-        let mut exit_done: Option<(Sender<()>, Instant)> = None;
-        loop {
-            // While a subscription is streaming, poll for commands briefly so the
-            // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
-            // idle, wait longer so the thread doesn't spin. pump's own blocking read
-            // (READ_TIMEOUT, 50 ms) supplies the backpressure when the feed is quiet.
-            // A session latched as lost runs no pump, so it waits like an idle one.
-            let wait = if subs.active() && health.lost.is_none() {
-                Duration::from_millis(5)
-            } else {
-                Duration::from_millis(50)
-            };
-            match rx.recv_timeout(wait) {
-                Ok(Cmd::Shutdown { done }) => {
-                    exit_done = done;
-                    break;
+    fn address(param_id: u32, x: i64, y: i64) -> ParameterAddress {
+        ParameterAddress { param_id, x, y }
+    }
+
+    /// The worker's view of the session: the connection, the routes its notification
+    /// handler reads, and the subscriptions it holds.
+    struct Session {
+        connection: Arc<Connection>,
+        routes: Arc<Mutex<Routes>>,
+        counters: Arc<LinkCounters>,
+        meters: Option<Held>,
+        params: Option<Held>,
+        probe: Option<Held>,
+    }
+
+    /// A subscription in use, with the addresses its token holds.
+    struct Held {
+        subscription: Subscription,
+        addresses: HashSet<SubscriptionAddress>,
+    }
+
+    impl Session {
+        /// Runs a parameter command and keeps the ledger's deadline rows: a missed
+        /// deadline adds to the total, and the run is the transport's. `sent` counts the command once it
+        /// reached the socket: one refused before it was sent — the session already over
+        /// included — leaves the ledger's row where it was.
+        fn run(
+            &mut self,
+            req: Request,
+            at: &str,
+            sent: &AtomicU64,
+        ) -> Result<Option<ReadValue>, String> {
+            if let Some(ended) = self.connection.terminal() {
+                return Err(ended_text(&self.connection, ended));
+            }
+            let outcome = request(&self.connection, req);
+            if !matches!(
+                outcome,
+                Outcome::Failure {
+                    evidence: Evidence::NotSent,
+                    ..
                 }
-                Err(RecvTimeoutError::Disconnected) => break,
-                Ok(Cmd::Set {
-                    param_id,
-                    x,
-                    y,
-                    value,
-                    reply,
-                }) => {
-                    // Each count is taken inside the guard: the ledger counts what is put
-                    // on the socket, and a command the latch refuses never reaches it.
-                    let _ = reply.send(health.guard(|| {
-                        LinkCounters::bump(&counters.sets);
-                        do_set(&mut link, &mut subs, param_id, x, y, json!(value))
-                    }));
-                }
-                Ok(Cmd::Get {
-                    param_id,
-                    x,
-                    y,
-                    reply,
-                }) => {
-                    let _ = reply.send(health.guard(|| {
-                        LinkCounters::bump(&counters.gets);
-                        do_get(&mut link, &mut subs, param_id, x, y)
-                    }));
-                }
-                Ok(Cmd::SetStr {
-                    param_id,
-                    x,
-                    y,
-                    value,
-                    reply,
-                }) => {
-                    let _ = reply.send(health.guard(|| {
-                        LinkCounters::bump(&counters.sets);
-                        do_set(&mut link, &mut subs, param_id, x, y, json!(value))
-                    }));
-                }
-                Ok(Cmd::GetStr {
-                    param_id,
-                    x,
-                    y,
-                    reply,
-                }) => {
-                    let _ = reply.send(health.guard(|| {
-                        LinkCounters::bump(&counters.gets);
-                        do_get_str(&mut link, &mut subs, param_id, x, y)
-                    }));
-                }
-                Ok(Cmd::MetersSubscribe {
-                    addrs,
-                    channel,
-                    reply,
-                }) => {
-                    // Replace any prior subscription: unregister the old set, then
-                    // register the new one address by address (never a bulk post on
-                    // /vd/meters — a post with no address is the presumed cause of a
-                    // Device Center crash, while address-by-address registration is
-                    // stable).
-                    LinkCounters::bump(&counters.meter_subscribes);
-                    unregister_meters(&mut link, &mut subs, &counters);
-                    let mut first = Ok(());
-                    for &(id, x) in &addrs {
-                        let r = health.guard(|| {
-                            LinkCounters::bump(&counters.regist_frames);
-                            reg_meter(&mut link, id, x, "regist")
-                        });
-                        if first.is_ok() {
-                            first = r;
+            ) {
+                LinkCounters::bump(sent);
+            }
+            match outcome {
+                Outcome::Success { value, .. } => Ok(value),
+                Outcome::Failure { failure, evidence } => {
+                    if matches!(
+                        failure,
+                        RequestFailure::Cause {
+                            code: RequestCause::ResponseTimeout,
+                            ..
                         }
+                    ) {
+                        self.counters.note_deadline();
                     }
-                    subs.meter_addrs = addrs.into_iter().collect();
-                    subs.meters.clear();
-                    subs.meter_ch = Some(channel);
-                    let _ = reply.send(first);
-                }
-                Ok(Cmd::MetersUnsubscribe) => {
-                    unregister_meters(&mut link, &mut subs, &counters);
-                    subs.meters.clear();
-                    subs.meter_ch = None;
-                }
-                Ok(Cmd::ParamsSubscribe {
-                    addrs,
-                    channel,
-                    reply,
-                }) => {
-                    // Replace any prior subscription: unregister the old set, then
-                    // register the new one address by address (per-address regist
-                    // only, mirroring meters — an addressless bulk post can take Device
-                    // Center down).
-                    LinkCounters::bump(&counters.param_subscribes);
-                    unregister_params(&mut link, &mut subs, &counters);
-                    let mut first = Ok(());
-                    for &(id, x, y) in &addrs {
-                        // Already registered by the dev build's parameter watch; the
-                        // probe set is empty in a release binary.
-                        if subs.probe_addrs.contains(&(id, x, y)) {
-                            continue;
-                        }
-                        let r = health.guard(|| {
-                            LinkCounters::bump(&counters.regist_frames);
-                            reg_param(&mut link, id, x, y, "regist")
-                        });
-                        if first.is_ok() {
-                            first = r;
-                        }
-                    }
-                    subs.param_addrs = addrs.into_iter().collect();
-                    subs.params.clear();
-                    subs.param_ch = Some(channel);
-                    let _ = reply.send(first);
-                }
-                Ok(Cmd::ParamsUnsubscribe) => {
-                    unregister_params(&mut link, &mut subs, &counters);
-                    subs.params.clear();
-                    subs.param_ch = None;
-                }
-                Ok(Cmd::ProbeSubscribe {
-                    addrs,
-                    channel,
-                    reply,
-                }) => {
-                    // The same per-address registration as ParamsSubscribe, into the
-                    // watch's own set. An address the live-sync set already holds is
-                    // not registered a second time.
-                    unregister_probe(&mut link, &mut subs, &counters);
-                    let mut first = Ok(());
-                    for &(id, x, y) in &addrs {
-                        if subs.param_addrs.contains(&(id, x, y)) {
-                            continue;
-                        }
-                        let r = health.guard(|| {
-                            LinkCounters::bump(&counters.regist_frames);
-                            reg_param(&mut link, id, x, y, "regist")
-                        });
-                        if first.is_ok() {
-                            first = r;
-                        }
-                    }
-                    subs.probe_addrs = addrs.into_iter().collect();
-                    subs.probe.clear();
-                    subs.probe_ch = Some(channel);
-                    let _ = reply.send(first);
-                }
-                Ok(Cmd::WatchLink { channel }) => {
-                    link_ch = Some(channel);
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    // Drain the idle socket so its buffer never backs up. While a
-                    // meter / parameter subscription is active, forward those
-                    // notifications to the frontend instead of discarding them. A
-                    // failure here latches the session as lost with its own cause,
-                    // after pushing the link-lost event so a held-open live session is
-                    // dropped instead of freezing silently. From then on the pump stops
-                    // and every command is answered with that cause until a Shutdown.
-                    if health.lost.is_some() {
-                        continue;
-                    }
-                    if let Err(e) = pump(&mut link, &mut subs) {
-                        eprintln!("vd: {e}; the session is lost until a reconnect");
-                        if let Some(ch) = &link_ch {
-                            let _ = ch.send(LinkEvent { reason: e.clone() });
-                        }
-                        health.lost = Some(e);
-                    }
+                    Err(request_text(&self.connection, failure, evidence, at))
                 }
             }
         }
-        // EVERY break above lands here, which is what makes this the session's one exit
-        // — including a session latched as lost, where the link may already be gone and
-        // the unregisters are then discarded like the rest of that path's writes.
-        unregister_all(&mut link, &mut subs, &counters);
-        // The shutdown ends this side's half; the drain below reads what the broker
-        // still has queued until its EOF, so the socket is not dropped mid-stream.
-        link.begin_close();
-        // The app-exit teardown's caller stops waiting at its instant, so the drain ends
-        // one READ_TIMEOUT ahead of it, however the frames arrive: whole lines no longer
-        // than that apart would otherwise keep it reading to CLOSE_FRAMES.
-        let close_by = exit_done.as_ref().map(|(_, by)| *by - READ_TIMEOUT);
-        let mut frames = 0;
-        let mut progress = Instant::now();
-        while frames < CLOSE_FRAMES && close_by.is_none_or(|by| Instant::now() < by) {
-            // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
-            // peer has nothing queued, so its EOF is not coming and there is nothing
-            // left to drain. Counting those against the budget would spend 64 × that on
-            // a quiet broker — which is exactly the state a session that just
-            // unregistered everything is in, and it is the operator's Quit being held.
-            //
-            // This reader's patience is READ_TIMEOUT's, so it moved with it (it was
-            // 200 ms). Left inherited rather than pinned like drain_late_reply's,
-            // because the two want opposite things: that one must not give up on a
-            // straggler too early, this one must not hold Quit, and shorter is the
-            // right direction for it. Said out loud so the next change to READ_TIMEOUT
-            // knows it is moving this too.
-            let read = match close_by {
-                Some(by) => link.read_frame_before(by),
-                None => link.read_frame(),
-            };
-            match read {
-                Ok(Some(_)) => {
-                    frames += 1;
-                    progress = Instant::now();
+
+        fn get(&mut self, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
+            let at = format!("{param_id}:{x}:{y}");
+            let counters = Arc::clone(&self.counters);
+            match self.run(
+                Request::GetNumeric(address(param_id, x, y)),
+                &at,
+                &counters.gets,
+            )? {
+                Some(ReadValue::Numeric(value)) => Ok(value),
+                _ => Err("broker-bad-response: value was not an integer".to_string()),
+            }
+        }
+
+        /// A name reads as the broker's preset index (a number) until one is typed, then
+        /// as the literal string; a number decodes to "", so callers see "no custom name".
+        fn get_str(&mut self, param_id: u32, x: i64, y: i64) -> Result<String, String> {
+            let at = format!("{param_id}:{x}:{y}");
+            let counters = Arc::clone(&self.counters);
+            match self.run(
+                Request::GetName(address(param_id, x, y)),
+                &at,
+                &counters.gets,
+            )? {
+                Some(ReadValue::Name(NameValue::Text(text))) | Some(ReadValue::Text(text)) => {
+                    Ok(text)
                 }
-                // A line still arriving is read on, for one READ_TIMEOUT past the last
-                // whole line at most; only a whole line counts against the budget, and a
-                // read timeout ends the drain mid-line too.
-                Ok(None) if link.still_arriving() && progress.elapsed() < READ_TIMEOUT => {}
-                _ => break, // a closed / dead socket, or nothing more to read
+                Some(ReadValue::Name(NameValue::Integer(_))) => Ok(String::new()),
+                _ => Err("broker-bad-response: value was not a name".to_string()),
             }
         }
-        // Sent LAST, so the app-exit path is released by the close having happened and
-        // not merely by the intent to close.
-        if let Some((done, _)) = exit_done.take() {
-            let _ = done.send(());
+
+        fn set(&mut self, req: Request, at: String) -> Result<(), String> {
+            let counters = Arc::clone(&self.counters);
+            self.run(req, &at, &counters.sets).map(|_| ())
         }
-    }
 
-    /// Frames the close drain will read through before giving up on the peer's half.
-    /// Under Live sync the broker is still streaming meters when the shutdown goes
-    /// out, so the peer's EOF arrives behind a few readings, not immediately.
-    const CLOSE_FRAMES: usize = 64;
-
-    /// Drop every meter registration this session holds. Shared by the subscription
-    /// replacement, the explicit unsubscribe and the session teardown, so the three
-    /// cannot disagree about what leaving looks like.
-    fn unregister_meters(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
-        for &(id, x) in &subs.meter_addrs {
-            LinkCounters::bump(&counters.unregist_frames);
-            let _ = reg_meter(link, id, x, "unregist");
-        }
-        subs.meter_addrs.clear();
-    }
-
-    /// The parameter half of the above. An address the dev build's parameter watch
-    /// also holds stays registered: the broker keeps one registration per address and
-    /// client, so unregistering it here would silence the watch.
-    fn unregister_params(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
-        for &(id, x, y) in &subs.param_addrs {
-            if subs.probe_addrs.contains(&(id, x, y)) {
-                continue;
-            }
-            LinkCounters::bump(&counters.unregist_frames);
-            let _ = reg_param(link, id, x, y, "unregist");
-        }
-        subs.param_addrs.clear();
-    }
-
-    /// The parameter watch's half: every address it registered, except one the
-    /// live-sync subscription holds as well.
-    fn unregister_probe(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
-        for &(id, x, y) in &subs.probe_addrs {
-            if subs.param_addrs.contains(&(id, x, y)) {
-                continue;
-            }
-            LinkCounters::bump(&counters.unregist_frames);
-            let _ = reg_param(link, id, x, y, "unregist");
-        }
-        subs.probe_addrs.clear();
-    }
-
-    /// Everything this session registered, on the way out. The registration reply is
-    /// never read (see Cmd::ParamsSubscribe), so this cannot confirm the broker took
-    /// them — it can only make sure they were asked for, which is the whole of what
-    /// this side controls.
-    fn unregister_all(link: &mut Link, subs: &mut Subs, counters: &LinkCounters) {
-        unregister_meters(link, subs, counters);
-        unregister_params(link, subs, counters);
-        unregister_probe(link, subs, counters);
-    }
-
-    /// The session's connection to one unit: a plain TCP socket carrying
-    /// newline-delimited JSON with each `vdp` message bare. The port is **not
-    /// fixed**: Device Center advertises one per session on `:51770`, so it is looked
-    /// up at connect and again on every reconnect. The port serves concurrent
-    /// clients, so this app does not compete with anything else on the machine for
-    /// the link.
-    struct Link {
-        sock: TcpStream,
-        reader: LineReader,
-    }
-
-    /// Arm a plain socket the way every socket here wants it: a short read timeout
-    /// so a quiet link never becomes a hang, and Nagle off.
-    ///
-    /// Both are load-bearing. Without the timeout, every read below blocks with no
-    /// deadline of its own and a quiet moment becomes a hang the user can only
-    /// escape by quitting. Nagle matters because this link is a strict ping-pong —
-    /// write one small line, block for the reply, thousands of times in a full sweep —
-    /// which is the shape Nagle punishes with a fixed 40 ms stall rather than a
-    /// proportional cost. A plain `TcpStream` leaves Nagle on unless told otherwise.
-    fn arm_socket(sock: &TcpStream, timeout: Duration) -> Result<(), String> {
-        sock.set_read_timeout(Some(timeout))
-            .map_err(|e| format!("broker-io: could not set the socket read timeout: {e}"))?;
-        sock.set_nodelay(true)
-            .map_err(|e| format!("broker-io: could not disable Nagle: {e}"))
-    }
-
-    /// The `:51770` lookup that names this session's `vdp` ports, one per listed
-    /// device. Its own short-lived connection: it speaks a different envelope (`vddp`)
-    /// and a different uri space (`/vddp_srv*`) from everything else here.
-    fn discover_vdp_targets(port: u16) -> Result<Vec<(u16, String)>, String> {
-        let mut sock = TcpStream::connect(("127.0.0.1", port))
-            .map_err(|e| format!("broker-unreachable: {e}"))?;
-        arm_socket(&sock, DISCOVERY_TIMEOUT)?;
-        let req = json!({ "vddp": { "method": "get", "uri": DEVICE_LIST } });
-        sock.write_all(format!("{req}\n").as_bytes())
-            .map_err(|e| format!("broker-io: {e}"))?;
-
-        let mut reader = LineReader::new();
-        let deadline = Instant::now() + DISCOVERY_TIMEOUT;
-        loop {
-            // Each read blocks for no longer than what is left, so the wait ends at the
-            // deadline whatever arrives before it.
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            arm_socket(&sock, left)?;
-            let Some(msg) = reader.read_json(&mut sock)? else {
-                continue;
-            };
-            // Only the `get` reply for the list is the list; it answers at once, with
-            // or without the data it should carry.
-            let Some(vddp) = msg.get("vddp") else {
-                continue;
-            };
-            let uri = vddp.get("uri").and_then(Value::as_str).unwrap_or("");
-            if vddp.get("method").and_then(Value::as_str) != Some("get")
-                || uri.split('?').next() != Some(DEVICE_LIST)
-            {
-                continue;
-            }
-            let data = vddp
-                .get("data")
-                .ok_or_else(|| format!("broker-bad-response: no data for {DEVICE_LIST}"))?;
-            return vdp_targets(data);
-        }
-        Err("broker-no-vdpport: the device list did not answer".into())
-    }
-
-    /// What one `/vddp_srv/devices` answer names: every listed device's `vdp` port and
-    /// model, in list order. Separated from the socket loop above because every way
-    /// this can go wrong is a shape of the broker's JSON, and a live broker answers
-    /// with the one shape it is currently written to answer with — the out-of-range
-    /// port below has no way to reach the loop at all from a working Device Center.
-    /// A malformed entry fails the whole list: the entry it hides could be the unit.
-    fn vdp_targets(data: &Value) -> Result<Vec<(u16, String)>, String> {
-        // An empty list is Device Center up with no URX.
-        let list = data
-            .pointer("/list")
-            .and_then(Value::as_array)
-            .filter(|l| !l.is_empty())
-            .ok_or_else(|| "no-device".to_string())?;
-        list.iter()
-            .map(|dev| {
-                let port = dev.get("vdpport").and_then(Value::as_u64).ok_or_else(|| {
-                    "broker-no-vdpport: the device list carried no port".to_string()
-                })?;
-                // Checked, not truncated. A broker answer above 65535 (a bug or a schema
-                // change) used to cast down silently — 65537 becomes 1 — and the connect
-                // then failed naming a port the broker never advertised, which sends the
-                // next reader looking in the wrong place entirely.
-                let port = u16::try_from(port)
-                    .map_err(|_| format!("broker-bad-response: vdpport {port} is out of range"))?;
-                Ok((port, str_or(dev, "model", "URX")))
-            })
+        /// What the other two subscriptions hold: an address in it is registered already,
+        /// and stays registered when this one lets it go (the transport's address union, K8).
+        fn others(&self, which: Which) -> HashSet<SubscriptionAddress> {
+            [
+                (Which::Meters, &self.meters),
+                (Which::Params, &self.params),
+                (Which::Probe, &self.probe),
+            ]
+            .into_iter()
+            .filter(|(w, _)| *w != which)
+            .filter_map(|(_, held)| held.as_ref())
+            .flat_map(|held| held.addresses.iter().copied())
             .collect()
+        }
+
+        /// Replaces one subscription: a new token for `addresses`, switched to, then the
+        /// old token released (K10). The channel moves to the new token as soon as the
+        /// token exists, before its registrations run: the token receives notifications
+        /// from then on, so one that arrives while the registrations are in flight is
+        /// judged by the NEW set and goes out on the NEW channel. Registration runs one
+        /// address at a time with each verdict checked (K9); the reply carries the first
+        /// failure. A refused subscribe leaves nothing subscribed on its channel: the
+        /// transport releases a token whose activation failed, unregistering what it had
+        /// registered, and the previous token is released as on success, so neither set is
+        /// left installed.
+        fn subscribe(
+            &mut self,
+            which: Which,
+            addresses: Vec<SubscriptionAddress>,
+            install: impl FnOnce(&mut Routes, Option<TokenId>),
+        ) -> Result<(), String> {
+            if let Some(ended) = self.connection.terminal() {
+                return Err(ended_text(&self.connection, ended));
+            }
+            let wanted: HashSet<SubscriptionAddress> = addresses.iter().copied().collect();
+            let mut held = self.others(which);
+            if let Some(old) = self.slot(which).as_ref() {
+                held.extend(old.addresses.iter().copied());
+            }
+            let operation = self.connection.create_operation().map_err(|failure| {
+                request_text(
+                    &self.connection,
+                    failure,
+                    Evidence::NotSent,
+                    "a registration",
+                )
+            })?;
+            let new = self
+                .connection
+                .prepare_subscription(&addresses)
+                .map_err(|failure| self.lifecycle_failure_text(&failure))?;
+            install(
+                &mut self.routes.lock().unwrap_or_else(|p| p.into_inner()),
+                Some(new.token()),
+            );
+            LinkCounters::add(
+                &self.counters.regist_frames,
+                wanted.difference(&held).count(),
+            );
+            let (tx, rx) = mpsc::channel();
+            new.activate(&operation, move |outcome| {
+                let _ = tx.send(outcome);
+            });
+            let activated = match rx.recv() {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(failure)) => Err(self.lifecycle_failure_text(&failure)),
+                Err(_) => Err(CONTROL_WORKER_GONE.to_string()),
+            };
+            let others = self.others(which);
+            let replaced = self.slot(which).replace(Held {
+                subscription: new,
+                addresses: wanted.clone(),
+            });
+            if let Some(old) = replaced {
+                let kept: HashSet<SubscriptionAddress> = others.union(&wanted).copied().collect();
+                LinkCounters::add(
+                    &self.counters.unregist_frames,
+                    old.addresses.difference(&kept).count(),
+                );
+                release(&old.subscription);
+            }
+            if activated.is_err() {
+                if let Some(failed) = self.slot(which).take() {
+                    release(&failed.subscription);
+                }
+            }
+            activated
+        }
+
+        fn unsubscribe(&mut self, which: Which, clear: impl FnOnce(&mut Routes)) {
+            clear(&mut self.routes.lock().unwrap_or_else(|p| p.into_inner()));
+            let others = self.others(which);
+            if let Some(old) = self.slot(which).take() {
+                LinkCounters::add(
+                    &self.counters.unregist_frames,
+                    old.addresses.difference(&others).count(),
+                );
+                release(&old.subscription);
+            }
+        }
+
+        fn slot(&mut self, which: Which) -> &mut Option<Held> {
+            match which {
+                Which::Meters => &mut self.meters,
+                Which::Params => &mut self.params,
+                Which::Probe => &mut self.probe,
+            }
+        }
+
+        fn lifecycle_failure_text(&self, failure: &LifecycleFailure) -> String {
+            if let Some(ended) = self.connection.terminal() {
+                return ended_text(&self.connection, ended);
+            }
+            lifecycle_text(&failure.failure)
+        }
     }
 
-    /// Which of the devices whose link is online this session takes. Device Center
-    /// keeps an entry for every unit it has seen, attached or not, so the list is
-    /// narrowed to the online ones first; one online device is taken whatever its
-    /// model. With more than one, the model selected in the app picks the device, and
-    /// when that still leaves zero or several (two units of one model, or none of the
-    /// selected one), the connect stops with `multiple-devices`: a session addresses
-    /// one unit, and guessing which would write to a unit the operator did not mean.
-    fn choose_online<T>(online: Vec<(T, String)>, preferred: &str) -> Result<(T, String), String> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Which {
+        Meters,
+        Params,
+        Probe,
+    }
+
+    /// Releases a token and waits for its unregistrations to settle.
+    fn release(subscription: &Subscription) {
+        let (tx, rx) = mpsc::channel();
+        subscription.release(move |_| {
+            let _ = tx.send(());
+        });
+        let _ = rx.recv();
+    }
+
+    /// Discovery picks the unit: the one online unit, or among several the one of the
+    /// model the caller selected. When that still leaves zero or several (two units of
+    /// one model, or none of the selected one), the connect stops with
+    /// `multiple-devices`: a session addresses one unit, and guessing which would write
+    /// to a unit the operator did not mean.
+    pub(super) fn choose_online<T>(
+        online: Vec<(T, String)>,
+        preferred: &str,
+    ) -> Result<(T, String), String> {
         if online.len() <= 1 {
             return online
                 .into_iter()
@@ -1221,2999 +1155,1203 @@ mod imp {
         ))
     }
 
-    /// Whether the unit behind `link` is attached: `/vd/synchronize` answering
-    /// "online". A failed read is the caller's failure, not a "no".
-    fn is_online(link: &mut Link) -> Result<bool, String> {
-        Ok(sync_status(link)? == "online")
-    }
-
-    /// How long discovery waits for the device list. Each read on its socket blocks for
-    /// what is left of it at most, so on a silent link the loop makes one read and the
-    /// deadline ends it rather than spinning.
-    const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
-
-    /// A string field, or a placeholder for an unnamed unit.
-    fn str_or(v: &Value, key: &str, dflt: &str) -> String {
-        v.get(key)
-            .and_then(Value::as_str)
-            .unwrap_or(dflt)
-            .to_string()
-    }
-
-    /// Newline-delimited JSON off a plain socket.
-    ///
-    /// It owns both buffers for the life of the connection. `pending` carries the
-    /// partial tail between calls, because a chunk boundary is not a message
-    /// boundary and a line split across two reads would otherwise be lost; `chunk`
-    /// is reused because a fresh `[0u8; 8192]` per read means memsetting 8 KB for
-    /// every ~100-byte frame, and this link carries roughly 200 frames a second for
-    /// as long as a session is up.
-    /// Ceiling on one un-terminated line (see read_json).
-    const MAX_PENDING: usize = 1 << 20;
-
-    struct LineReader {
-        pending: Vec<u8>,
-        chunk: Vec<u8>,
-        /// The last call read bytes and completed no line with them.
-        arrived: bool,
-    }
-
-    impl LineReader {
-        fn new() -> Self {
-            LineReader {
-                pending: Vec::new(),
-                chunk: vec![0u8; 8192],
-                arrived: false,
-            }
-        }
-
-        /// One message, or None on read timeout, on a line that is not parseable JSON,
-        /// or when the one read this call makes leaves the line unfinished — callers
-        /// treat all three as "nothing yet" and loop. A call reads the socket at most
-        /// once, so a caller's deadline is checked after every read, even while a line
-        /// keeps arriving in pieces. Parsed in place out of `pending`, so a frame is not
-        /// copied into a `String` on its way to a parser that would immediately take it
-        /// apart again.
-        ///
-        /// Generic over the source rather than taking the `TcpStream` both callers
-        /// pass, so the chunk-boundary rejoin and the `MAX_PENDING` refusal can be
-        /// driven from a byte source a test owns. Neither of those is reachable
-        /// through a socket without a peer that misbehaves on cue.
-        fn read_json<R: Read>(&mut self, sock: &mut R) -> Result<Option<Value>, String> {
-            self.arrived = false;
-            if let Some(line) = self.take_line() {
-                return Ok(line);
-            }
-            match sock.read(&mut self.chunk) {
-                Ok(0) => return Err("broker-closed".into()),
-                // Disjoint field borrows: reading into `chunk` and appending to
-                // `pending` in one statement is fine, and a temporary between
-                // them would put back the copy this reader exists to avoid.
-                Ok(n) => {
-                    self.pending.extend_from_slice(&self.chunk[..n]);
-                    // A peer that never sends a newline would otherwise grow this
-                    // buffer at socket speed for the life of the session — a silent
-                    // memory climb rather than an error anyone can act on. The bound
-                    // is far above any real frame (the largest this protocol carries
-                    // is a device list of a few KiB), so reaching it means the peer
-                    // is not speaking this protocol.
-                    if self.pending.len() > MAX_PENDING {
-                        return Err(format!(
-                            "broker-bad-response: {} bytes with no line break",
-                            self.pending.len()
-                        ));
-                    }
-                }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) =>
-                {
-                    return Ok(None)
-                }
-                Err(e) => return Err(format!("broker-io: {e}")),
-            }
-            let line = self.take_line();
-            self.arrived = line.is_none();
-            Ok(line.flatten())
-        }
-
-        /// The first complete line in `pending`, removed from it and parsed (`Some(None)`
-        /// for a line that is not JSON), or `None` while no line is complete.
-        fn take_line(&mut self) -> Option<Option<Value>> {
-            let nl = self.pending.iter().position(|&b| b == b'\n')?;
-            let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
-            self.pending.drain(..=nl);
-            Some(parsed)
-        }
-    }
-
-    /// Device Center's device-list port. Fixed, unlike the `vdp` port it hands out.
-    const VDDP_SRV_PORT: u16 = 51770;
-
-    /// The device list's uri on that port.
-    const DEVICE_LIST: &str = "/vddp_srv/devices";
-
-    impl Link {
-        /// Open the link to the device `choose_online` picks (`preferred` is the model
-        /// selected in the app), and report what the endpoint says the unit is.
-        /// `firmware` is left `None`: the caller completes the handshake
-        /// (`/vd/synchronize`, then `/vd/device`) over the link and fills it in.
-        ///
-        /// Every listed device is asked whether it is online before one is chosen, and
-        /// a device that cannot be asked fails the connect rather than being skipped:
-        /// it could be the online unit, and leaving it out could pick another one.
-        fn open(preferred: &str) -> Result<(Link, DeviceSummary), String> {
-            let mut online = Vec::new();
-            for (port, model) in discover_vdp_targets(VDDP_SRV_PORT)? {
-                let sock = TcpStream::connect(("127.0.0.1", port))
-                    .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
-                arm_socket(&sock, READ_TIMEOUT)?;
-                let mut link = Link {
-                    sock,
-                    reader: LineReader::new(),
-                };
-                if is_online(&mut link)? {
-                    online.push((link, model));
-                }
-            }
-            let (link, model) = choose_online(online, preferred)?;
-            Ok((
-                link,
-                DeviceSummary {
-                    // The `vddp` device list carries no label, and a unit's label and
-                    // model name are the same, so the model stands in for it.
-                    label: model.clone(),
-                    model,
-                    firmware: None,
-                },
-            ))
-        }
-
-        /// Send one `vdp` message, as one line with the message bare.
-        fn send_vdp(&mut self, vdp: Value) -> Result<(), String> {
-            let line = json!({ "vdp": vdp });
-            self.sock
-                .write_all(format!("{line}\n").as_bytes())
-                .map_err(|e| format!("broker-io: {e}"))
-        }
-
-        /// Start the orderly close: shut the write half, so the drain that follows
-        /// simply sees the peer's EOF.
-        fn begin_close(&mut self) {
-            let _ = self.sock.shutdown(std::net::Shutdown::Write);
-        }
-
-        /// One inbound message, or None on read timeout, on a line that is not
-        /// parseable JSON, or while a line is still arriving — callers treat all three
-        /// as "nothing yet" and loop. One socket read at most (see read_json).
-        fn read_frame(&mut self) -> Result<Option<Value>, String> {
-            self.reader.read_json(&mut self.sock)
-        }
-
-        /// One inbound message as read_frame gives it, from a read that blocks no later
-        /// than `deadline`: the last read of a wait is armed with what is left of it, as
-        /// each device-list read is, so the wait ends at its deadline.
-        fn read_frame_before(&mut self, deadline: Instant) -> Result<Option<Value>, String> {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left >= READ_TIMEOUT {
-                return self.read_frame();
-            }
-            if left.is_zero() {
-                return Ok(None);
-            }
-            arm_socket(&self.sock, left)?;
-            let read = self.read_frame();
-            arm_socket(&self.sock, READ_TIMEOUT)?;
-            read
-        }
-
-        /// Whether the last read_frame read part of a line and not its end, as against
-        /// a read that timed out.
-        fn still_arriving(&self) -> bool {
-            self.reader.arrived
-        }
-    }
-
-    /// The `vdp` message inside an inbound frame — one accessor shared by every
-    /// parse site, so they cannot disagree about where the message sits.
-    ///
-    /// `get` rather than `pointer`: `Value::pointer` allocates two Strings per path
-    /// token even when nothing needs escaping, and this runs on every frame of a
-    /// feed of ~200 frames a second.
-    fn vdp_of(msg: &Value) -> Option<&Value> {
-        msg.get("vdp")
-    }
-
-    /// Socket read timeout, and with it the longest a queued command waits behind the
-    /// pump's blocking read.
-    ///
-    /// The worker is one thread: while `pump` sits in `read_frame` it is not looking at
-    /// the command channel at all, so a `Cmd::Set` enqueued just after that read starts
-    /// waits it out — up to one whole read timeout, which is the wait the first live
-    /// write after a quiet gap meets. The busy path cannot produce that, since it is
-    /// bounded by one `recv_timeout` (5 ms) plus `PUMP_BUDGET` (30 ms). 50 ms bounds it
-    /// at a quarter of the former 200 ms; the price is the idle wake rate, which goes
-    /// from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
-    ///
-    /// It bounds no command's patience: every reply loop carries its own 3 s wall-clock
-    /// deadline, treats a read timeout as "keep waiting" and takes no frame completed
-    /// after the deadline (`do_set`, `do_get_value`, `vd_get_data`). `drain_late_reply` is the one reader that used this as its own
-    /// give-up point, and it now carries an explicit floor instead — see there.
-    const READ_TIMEOUT: Duration = Duration::from_millis(50);
-
-    /// Confirm a unit is really there, and read what the frontend needs to know
-    /// about it.
-    fn handshake(link: &mut Link) -> Result<Option<String>, String> {
-        // A device entry persists after the unit is unplugged, so confirm the live
-        // link before claiming a device: "online" means a URX is actually attached.
-        // Anything else (e.g. "lost") is Device Center up with no unit → the same
-        // no-device state as an empty list.
-        let status = sync_status(link)?;
-        if status != "online" {
-            eprintln!("vd: URX listed but sync_status = {status}; treating as no-device");
-            return Err("no-device".into());
-        }
-        // Read the System firmware version so the frontend can warn when the
-        // attached unit's firmware differs from the validated one. A failed read
-        // yields None, which the frontend treats as a reason to stop rather than
-        // as a reason to skip the check; the unit lost during the read fails the
-        // handshake.
-        system_firmware(link)
-    }
-
-    /// Send a GET for `uri` and return the matched response's `vdp.data`.
-    /// Shared by the handshake-time reads (synchronize, device); drains non-matching
-    /// frames until the address echoes back or the 3s deadline lapses. With
-    /// `watch_lost`, a device-lost push met while waiting fails the read with it: the
-    /// `/vd/device` read follows the unit's `online`, and Device Center answers it from
-    /// its cache once the unit is unplugged. The parameter read path (do_get_value)
-    /// keeps its own loop, since it also absorbs a session's notifies.
-    fn vd_get_data(link: &mut Link, uri: &str, watch_lost: bool) -> Result<Value, String> {
-        let base = uri.split('?').next().unwrap_or(uri).to_string();
-        // Sent and awaited under one spelling, as in do_get_value.
-        let verb = "get";
-        link.send_vdp(json!({ "method": verb, "uri": uri }))?;
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline {
-            let Some(msg) = link.read_frame_before(deadline)? else {
-                continue;
-            };
-            if watch_lost {
-                if let Some(err) = synchronize_lost(&msg) {
-                    return Err(err);
-                }
-            }
-            // A frame completed after the deadline is not the answer, as in do_set.
-            if Instant::now() >= deadline {
-                break;
-            }
-            // This loop is separate from reply_for's: it runs before a session
-            // exists, so there is nothing to absorb into. The verb is matched for
-            // the same reason reply_for matches it — a notify echoes the address it
-            // is about, and taking one as the answer here would decide the handshake
-            // off another client's traffic (a `/vd/synchronize` push is the shape
-            // that reaches this one).
-            let Some(vdp) = vdp_of(&msg) else { continue };
-            if vdp.get("method").and_then(Value::as_str) != Some(verb) {
-                continue;
-            }
-            let ruri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
-            if ruri.split('?').next().unwrap_or(ruri) != base {
-                continue;
-            }
-            return vdp
-                .get("data")
-                .cloned()
-                .ok_or_else(|| format!("broker-bad-response: no data for {base}"));
-        }
-        Err(format!("broker-timeout: {base}"))
-    }
-
-    /// Query the unit's live link state via /vd/synchronize: "online" means a URX
-    /// is actually attached. Device Center keeps the getDeviceList entry after the
-    /// unit is unplugged but reports a non-"online" status here, so this is what
-    /// separates a present device from a stale list entry.
-    fn sync_status(link: &mut Link) -> Result<String, String> {
-        vd_get_data(link, "/vd/synchronize", false)?
-            .pointer("/sync_status")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .ok_or_else(|| "broker-bad-response: no sync_status".to_string())
-    }
-
-    /// The unit's System firmware version, from /vd/device's firm_list. `Some("")`
-    /// means the unit answered with a list read in full that holds no System version,
-    /// which legitimately disables the frontend's mismatch warning. `None` means the
-    /// version could not be read — an unanswered /vd/device, a response without a
-    /// firm_list, or a list the version cannot be taken from — so it is unknown rather
-    /// than absent, and the frontend refuses to touch the device instead of proceeding
-    /// with the gate silently disabled. A device-lost push during the read is the
-    /// handshake's error.
-    fn system_firmware(link: &mut Link) -> Result<Option<String>, String> {
-        match vd_get_data(link, "/vd/device", true) {
-            Ok(data) => Ok(firmware_of(&data)),
-            Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => Err(e),
-            Err(_) => Ok(None),
-        }
-    }
-
-    /// The System version in a /vd/device answer, its entries matched by name without
-    /// case, or None when it cannot be read: no firm_list array, an entry without a
-    /// non-empty string firm_name (it could be the System entry), a System entry
-    /// without a non-empty string firm_version, or System entries that disagree. Entry order
-    /// does not change the result, and no System entry is `Some("")`.
-    fn firmware_of(data: &Value) -> Option<String> {
-        let list = data.pointer("/firm_list").and_then(Value::as_array)?;
-        let mut version: Option<&str> = None;
-        for entry in list {
-            let name = entry
-                .get("firm_name")
-                .and_then(Value::as_str)
-                .filter(|name| !name.is_empty())?;
-            if !name.eq_ignore_ascii_case("system") {
-                continue;
-            }
-            let this = entry
-                .get("firm_version")
-                .and_then(Value::as_str)
-                .filter(|version| !version.is_empty())?;
-            if version.is_some_and(|seen| seen != this) {
-                return None;
-            }
-            version = Some(this);
-        }
-        Some(version.unwrap_or("").to_string())
-    }
-
-    /// What a write's reply says about the write.
-    ///
-    /// Separate from the wait loop so it can be asked directly. Only a `response_code` that
-    /// is there and is an integer says anything: 200 is an acceptance and any other value a
-    /// refusal, while a reply carrying no usable code at all leaves the write's fate unknown
-    /// — the request went out before this reply was awaited, so it may have landed. Read
-    /// through `unwrap_or(0)` the last case reported a refusal, and the frontend keeps a
-    /// value across a refusal on the grounds that nothing moved.
-    fn write_verdict(vdp: &Value, param_id: u32, x: i64, y: i64) -> Result<(), String> {
-        match vdp.pointer("/data/response_code").and_then(Value::as_i64) {
-            Some(200) => Ok(()),
-            Some(code) => Err(format!(
-                "broker-rejected: {param_id}:{x}:{y} (response_code {code})"
-            )),
-            None => Err(format!(
-                "broker-bad-response: no integer response_code at {param_id}:{x}:{y}"
-            )),
-        }
-    }
-
-    fn do_set(
-        link: &mut Link,
-        subs: &mut Subs,
-        param_id: u32,
-        x: i64,
-        y: i64,
-        value: Value,
-    ) -> Result<(), String> {
-        let operation = "value";
-        let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        let uri = format!("{base}?operation={operation}");
-        // One spelling for what is sent and for what will be accepted as its reply,
-        // so the two cannot drift into a command that can never be answered.
-        let verb = "post";
-        link.send_vdp(json!({ "method": verb, "uri": uri, "data": { "current_value": value } }))?;
-        // Await the matching response, skipping unrelated notifications.
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut late = None;
-        while Instant::now() < deadline {
-            let Some(msg) = link.read_frame_before(deadline)? else {
-                continue;
-            };
-            // A frame completed after the deadline is not the answer, even the reply
-            // itself: a read that began in time can still return after it, and the late
-            // drain is the reader for what comes after the deadline.
-            if Instant::now() >= deadline {
-                late = Some(msg);
-                break;
-            }
-            // A device-lost push can land mid-write (the broker still ACKs the
-            // write itself); fail the command so the session tears down.
-            if let Some(err) = synchronize_lost(&msg) {
-                return Err(err);
-            }
-            // Subscribed notifies landing mid-command are batched, not discarded
-            // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb, Some(operation)) else {
-                continue;
-            };
-            return write_verdict(vdp, param_id, x, y);
-        }
-        Err(
-            drain_late_reply(link, subs, late, &base, verb, Some(operation))
-                .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")),
-        )
-    }
-
-    /// A command that timed out may still have its reply in flight. The vd protocol
-    /// carries no request id, so a late reply for an address is indistinguishable
-    /// from the reply to the *next* command on that same address — it would satisfy
-    /// it with a stale value. Drain what is already buffered (bounded, and only
-    /// after a timeout, so the healthy path pays nothing) and drop any reply for the
-    /// command that just gave up — its verb, its address and, for a POST, its
-    /// operation. Notifies stay batched via subs, as everywhere else.
-    ///
-    /// A device-lost push met here ends the drain and comes back as the command's
-    /// error, in place of its deadline: this reader consumes frames like the reply
-    /// loops do, and the push arrives once.
-    ///
-    /// `late` is the frame the command's wait read past its deadline, if any; the
-    /// drain takes it as its first.
-    fn drain_late_reply(
-        link: &mut Link,
-        subs: &mut Subs,
-        late: Option<Value>,
-        base: &str,
-        method: &str,
-        operation: Option<&str>,
-    ) -> Option<String> {
-        // TWO bounds, because they answer different questions and neither covers the
-        // other. FRAMES caps the busy case: under Live sync the broker streams meters
-        // continuously, so a wall clock alone would run to the end absorbing notifies —
-        // the straggler is the next reply frame, not a quarter-second of meters away.
-        // The wall-clock FLOOR covers the quiet case: with nothing arriving, every
-        // `read_frame` returns None at the socket timeout and the frame cap is never
-        // approached, so the loop's real give-up point is that timeout. It used to be
-        // 200 ms and is now 50 ms (READ_TIMEOUT, shortened so a live write does not
-        // queue behind it), which would have quartered how long a straggler has to show
-        // up — silently, since nothing here tests that. The floor keeps this reader's
-        // patience where it was and stops it moving with a constant it does not own.
-        //
-        // Only a whole line counts against FRAMES, so a stream read in pieces is given the
-        // same frames as one read whole, and the floor runs from the last whole line (or
-        // the start): silence and pieces of a line alike end the drain once no line has
-        // completed for that long, so where a line is split does not move the end.
-        let mut progress = Instant::now();
-        let mut frames = 0;
-        let mut late = late;
-        while frames < DRAIN_FRAMES {
-            let read = match late.take() {
-                Some(msg) => Ok(Some(msg)),
-                None => link.read_frame(),
-            };
-            match read {
-                Ok(Some(msg)) => {
-                    frames += 1;
-                    progress = Instant::now();
-                    if let Some(err) = synchronize_lost(&msg) {
-                        return Some(err);
-                    }
-                    if reply_for(subs, &msg, base, method, operation).is_some() {
-                        return None; // the straggler is consumed; the socket is clean again
-                    }
-                }
-                // Silence, or a line still arriving: neither is the end before the floor.
-                Ok(None) => {
-                    if progress.elapsed() >= DRAIN_QUIET {
-                        return None;
-                    }
-                }
-                Err(_) => return None, // the link is gone; there is nothing left to clean
-            }
-        }
-        None
-    }
-
-    /// Frames drain_late_reply will look through for a straggler before giving up.
-    const DRAIN_FRAMES: usize = 64;
-
-    /// How long drain_late_reply keeps waiting with no whole line arriving. Held
-    /// separately from READ_TIMEOUT so shortening that one cannot quietly shorten this.
-    const DRAIN_QUIET: Duration = Duration::from_millis(200);
-
-    /// The reply body for `method` at `base`, or None when the message was a notify,
-    /// a reply to a different verb, a reply for another address, or a POST reply whose
-    /// single `operation` is not `operation` (none, an unknown one and a repeated one
-    /// included). A write, a registration and an unregistration are all POSTs on one
-    /// address, and `reg_param` / `reg_meter` do not wait for their replies, so only the
-    /// operation tells a write's verdict from a registration's. Shared by the two
-    /// await loops and the late drain so the matching cannot drift — the exact-address
-    /// compare is what stops another instance's reply (e.g. y=12) satisfying a y=1
-    /// request through a prefix match.
-    ///
-    /// **The address alone does not identify a reply.** A notify carries the same uri
-    /// as the command that touches that address, and `absorb` only consumes one while
-    /// the matching channel is subscribed — so with Live sync off (a Fetch, a Write,
-    /// the self-test) an inbound notify for the address in flight would otherwise be
-    /// taken as its answer. It reaches us whether or not this session registered the
-    /// address: the broker broadcasts every notify to every connected client, which is
-    /// exactly the concurrent-client case the vdp port exists for. On a GET that
-    /// returns the pushed value instead of the read; on a POST the notify carries no
-    /// `response_code`, so the write is reported refused when it succeeded.
-    fn reply_for<'a>(
-        subs: &mut Subs,
-        msg: &'a Value,
-        base: &str,
-        method: &str,
-        operation: Option<&str>,
-    ) -> Option<&'a Value> {
-        if subs.absorb(msg) {
-            return None;
-        }
-        let vdp = vdp_of(msg)?;
-        if vdp.get("method").and_then(Value::as_str) != Some(method) {
-            return None;
-        }
-        let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
-        if uri.split('?').next().unwrap_or(uri) != base {
-            return None;
-        }
-        if operation.is_some() && operation_of(uri) != operation {
-            return None;
-        }
-        Some(vdp)
-    }
-
-    /// The value of the single `operation` query parameter in `uri`, or None when the
-    /// query has none or more than one.
-    fn operation_of(uri: &str) -> Option<&str> {
-        let (_, query) = uri.split_once('?')?;
-        let mut values = query.split('&').filter_map(|pair| {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (name == "operation").then_some(value)
-        });
-        let value = values.next()?;
-        values.next().is_none().then_some(value)
-    }
-
-    // Read a parameter instance's raw current_value (numeric or string). do_get /
-    // do_get_str decode it; sharing the request + address-matched await loop here
-    // keeps the two get paths from drifting.
-    fn do_get_value(
-        link: &mut Link,
-        subs: &mut Subs,
-        param_id: u32,
-        x: i64,
-        y: i64,
-    ) -> Result<Value, String> {
-        let base = format!("/vd/parameters/{param_id}:{x}:{y}");
-        // Sent and awaited under one spelling, as in do_set.
-        let verb = "get";
-        link.send_vdp(json!({ "method": verb, "uri": base }))?;
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut late = None;
-        while Instant::now() < deadline {
-            let Some(msg) = link.read_frame_before(deadline)? else {
-                continue;
-            };
-            // A frame completed after the deadline is not the answer (see do_set).
-            if Instant::now() >= deadline {
-                late = Some(msg);
-                break;
-            }
-            // A device-lost push can land mid-read; fail the command so the caller
-            // (readback / converge / live) surfaces the drop instead of timing out.
-            if let Some(err) = synchronize_lost(&msg) {
-                return Err(err);
-            }
-            // Subscribed notifies landing mid-command are batched, not discarded
-            // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb, None) else {
-                continue;
-            };
-            return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
-                format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
-            });
-        }
-        Err(drain_late_reply(link, subs, late, &base, verb, None)
-            .unwrap_or_else(|| format!("broker-timeout: value at {param_id}:{x}:{y}")))
-    }
-
-    fn do_get(
-        link: &mut Link,
-        subs: &mut Subs,
-        param_id: u32,
-        x: i64,
-        y: i64,
-    ) -> Result<i64, String> {
-        do_get_value(link, subs, param_id, x, y)?
-            .as_i64()
-            .ok_or_else(|| "broker-bad-response: value was not an integer".to_string())
-    }
-
-    // The broker returns a name as a preset index (number) until one is typed,
-    // then the literal string; a non-string value decodes to "" so callers see
-    // "no custom name".
-    fn do_get_str(
-        link: &mut Link,
-        subs: &mut Subs,
-        param_id: u32,
-        x: i64,
-        y: i64,
-    ) -> Result<String, String> {
-        Ok(do_get_value(link, subs, param_id, x, y)?
-            .as_str()
-            .unwrap_or("")
-            .to_string())
-    }
-
-    /// Register or unregister one meter address with the broker. Fire-and-forget:
-    /// the response_code reply is drained by `pump` like any other frame.
-    fn reg_meter(link: &mut Link, meter_id: u32, x: i64, op: &str) -> Result<(), String> {
-        link.send_vdp(
-            json!({ "method": "post", "uri": format!("/vd/meters/{meter_id}:{x}?operation={op}") }),
-        )
-    }
-
-    /// Register or unregister one parameter address with the broker for change
-    /// notifies. Fire-and-forget, like reg_meter: the reply is drained by `pump`.
-    fn reg_param(link: &mut Link, param_id: u32, x: i64, y: i64, op: &str) -> Result<(), String> {
-        link.send_vdp(json!({ "method": "post", "uri": format!("/vd/parameters/{param_id}:{x}:{y}?operation={op}") }))
-    }
-
-    /// Validate a broker `notify` frame and return its `vdp` object plus the
-    /// address segment after `prefix` (query stripped), or None for any other
-    /// frame shape (command replies, notifies on a different uri, etc.). Shared
-    /// by the meter and parameter forwarders, which only differ in the prefix,
-    /// the address arity, and how strictly they read current_value.
-    fn notify_frame<'a>(msg: &'a Value, prefix: &str) -> Option<(&'a Value, &'a str)> {
-        let vdp = vdp_of(msg)?;
-        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
-            return None;
-        }
-        let uri = vdp.get("uri").and_then(Value::as_str)?;
-        let rest = uri.strip_prefix(prefix)?;
-        Some((vdp, rest.split('?').next().unwrap_or(rest)))
-    }
-
-    /// Parse a meter `notify` frame and stream it to the frontend.
-    fn parse_meter(msg: &Value) -> Option<MeterUpdate> {
-        let (vdp, addr) = notify_frame(msg, "/vd/meters/")?;
-        let mut parts = addr.split(':');
-        let (id, xs) = (parts.next()?, parts.next()?);
-        let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
-        // Two coordinates exactly: one with more is another address, not this one.
-        if parts.next().is_some() {
-            return None;
-        }
-        // Drop the frame rather than substituting a value, like parse_param does:
-        // 0 here is not "no reading", it is 0.0 dBFS, so a malformed frame would
-        // slam the bar to full scale and read as clipping that never happened.
-        let value = vdp.pointer("/data/current_value").and_then(Value::as_i64)?;
-        Some(MeterUpdate { meter_id, x, value })
-    }
-
-    /// Parse a parameter `notify` frame (a device-side change on a registered
-    /// address). A non-integer current_value (e.g. a name string) yields None —
-    /// numeric follow only, matching the JS reconcile.
-    fn parse_param(msg: &Value) -> Option<ParamUpdate> {
-        // A namespace-level notify — `/vd/parameters` with no address and no value —
-        // is the broker's bulk-change push: a scene recall on the unit emits only
-        // this single frame (the changed parameters get no per-address notifies).
-        // Forward it as the sentinel (see BULK_CHANGE).
-        if notify_frame(msg, "/vd/parameters").is_some_and(|(_, rest)| rest.is_empty()) {
-            return Some(BULK_CHANGE);
-        }
-        let (vdp, addr) = notify_frame(msg, "/vd/parameters/")?;
-        let mut parts = addr.split(':');
-        let (ids, xs, ys) = (parts.next()?, parts.next()?, parts.next()?);
-        let (param_id, x, y) = (
-            ids.parse::<u32>().ok()?,
-            xs.parse::<i64>().ok()?,
-            ys.parse::<i64>().ok()?,
-        );
-        // Three coordinates exactly, as for a meter's two.
-        if parts.next().is_some() {
-            return None;
-        }
-        // Integer first — that is every notify but the name ones, and it must stay
-        // the cheap path. A frame carrying neither is still dropped, as before.
-        let raw = vdp.pointer("/data/current_value")?;
-        let (value, value_str) = match raw.as_i64() {
-            Some(v) => (v, None),
-            None => (0, Some(raw.as_str()?.to_string())),
-        };
-        Some(ParamUpdate {
-            param_id,
-            x,
-            y,
-            value,
-            value_str,
-        })
-    }
-
-    /// Detect a device-lost push: Device Center spontaneously sends a
-    /// `/vd/synchronize` notify with `sync_status` flipping to "offline"/"lost" the
-    /// moment the URX is physically unplugged. It arrives on `/vd/synchronize`, not
-    /// `/vd/parameters`, so the notify forwarders miss it; the broker also keeps
-    /// ACKing writes (response_code 200) with no unit attached, so a write error
-    /// cannot reveal the drop. Returns the ready-to-use error message when seen, so
-    /// each read loop just `return Err(..)`s on it.
-    /// Only a notify with a non-empty status counts: a reply to a read of the status,
-    /// and a notify whose status is empty, say nothing about the unit going away.
-    /// Not used by sync_status, which reads `/vd/synchronize` on purpose.
-    fn synchronize_lost(msg: &Value) -> Option<String> {
-        let vdp = vdp_of(msg)?;
-        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
-            return None;
-        }
-        let uri = vdp.get("uri").and_then(Value::as_str)?;
-        if uri.split('?').next().unwrap_or(uri) != "/vd/synchronize" {
-            return None;
-        }
-        let status = vdp.pointer("/data/sync_status").and_then(Value::as_str)?;
-        if status.is_empty() || status == "online" {
-            return None;
-        }
-        Some(format!("{DEVICE_LOST_PREFIX}: sync_status {status}"))
-    }
-
-    /// Prefix every device-lost error carries, so the worker can recognise one of
-    /// its own and latch the session as dead rather than re-deriving the state.
-    pub(super) const DEVICE_LOST_PREFIX: &str = "device-lost";
-
-    /// Prefix every per-command deadline carries. A single one is survivable; a run of
-    /// them with nothing answered in between is the stall latched below.
-    pub(super) const BROKER_TIMEOUT_PREFIX: &str = "broker-timeout";
-
-    /// Consecutive deadlines, with no command answered in between, that mean the
-    /// broker has stopped answering this session rather than that one read was slow.
-    ///
-    /// Three, because each deadline is 3 s (do_get_value / do_set / vd_get_data), so
-    /// the stall is declared ~9 s in. The number that mattered is the one it replaces:
-    /// a whole-device readback is ~800 parameters, and with every one of them running
-    /// out its own deadline the app sat on "Connecting for live sync…" for ~40 minutes
-    /// before the read finished and its error count refused the session. A broker left
-    /// holding an abandoned session (see the page-load teardown in lib.rs) is that
-    /// case: it answers no GET at all.
-    ///
-    /// A healthy local broker answers in milliseconds, so three deadlines in a row is
-    /// already far outside normal — and one answered command anywhere in the run puts
-    /// the count back to zero, so a single slow parameter cannot trip it.
-    pub(super) const BROKER_STALL_LIMIT: u32 = 3;
-
-    /// Stable code the stall latches. Distinct from device-lost: the unit may well be
-    /// attached and fine — it is the broker that has stopped talking to us.
-    pub(super) const BROKER_UNRESPONSIVE: &str = "broker-unresponsive";
-
-    /// What the worker knows about the session's health, and the one funnel every
-    /// parameter command passes through. Held as one value rather than as a pair of
-    /// `&mut` locals threaded through each call site, so a third latch is a change
-    /// here instead of a change at all seven of them.
-    pub(super) struct Health {
-        lost: Option<String>,
-        stalled: u32,
-        /// The session ledger. A deadline is recorded HERE rather than at the call
-        /// sites because this is already the one place that classifies one, so the
-        /// count and the latch can never come to disagree about what happened.
+    pub fn worker(
+        rx: Receiver<Cmd>,
+        ready: Sender<Result<DeviceSummary, String>>,
         counters: Arc<LinkCounters>,
+        preferred: &str,
+    ) {
+        worker_at(
+            VDDP_SRV_PORT,
+            REQUEST_DEADLINE,
+            rx,
+            ready,
+            counters,
+            preferred,
+        )
     }
 
-    impl Health {
-        pub(super) fn new(counters: Arc<LinkCounters>) -> Self {
-            Health {
-                lost: None,
-                stalled: 0,
-                counters,
+    /// The worker, against a device list on `list_port` (Device Center's own outside
+    /// tests), with `deadline` as each request's send and response deadline.
+    pub(super) fn worker_at(
+        list_port: u16,
+        deadline: Duration,
+        rx: Receiver<Cmd>,
+        ready: Sender<Result<DeviceSummary, String>>,
+        counters: Arc<LinkCounters>,
+        preferred: &str,
+    ) {
+        let control = Control::new();
+        let discovery = DiscoveryOptions {
+            list_port,
+            deadline: DISCOVERY_TIMEOUT,
+            request_deadline: deadline,
+            metadata: false,
+        };
+        let online = match discover(&discovery, &control) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|e| {
+                    let model = e.model.clone();
+                    (e, model)
+                })
+                .collect::<Vec<_>>(),
+            Err(failed) => {
+                let e = link_failure_text(&failed, "listed");
+                eprintln!("vd: could not open the device link: {e}");
+                let _ = ready.send(Err(e));
+                return;
             }
+        };
+        let (entry, model) = match choose_online(online, preferred) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = ready.send(Err(e));
+                return;
+            }
+        };
+        let routes = Arc::new(Mutex::new(Routes::default()));
+        let slot: Arc<OnceLock<Arc<Connection>>> = Arc::new(OnceLock::new());
+        let handler: NotificationHandler = {
+            let routes = Arc::clone(&routes);
+            let slot = Arc::clone(&slot);
+            Arc::new(move |batch| forward(&routes, &slot, batch))
+        };
+        let options = ConnectionOptions {
+            connect_deadline: CONNECT_DEADLINE,
+            handshake_request_deadline: deadline,
+            send_deadline: deadline,
+            response_deadline: deadline,
+        };
+        let connection = match open_with(entry.port, &entry.id, &options, &control, Some(handler)) {
+            Ok(connection) => Arc::new(connection),
+            Err(failed) => {
+                // Device Center answers the firmware read from its cache once the unit is
+                // unplugged; its push is the only sign, and the link records it.
+                let text = link_failure_text(&failed, "opened");
+                let _ = ready.send(Err(text));
+                return;
+            }
+        };
+        let _ = slot.set(Arc::clone(&connection));
+        let summary = DeviceSummary {
+            // The device list carries no label, and a unit's label and model name are the
+            // same, so the model stands in for it.
+            label: model.clone(),
+            model,
+            // Three-valued: a version, "" for a list read in full with no System entry,
+            // and None when the version cannot be read from it.
+            firmware: match connection.firmware() {
+                SystemFirmware::Version(version) => Some(version.clone()),
+                SystemFirmware::Absent => Some(String::new()),
+                SystemFirmware::Unreadable => None,
+            },
+        };
+        if ready.send(Ok(summary)).is_err() {
+            connection.close(CLOSE_TEARDOWN);
+            return;
         }
+        let session = Session {
+            connection,
+            routes,
+            counters,
+            meters: None,
+            params: None,
+            probe: None,
+        };
+        serve(session, rx);
+    }
 
-        /// Fail a command outright once the session is known dead, latching the reason
-        /// the first time one surfaces it. The device-lost push arrives exactly once,
-        /// so without the latch only the command that consumed it could ever notice —
-        /// every later one would keep talking to a broker that ACKs writes with no unit
-        /// attached and answers reads from its cache.
-        ///
-        /// The second latch is the stall: a broker that answers nothing would otherwise
-        /// cost every remaining command its full deadline, and the caller only learns the
-        /// operation failed once the last of them has run out.
-        pub(super) fn guard<T>(
-            &mut self,
-            call: impl FnOnce() -> Result<T, String>,
-        ) -> Result<T, String> {
-            if let Some(reason) = &self.lost {
-                return Err(reason.clone());
-            }
-            let r = call();
-            match &r {
-                Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => self.lost = Some(e.clone()),
-                Err(e) if e.starts_with(BROKER_TIMEOUT_PREFIX) => {
-                    self.stalled += 1;
-                    self.counters.note_deadline(self.stalled);
-                    if self.stalled >= BROKER_STALL_LIMIT {
-                        eprintln!(
-                            "vd: {} consecutive broker deadlines; treating the broker as unresponsive",
-                            self.stalled
+    /// Answers commands until a Shutdown (or until every sender is gone), and closes the
+    /// connection on the way out.
+    fn serve(mut session: Session, rx: Receiver<Cmd>) {
+        // The channel to push the one-shot link-lost event on: a held-open live session is
+        // dropped instead of freezing when the link ends while idle.
+        let mut link_ch: Option<Channel<LinkEvent>> = None;
+        // The end, once noticed, and whether the watch has been told of it.
+        let mut ended: Option<String> = None;
+        let mut announced = false;
+        let mut exit_done: Option<(Sender<()>, Instant)> = None;
+        loop {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(Cmd::Shutdown { done }) => {
+                    exit_done = done;
+                    break;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+                Ok(Cmd::Set {
+                    param_id,
+                    x,
+                    y,
+                    value,
+                    reply,
+                }) => {
+                    let req = Request::SetNumeric(address(param_id, x, y), value);
+                    let _ = reply.send(session.set(req, format!("{param_id}:{x}:{y}")));
+                }
+                Ok(Cmd::Get {
+                    param_id,
+                    x,
+                    y,
+                    reply,
+                }) => {
+                    let _ = reply.send(session.get(param_id, x, y));
+                }
+                Ok(Cmd::SetStr {
+                    param_id,
+                    x,
+                    y,
+                    value,
+                    reply,
+                }) => {
+                    let req = Request::SetText(address(param_id, x, y), value);
+                    let _ = reply.send(session.set(req, format!("{param_id}:{x}:{y}")));
+                }
+                Ok(Cmd::GetStr {
+                    param_id,
+                    x,
+                    y,
+                    reply,
+                }) => {
+                    let _ = reply.send(session.get_str(param_id, x, y));
+                }
+                Ok(Cmd::MetersSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
+                    LinkCounters::bump(&session.counters.meter_subscribes);
+                    let addresses = addrs
+                        .into_iter()
+                        .map(|(meter_id, x)| {
+                            SubscriptionAddress::Meter(MeterAddress { meter_id, x })
+                        })
+                        .collect();
+                    let _ =
+                        reply.send(
+                            session.subscribe(Which::Meters, addresses, |routes, token| {
+                                routes.meters = token.map(|token| (token, channel));
+                            }),
                         );
-                        self.lost = Some(BROKER_UNRESPONSIVE.to_string());
-                    }
                 }
-                // Anything else means the broker is talking to us, whatever it said.
-                _ => {
-                    self.stalled = 0;
-                    self.counters.clear_stall();
+                Ok(Cmd::MetersUnsubscribe) => {
+                    session.unsubscribe(Which::Meters, |routes| routes.meters = None)
+                }
+                Ok(Cmd::ParamsSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
+                    LinkCounters::bump(&session.counters.param_subscribes);
+                    let addresses = parameter_addresses(addrs);
+                    let _ =
+                        reply.send(
+                            session.subscribe(Which::Params, addresses, |routes, token| {
+                                routes.params = token.map(|token| (token, channel));
+                            }),
+                        );
+                }
+                Ok(Cmd::ParamsUnsubscribe) => {
+                    session.unsubscribe(Which::Params, |routes| routes.params = None)
+                }
+                Ok(Cmd::ProbeSubscribe {
+                    addrs,
+                    channel,
+                    reply,
+                }) => {
+                    let addresses = parameter_addresses(addrs);
+                    let _ =
+                        reply.send(session.subscribe(Which::Probe, addresses, |routes, token| {
+                            routes.probe = token.map(|token| (token, channel));
+                        }));
+                }
+                Ok(Cmd::WatchLink { channel }) => link_ch = Some(channel),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            // The link ending while nothing asks: the event goes out once, with the code
+            // every later command then fails with.
+            if ended.is_none() {
+                if let Some(cause) = session.connection.terminal() {
+                    let reason = ended_text(&session.connection, cause);
+                    eprintln!("vd: {reason}; the session is lost until a reconnect");
+                    ended = Some(reason);
                 }
             }
-            r
-        }
-    }
-
-    // Bound a single pump's drain. The broker streams meters at ~250/s, so reads
-    // rarely block; without this the loop would run a full 512-frame drain (~2 s)
-    // before returning, monopolizing the worker for that long — which both delays
-    // the meter batch and stalls live writes (Set/Get wait behind the drain). 30 ms
-    // keeps the batch latency and (under a live feed) the command latency low while
-    // still draining many frames per send (so the IPC boundary stays ~30×/s). The
-    // budget is only checked after each read, so when the feed falls quiet a pending
-    // command still waits out the final read's socket timeout before the worker yields.
-    // That WAS written off here as "not the case that mattered"; it is the wait the
-    // first live write after a quiet gap meets, which is the case that mattered. The
-    // bound is now READ_TIMEOUT's 50 ms rather than this budget — on a quiet link the
-    // loop breaks at `Ok(None)` and never reaches the check below, so shortening the
-    // socket timeout is what moved it and changing THIS constant would not have.
-    const PUMP_BUDGET: Duration = Duration::from_millis(30);
-
-    /// Drain buffered frames for up to PUMP_BUDGET, absorbing meter and parameter
-    /// notifications and forwarding them in one batched channel send each (the
-    /// boundary is crossed per pump, not once per ~250/s reading). Frames other than
-    /// the subscribed notifies are discarded. Returns the read's own error if the
-    /// connection failed, or the device-lost error if that push arrived; the worker
-    /// latches either as the session's cause.
-    fn pump(link: &mut Link, subs: &mut Subs) -> Result<(), String> {
-        let start = Instant::now();
-        // 512 is a non-binding hard ceiling; PUMP_BUDGET (or a drained socket)
-        // normally ends the loop first, so it only caps a pathological burst.
-        for _ in 0..512 {
-            // Parse the frame once and share it: synchronize_lost and absorb read
-            // the same envelope, and this drains the ~250/s meter stream (avoid
-            // re-parsing per consumer).
-            //
-            // `None` ends this pump. It means the socket is drained (its 50 ms
-            // read timeout), or that the one read left a line unfinished, whose rest
-            // the next pump reads — but it also covers a line that is not JSON, which is
-            // dropped rather than failed on: on the idle link it is noise rather than
-            // a failed operation (architecture.md "Aborting on failure", exception 3).
-            // It carries no notify, and the worker re-enters pump on its next 5 ms
-            // poll, so the cost of ending early on one is a single extra loop; the
-            // alternative is a third outcome threaded through every reader to
-            // distinguish "skipped" from "drained".
-            match link.read_frame() {
-                Ok(Some(msg)) => {
-                    if let Some(err) = synchronize_lost(&msg) {
-                        return Err(err);
-                    }
-                    subs.absorb(&msg);
-                }
-                Ok(None) => break, // drained — fall through to flush the batch
-                Err(e) => return Err(e),
-            }
-            // Yield the worker once the budget is spent so a pending command (and the
-            // accumulated batch below) is serviced without waiting out the stream.
-            if start.elapsed() >= PUMP_BUDGET {
-                break;
-            }
-        }
-        subs.flush();
-        Ok(())
-    }
-
-    #[cfg(test)]
-    mod guard_tests {
-        // The two latches, driven directly: guard is the one funnel every parameter
-        // command passes through, and both of its latches decide how long a caller
-        // waits for an answer it is never going to get. Asserted through what a caller
-        // sees — a latched session refuses a command that would otherwise have run —
-        // rather than by reading the struct's own fields.
-        use super::super::LinkCounters;
-        use super::{Health, BROKER_STALL_LIMIT, BROKER_TIMEOUT_PREFIX, BROKER_UNRESPONSIVE};
-
-        fn timeout() -> Result<i64, String> {
-            Err("broker-timeout: value at 139:0:0".to_string())
-        }
-
-        /// Did this call reach `call()` at all, or did the latch refuse it first?
-        fn ran(health: &mut Health) -> bool {
-            health.guard(|| Ok(7)) == Ok(7)
-        }
-
-        #[test]
-        fn a_run_of_deadlines_latches_the_broker_as_unresponsive() {
-            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
-            // Every one of them still reports on its own merits: the latch decides what
-            // happens NEXT, so a run that stops one short costs nothing but its deadlines.
-            for _ in 0..BROKER_STALL_LIMIT {
-                let e = health.guard(timeout).unwrap_err();
-                assert!(
-                    e.starts_with(BROKER_TIMEOUT_PREFIX),
-                    "reported as its own timeout: {e}"
-                );
-            }
-            // Past the limit every later command fails on the latch instead of running out
-            // its own deadline — the ~800-parameter readback this exists for.
-            assert_eq!(health.guard(|| Ok(7)).unwrap_err(), BROKER_UNRESPONSIVE);
-        }
-
-        #[test]
-        fn one_answered_command_clears_the_run() {
-            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
-            for _ in 0..BROKER_STALL_LIMIT - 1 {
-                let _ = health.guard(timeout);
-            }
-            assert!(ran(&mut health), "not latched one short of the limit");
-            // The answer put the run back to zero, so the same number of deadlines again
-            // still does not reach it.
-            for _ in 0..BROKER_STALL_LIMIT - 1 {
-                let _ = health.guard(timeout);
-            }
-            assert!(ran(&mut health), "the earlier deadlines no longer count");
-        }
-
-        #[test]
-        fn a_refusal_is_the_broker_talking_to_us() {
-            let mut health = Health::new(std::sync::Arc::new(LinkCounters::default()));
-            for _ in 0..BROKER_STALL_LIMIT * 2 {
-                let _ = health.guard(|| {
-                    Err::<i64, String>("broker-rejected: 140:0:0 (response_code 500)".to_string())
+            if let (Some(reason), Some(channel), false) = (&ended, &link_ch, announced) {
+                let _ = channel.send(LinkEvent {
+                    reason: reason.clone(),
                 });
+                announced = true;
             }
-            // A device that refuses every write is not a broker that has stopped
-            // answering, and stopping the session on it would take the failure away
-            // from the caller that can report which write was refused.
-            assert!(ran(&mut health));
+        }
+        // EVERY break above lands here: the session's one exit.
+        let teardown = exit_done.as_ref().map_or(CLOSE_TEARDOWN, |(_, by)| {
+            by.saturating_duration_since(Instant::now())
+        });
+        session.connection.close(teardown);
+        // Sent LAST, so the app-exit path is released by the close having happened and
+        // not merely by the intent to close.
+        if let Some((done, _)) = exit_done.take() {
+            let _ = done.send(());
         }
     }
 
+    fn parameter_addresses(addrs: Vec<(u32, i64, i64)>) -> Vec<SubscriptionAddress> {
+        addrs
+            .into_iter()
+            .map(|(param_id, x, y)| SubscriptionAddress::Parameter(address(param_id, x, y)))
+            .collect()
+    }
+
     #[cfg(test)]
-    mod subs_tests {
-        // Pure data-path tests for Subs (no broker, no websocket): absorb must
-        // batch subscribed notifies (and leave command replies alone), and the
-        // batch must flush on the pump cadence. Plus reply_for, which is where a
-        // frame absorb declined lands — the two together decide whether a notify
-        // can be mistaken for the answer to a command.
-        use super::{
-            parse_meter, parse_param, reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET,
-            READ_TIMEOUT,
+    mod adapter_tests {
+        // The worker over the shared transport, against a fake Device Center: a device
+        // list on one port and units on others, each answering as a case says. A case
+        // waits for what the worker sends back, under a bound, so none depends on a
+        // peer's timing.
+        use super::super::{
+            get, get_str, meters_subscribe, params_subscribe, probe_subscribe, set, set_str,
+            watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
         };
+        use super::{link_failure_text, worker_at, BROKER_UNRESPONSIVE};
         use serde_json::{json, Value};
-        use std::sync::{Arc, Mutex};
-        use std::time::Instant;
-        use tauri::ipc::{Channel, InvokeResponseBody};
-
-        // `drain_late_reply` reads until a straggler, a frame cap, OR silence. Silence is
-        // the one bound that used to be READ_TIMEOUT's by accident: every `read_frame`
-        // on a quiet link returns None at the socket timeout, so shortening that constant
-        // (200 -> 50 ms, so a live write does not queue behind the pump's blocking read)
-        // would have quartered how long a late reply has to arrive. The drain now owns
-        // DRAIN_QUIET instead. Nothing else can state this — the drain itself needs a
-        // socket, so its loop is not reachable from here; what IS checkable is that the
-        // two constants stayed independent and that the drain did not get less patient.
-        #[test]
-        fn the_late_drain_keeps_its_own_patience_when_the_socket_timeout_shortens() {
-            // The value the drain's give-up point had while READ_TIMEOUT was 200 ms.
-            // A change that lowers this is a change to how long a straggler has, and has
-            // to be argued on its own rather than fall out of a socket-timeout tweak.
-            assert_eq!(DRAIN_QUIET, std::time::Duration::from_millis(200));
-            // Independence, stated as the inequality that makes the floor load-bearing:
-            // if the socket timeout ever reached DRAIN_QUIET, the floor would stop adding
-            // anything and the coupling would be back without a line changing here.
-            assert!(
-                READ_TIMEOUT < DRAIN_QUIET,
-                "READ_TIMEOUT ({READ_TIMEOUT:?}) must stay under DRAIN_QUIET ({DRAIN_QUIET:?}), \
-                 or the late drain is bounded by the socket timeout again"
-            );
-            // The bound the whole change exists for: a queued command waits at most one
-            // recv_timeout (5 ms) plus this; a 200 ms read timeout delayed the first
-            // live write after a quiet gap by up to that whole timeout.
-            assert!(
-                READ_TIMEOUT <= std::time::Duration::from_millis(50),
-                "a live write queues behind one READ_TIMEOUT; keeping it small is the fix"
-            );
-        }
-
-        // A subscription whose registered sets hold exactly the addresses a test
-        // drives, mirroring what MetersSubscribe / ParamsSubscribe record: absorb
-        // forwards a notify only for an address this session registered.
-        fn subs_with(meters: &[(u32, i64)], params: &[(u32, i64, i64)]) -> Subs {
-            let mut subs = Subs::new();
-            subs.meter_addrs = meters.iter().copied().collect();
-            subs.param_addrs = params.iter().copied().collect();
-            subs
-        }
-
-        // A broker notify frame as the read loops see it (already-parsed JSON).
-        fn notify(uri: String, value: i64) -> Value {
-            json!({ "vdp": {
-                "method": "notify",
-                "uri": uri,
-                "data": { "current_value": value }
-            }})
-        }
-
-        // A capture channel: each flushed batch lands as one JSON payload.
-        fn capture<T>() -> (Channel<T>, Arc<Mutex<Vec<Value>>>) {
-            let seen: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-            let sink = seen.clone();
-            let ch = Channel::new(move |body| {
-                if let InvokeResponseBody::Json(s) = body {
-                    sink.lock().unwrap().push(serde_json::from_str(&s).unwrap());
-                }
-                Ok(())
-            });
-            (ch, seen)
-        }
-
-        #[test]
-        fn absorb_batches_subscribed_notifies_until_flush() {
-            let mut subs = subs_with(&[(115, 0), (115, 1)], &[]);
-            let (meter_ch, meters_seen) = capture();
-            subs.meter_ch = Some(meter_ch);
-
-            // Two meter readings are consumed; a param notify has no subscriber,
-            // so it falls through to the caller's own frame matching. A fresh
-            // last_flush keeps absorb's own cadence flush out of this test.
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&notify("/vd/meters/115:0".into(), -183)));
-            assert!(subs.absorb(&notify("/vd/meters/115:1?x=y".into(), 32767)));
-            assert!(!subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
-            assert!(
-                meters_seen.lock().unwrap().is_empty(),
-                "nothing sent before flush"
-            );
-
-            subs.flush();
-            let batches = meters_seen.lock().unwrap();
-            assert_eq!(batches.len(), 1, "one channel send per flush");
-            assert_eq!(
-                batches[0],
-                json!([
-                    { "meter_id": 115, "x": 0, "value": -183 },
-                    { "meter_id": 115, "x": 1, "value": 32767 }
-                ])
-            );
-            drop(batches);
-
-            // The buffer was emptied: a second flush sends nothing.
-            subs.flush();
-            assert_eq!(meters_seen.lock().unwrap().len(), 1);
-        }
-
-        #[test]
-        fn absorb_leaves_command_replies_for_the_await_loops() {
-            // The address is registered, so only the frame's method keeps the reply
-            // out of the batch — not the registered-set filter.
-            let mut subs = subs_with(&[], &[(142, 0, 0)]);
-            let (meter_ch, _) = capture();
-            let (param_ch, _) = capture();
-            subs.meter_ch = Some(meter_ch);
-            subs.param_ch = Some(param_ch);
-
-            // A get / set reply (vdp.method is not "notify") must never be
-            // consumed, or the awaiting command would time out.
-            let reply = json!({ "vdp": {
-                "method": "get",
-                "uri": "/vd/parameters/142:0:0",
-                "data": { "current_value": 1 }
-            }});
-            assert!(!subs.absorb(&reply));
-        }
-
-        #[test]
-        fn absorb_flushes_on_the_pump_cadence() {
-            let mut subs = subs_with(&[(100, 2), (100, 3)], &[]);
-            let (meter_ch, meters_seen) = capture();
-            subs.meter_ch = Some(meter_ch);
-
-            // Within the cadence window a reading only accumulates…
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&notify("/vd/meters/100:2".into(), -50)));
-            assert!(meters_seen.lock().unwrap().is_empty());
-
-            // …and once the window has elapsed, the next absorb sends the batch.
-            subs.last_flush = Instant::now() - PUMP_BUDGET;
-            assert!(subs.absorb(&notify("/vd/meters/100:3".into(), -40)));
-            let batches = meters_seen.lock().unwrap();
-            assert_eq!(batches.len(), 1);
-            assert_eq!(
-                batches[0],
-                json!([
-                    { "meter_id": 100, "x": 2, "value": -50 },
-                    { "meter_id": 100, "x": 3, "value": -40 }
-                ])
-            );
-        }
-
-        #[test]
-        fn absorb_forwards_the_bulk_change_notify_as_the_sentinel() {
-            let mut subs = subs_with(&[], &[(142, 0, 0)]);
-            let (param_ch, params_seen) = capture();
-            subs.param_ch = Some(param_ch);
-
-            // The broker's scene-recall push: a namespace-level notify with no
-            // address and no data. It must absorb as the unmappable sentinel —
-            // without depending on a value — while an addressed notify keeps
-            // parsing normally alongside it.
-            let bulk = json!({ "vdp": { "method": "notify", "uri": "/vd/parameters" } });
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&bulk));
-            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
-
-            subs.flush();
-            let batches = params_seen.lock().unwrap();
-            assert_eq!(batches.len(), 1);
-            assert_eq!(
-                batches[0],
-                json!([
-                    { "param_id": 0, "x": -1, "y": -1, "value": 0 },
-                    { "param_id": 142, "x": 0, "y": 0, "value": 1 }
-                ])
-            );
-        }
-
-        #[test]
-        fn absorb_drops_notifies_for_addresses_this_session_did_not_register() {
-            let mut subs = subs_with(&[(115, 0)], &[(142, 0, 0)]);
-            let (meter_ch, meters_seen) = capture();
-            let (param_ch, params_seen) = capture();
-            subs.meter_ch = Some(meter_ch);
-            subs.param_ch = Some(param_ch);
-
-            // The broker broadcasts every notify to every connected client, so the
-            // unit's own clock (a push every 10 s) and another client's meter
-            // registrations land here too. Both are consumed — they are notify
-            // frames — but neither reaches the frontend: an unregistered parameter
-            // resolves to no node in the follow layer, which escalates it to a full
-            // device readback, so the clock alone would fire one every 10 s for the
-            // whole session.
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&notify("/vd/parameters/142:0:1".into(), 35)));
-            assert!(subs.absorb(&notify("/vd/meters/115:1".into(), -274)));
-            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
-            assert!(subs.absorb(&notify("/vd/meters/115:0".into(), -183)));
-
-            subs.flush();
-            assert_eq!(
-                *params_seen.lock().unwrap(),
-                vec![json!([{ "param_id": 142, "x": 0, "y": 0, "value": 1 }])]
-            );
-            assert_eq!(
-                *meters_seen.lock().unwrap(),
-                vec![json!([{ "meter_id": 115, "x": 0, "value": -183 }])]
-            );
-        }
-
-        #[test]
-        fn absorb_routes_the_parameter_watch_apart_from_the_live_sync_channel() {
-            // Live sync holds 142:0:0; the watch holds 838:0:0 and 142:0:0. A watched
-            // address reaches the live-sync channel only when that subscription
-            // registered it too, and the bulk-change push reaches both.
-            let mut subs = subs_with(&[], &[(142, 0, 0)]);
-            subs.probe_addrs = [(838, 0, 0), (142, 0, 0)].into_iter().collect();
-            let (param_ch, params_seen) = capture();
-            let (probe_ch, probe_seen) = capture();
-            subs.param_ch = Some(param_ch);
-            subs.probe_ch = Some(probe_ch);
-
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&notify("/vd/parameters/838:0:0".into(), 2)));
-            assert!(subs.absorb(&notify("/vd/parameters/142:0:0".into(), 1)));
-            assert!(subs.absorb(&notify("/vd/parameters/789:0:0".into(), 5)));
-            assert!(subs.absorb(&json!({ "vdp": { "method": "notify", "uri": "/vd/parameters" } })));
-
-            subs.flush();
-            assert_eq!(
-                *params_seen.lock().unwrap(),
-                vec![json!([
-                    { "param_id": 142, "x": 0, "y": 0, "value": 1 },
-                    { "param_id": 0, "x": -1, "y": -1, "value": 0 }
-                ])]
-            );
-            assert_eq!(
-                *probe_seen.lock().unwrap(),
-                vec![json!([
-                    { "param_id": 838, "x": 0, "y": 0, "value": 2 },
-                    { "param_id": 142, "x": 0, "y": 0, "value": 1 },
-                    { "param_id": 0, "x": -1, "y": -1, "value": 0 }
-                ])]
-            );
-        }
-
-        #[test]
-        fn absorb_feeds_the_parameter_watch_with_no_live_sync_subscription() {
-            let mut subs = subs_with(&[], &[]);
-            subs.probe_addrs = [(838, 0, 0)].into_iter().collect();
-            let (probe_ch, probe_seen) = capture();
-            subs.probe_ch = Some(probe_ch);
-            assert!(
-                subs.active(),
-                "the watch alone keeps the pump on its streaming cadence"
-            );
-
-            subs.last_flush = Instant::now();
-            assert!(subs.absorb(&notify("/vd/parameters/838:0:0".into(), 1)));
-            subs.flush();
-            assert_eq!(
-                *probe_seen.lock().unwrap(),
-                vec![json!([{ "param_id": 838, "x": 0, "y": 0, "value": 1 }])]
-            );
-        }
-
-        // A broker reply, as the link reads it. `data` is the shape the broker answers
-        // each verb with: a get answers with the value plus its bounds, a post with a
-        // bare ack.
-        fn reply(method: &str, uri: &str, data: Value) -> Value {
-            json!({ "vdp": { "method": method, "uri": uri, "data": data } })
-        }
-
-        /// What a write's reply is ALLOWED to mean. The shell sends before it waits, so only
-        /// a response_code that is present and an integer says anything about the write:
-        /// 200 accepted it, another value declined it, and anything else leaves it on the
-        /// wire with its fate unknown. The distinction is load-bearing at the other end —
-        /// the frontend keeps a confirmed value across a REFUSAL on the grounds that nothing
-        /// moved — and read through `unwrap_or(0)` every reply with no usable code was
-        /// handed to it as exactly that. Asked through `reply_for`, the composition the wait
-        /// loop performs, so the pointer this reads and the frame that reaches it agree.
-        #[test]
-        fn write_verdict_reads_only_a_present_integer_response_code() {
-            let base = "/vd/parameters/142:0:0";
-            let verdict = |data: Value| {
-                let mut subs = Subs::new();
-                let msg = reply("post", &format!("{base}?operation=value"), data);
-                let vdp = reply_for(&mut subs, &msg, base, "post", Some("value"))
-                    .expect("the reply the write is waiting for");
-                write_verdict(vdp, 142, 0, 0)
-            };
-
-            assert!(verdict(json!({ "response_code": 200 })).is_ok());
-
-            let declined = verdict(json!({ "response_code": 400 })).unwrap_err();
-            assert!(
-                declined.starts_with("broker-rejected:"),
-                "a code that is not 200 is the one answer that declined it: {declined}"
-            );
-
-            // The three the frontend must not be told are refusals.
-            for data in [
-                json!({}),
-                json!({ "response_code": "200" }),
-                json!({ "response_code": 200.5 }),
-            ] {
-                let err = verdict(data.clone()).unwrap_err();
-                assert!(
-                    err.starts_with("broker-bad-response:"),
-                    "no usable response_code in {data}, so the write's fate is unknown: {err}"
-                );
-            }
-        }
-
-        /// Every notify reaches every connected client, so one for the address a
-        /// command is waiting on arrives whenever anything else touches the unit —
-        /// which is the case the vdp port exists to support. `absorb` consumes it
-        /// only while the matching channel is subscribed, so with Live sync off
-        /// (a Fetch, a Write, the self-test) nothing but the verb keeps it out of
-        /// the await loop. A get would return the pushed value as the read; a post
-        /// finds no response_code and reports a landed write as an answer it could not
-        /// read — aborting the whole write, per the device-link failure rule.
-        #[test]
-        fn reply_for_refuses_a_notify_for_the_address_in_flight() {
-            // No channels: the state every command outside Live sync runs in.
-            let mut subs = Subs::new();
-            let base = "/vd/parameters/142:0:0";
-            let push = notify(base.into(), 1);
-
-            assert!(!subs.absorb(&push), "nothing subscribed to absorb it");
-            assert!(reply_for(&mut subs, &push, base, "get", None).is_none());
-            assert!(reply_for(&mut subs, &push, base, "post", Some("value")).is_none());
-
-            // The replies those two commands are actually waiting for still match,
-            // query string and all — the broker echoes it back on a write.
-            assert!(reply_for(
-                &mut subs,
-                &reply("get", base, json!({ "current_value": 1 })),
-                base,
-                "get",
-                None
-            )
-            .is_some());
-            assert!(reply_for(
-                &mut subs,
-                &reply(
-                    "post",
-                    &format!("{base}?operation=value"),
-                    json!({ "response_code": 200 })
-                ),
-                base,
-                "post",
-                Some("value")
-            )
-            .is_some());
-        }
-
-        /// The verb separates the two commands that share an address, so a straggler
-        /// from one cannot answer the other. A write followed by a read-back of the
-        /// same address is the ordinary sequence (converge, readback), and the vd
-        /// protocol carries no request id to tell them apart by.
-        #[test]
-        fn reply_for_refuses_the_other_verbs_reply_on_the_same_address() {
-            let mut subs = Subs::new();
-            let base = "/vd/parameters/142:0:0";
-            let ack = reply("post", base, json!({ "response_code": 200 }));
-            let value = reply("get", base, json!({ "current_value": 1 }));
-
-            assert!(reply_for(&mut subs, &ack, base, "get", None).is_none());
-            assert!(reply_for(&mut subs, &value, base, "post", Some("value")).is_none());
-        }
-
-        /// A write, a registration and an unregistration are all POSTs, and a
-        /// registration's reply arrives while the next command runs (`reg_param` and
-        /// `reg_meter` do not wait for it), so on one address the verb does not tell
-        /// them apart: the reply's `operation` does. A POST reply answers only the
-        /// request whose single `operation` it carries; one with none, an unknown one
-        /// or a repeated one answers no POST. A GET reply still matches whatever its
-        /// query holds.
-        #[test]
-        fn reply_for_takes_a_post_reply_only_for_its_own_single_operation() {
-            let posts = [
-                ("/vd/parameters/142:0:1", "value"),
-                ("/vd/parameters/142:0:1", "regist"),
-                ("/vd/parameters/142:0:1", "unregist"),
-                ("/vd/meters/7:-1", "regist"),
-                ("/vd/meters/7:-1", "unregist"),
-            ];
-            let queries = [
-                "?operation=value",
-                "?operation=regist",
-                "?operation=unregist",
-                "",
-                "?",
-                "?operation",
-                "?operation=",
-                "?operation=foo",
-                "?operation=Value",
-                "?x=1&operation=value",
-                "?operation=value&operation=value",
-                "?operation=regist&operation=value",
-            ];
-            for (base, operation) in posts {
-                for query in queries {
-                    let mut subs = Subs::new();
-                    let msg = reply(
-                        "post",
-                        &format!("{base}{query}"),
-                        json!({ "response_code": 200 }),
-                    );
-                    let own = query == format!("?operation={operation}")
-                        || (operation == "value" && query == "?x=1&operation=value");
-                    assert_eq!(
-                        reply_for(&mut subs, &msg, base, "post", Some(operation)).is_some(),
-                        own,
-                        "{base} {operation} answered by {query:?}"
-                    );
-                }
-            }
-            for query in ["", "?x=1", "?operation=value"] {
-                let base = "/vd/parameters/142:0:1";
-                let msg = reply(
-                    "get",
-                    &format!("{base}{query}"),
-                    json!({ "current_value": 1 }),
-                );
-                assert!(
-                    reply_for(&mut Subs::new(), &msg, base, "get", None).is_some(),
-                    "a get reply with {query:?}"
-                );
-            }
-        }
-
-        /// A notify names the address it is about with exactly the coordinates of its
-        /// kind: three for a parameter, two for a meter. One with more is not read as
-        /// the shorter address, which would forward another address's value as this one's.
-        #[test]
-        fn a_notify_with_more_coordinates_than_its_kind_is_not_an_update() {
-            for uri in [
-                "/vd/parameters/142:0:1:9",
-                "/vd/parameters/142:0:1:",
-                "/vd/parameters/142:0:1:x",
-            ] {
-                assert!(parse_param(&notify(uri.into(), 1)).is_none(), "{uri}");
-            }
-            for uri in ["/vd/meters/7:-1:0", "/vd/meters/7:-1:", "/vd/meters/7:-1:x"] {
-                assert!(parse_meter(&notify(uri.into(), 1)).is_none(), "{uri}");
-            }
-            let param = parse_param(&notify("/vd/parameters/142:0:1?x=1".into(), 4))
-                .expect("three coordinates are a parameter address");
-            assert_eq!(
-                (param.param_id, param.x, param.y, param.value),
-                (142, 0, 1, 4)
-            );
-            let meter = parse_meter(&notify("/vd/meters/7:-1".into(), -60))
-                .expect("two coordinates are a meter address");
-            assert_eq!((meter.meter_id, meter.x, meter.value), (7, -1, -60));
-        }
-    }
-
-    #[cfg(test)]
-    mod link_tests {
-        // The two halves of the vdp transport that a live broker cannot drive: the
-        // framing, whose interesting cases are a chunk boundary landing mid-line and a
-        // peer that never terminates one, and the device-list parse, whose interesting
-        // cases are answers Device Center does not currently produce. Both take their
-        // input from the test rather than from a socket, so each case is one shape of
-        // bytes and nothing depends on a peer behaving on cue.
-        use super::{choose_online, vdp_targets, LineReader, MAX_PENDING};
-        use serde_json::json;
-        use std::collections::VecDeque;
-        use std::io::{Error, ErrorKind, Read};
-
-        /// A byte source with a socket's manners: at most one scripted piece per read —
-        /// split when it does not fit the caller's buffer, as a socket splits one — and
-        /// a read timeout once they run out. `WouldBlock` rather than end-of-file on
-        /// purpose: an exhausted `Cursor` reports `Ok(0)`, which this reader is required
-        /// to treat as the peer closing, so a `Cursor` would answer "connection gone"
-        /// everywhere a quiet link is meant.
-        struct Chunks(VecDeque<Vec<u8>>);
-
-        impl Chunks {
-            fn of(parts: &[&str]) -> Self {
-                Chunks(parts.iter().map(|p| p.as_bytes().to_vec()).collect())
-            }
-        }
-
-        impl Read for Chunks {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                let Some(mut next) = self.0.pop_front() else {
-                    return Err(Error::new(ErrorKind::WouldBlock, "quiet link"));
-                };
-                let n = next.len().min(buf.len());
-                buf[..n].copy_from_slice(&next[..n]);
-                if n < next.len() {
-                    self.0.push_front(next.split_off(n));
-                }
-                Ok(n)
-            }
-        }
-
-        // The reason this reader owns a `pending` buffer at all. A chunk boundary is not
-        // a message boundary, and the half-line has to survive the read that ends without
-        // one — a reader that parsed each chunk on its own would drop both halves here.
-        #[test]
-        fn a_line_split_across_two_reads_is_rejoined() {
-            let mut reader = LineReader::new();
-            let mut sock = Chunks::of(&["{\"vddp\":{\"seq\"", ":7}}\n"]);
-
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "half a line");
-            assert_eq!(
-                reader.read_json(&mut sock).unwrap(),
-                Some(json!({ "vddp": { "seq": 7 } }))
-            );
-        }
-
-        // Every caller checks its own deadline between calls, so a call reads at most
-        // once: a line that keeps arriving in pieces hands control back after each piece
-        // instead of holding the caller until the line ends or reaches the cap.
-        #[test]
-        fn a_line_still_arriving_hands_control_back_after_each_read() {
-            let mut reader = LineReader::new();
-            let mut sock = Chunks::of(&["{\"a\"", ":1", "}\n{\"b\":2}\n"]);
-
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
-            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
-            assert_eq!(
-                reader.read_json(&mut sock).unwrap(),
-                Some(json!({"b": 2})),
-                "buffered, no read"
-            );
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "then quiet");
-        }
-
-        // …and the same buffer is what lets two messages arrive in one read. The second
-        // call must answer out of `pending` without reading: the source is quiet by then,
-        // so a call that reached the socket would report "nothing yet" and lose the frame.
-        #[test]
-        fn two_messages_in_one_chunk_come_back_one_per_call() {
-            let mut reader = LineReader::new();
-            let mut sock = Chunks::of(&["{\"a\":1}\n{\"b\":2}\n"]);
-
-            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
-            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"b": 2})));
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "then quiet");
-        }
-
-        // A line that is not JSON is "nothing yet" to the caller, and it must be DRAINED
-        // by the call that declined it. Left in place it would be re-parsed forever and
-        // the message behind it would never be reached.
-        #[test]
-        fn an_unparseable_line_is_dropped_rather_than_re_read() {
-            let mut reader = LineReader::new();
-            let mut sock = Chunks::of(&["not json\n{\"a\":1}\n"]);
-
-            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
-            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
-        }
-
-        // A peer that never sends a newline. Without the cap this is a `Vec` growing at
-        // socket speed for the life of the session — a memory climb with nothing in the
-        // log, rather than an error the caller can act on and report.
-        #[test]
-        fn a_peer_that_never_terminates_a_line_is_refused_at_the_cap() {
-            /// Endless bytes, none of them a newline — but only up to four times the cap,
-            /// so a reader that does not stop fails this case instead of running the host
-            /// out of memory. Without that bound the defect's own signature (a buffer
-            /// growing at socket speed) is what the test would reproduce.
-            struct Noise(usize);
-            impl Read for Noise {
-                fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                    self.0 += buf.len();
-                    assert!(self.0 < MAX_PENDING * 4, "unbounded: the cap did not hold");
-                    buf.fill(b'x');
-                    Ok(buf.len())
-                }
-            }
-
-            let mut reader = LineReader::new();
-            let mut noise = Noise(0);
-            let err = loop {
-                match reader.read_json(&mut noise) {
-                    Ok(None) => continue,
-                    Ok(Some(msg)) => panic!("no line was ever terminated, yet read {msg}"),
-                    Err(e) => break e,
-                }
-            };
-
-            assert!(
-                err.starts_with("broker-bad-response:"),
-                "reported as a bad answer from the broker: {err}"
-            );
-            assert!(
-                err.contains("with no line break"),
-                "and says what is wrong with it: {err}"
-            );
-        }
-
-        // The cap is a ceiling on ONE line, so it must sit far above any frame the
-        // protocol carries. The largest is a device list of a few KiB; a frame at 64 KiB
-        // — an order of magnitude past that — still has to come back whole.
-        #[test]
-        fn a_large_but_terminated_frame_is_not_refused() {
-            let big = "y".repeat(64 * 1024);
-            assert!(big.len() < MAX_PENDING, "the cap is a ceiling on one line");
-            let mut reader = LineReader::new();
-            let mut sock = Chunks::of(&["{\"note\":\"", &big, "\"}\n"]);
-
-            // One call per read, as the reply loops make them: the frame spans several.
-            let msg = (0..64)
-                .find_map(|_| reader.read_json(&mut sock).unwrap())
-                .expect("one frame");
-            assert_eq!(msg["note"].as_str().map(str::len), Some(big.len()));
-        }
-
-        fn devices(entry: serde_json::Value) -> serde_json::Value {
-            json!({ "list": [entry] })
-        }
-
-        /// The single target a one-entry list names.
-        fn vdp_target(data: &serde_json::Value) -> Result<(u16, String), String> {
-            let mut all = vdp_targets(data)?;
-            assert_eq!(all.len(), 1, "one entry in, one target out");
-            Ok(all.remove(0))
-        }
-
-        #[test]
-        fn an_ordinary_device_list_names_its_port_and_model() {
-            assert_eq!(
-                vdp_target(&devices(json!({ "vdpport": 51234, "model": "URX44V" }))),
-                Ok((51234, "URX44V".to_string()))
-            );
-        }
-
-        // Device Center keeps an entry for a unit it has seen and that is no longer
-        // attached, listed ahead of the one that is: every entry has to come back, in
-        // order, or the unit that is attached is never asked about.
-        #[test]
-        fn every_listed_device_is_a_target_in_list_order() {
-            let list = json!({ "list": [
-                { "vdpport": 49444, "model": "URX44V" },
-                { "vdpport": 55999, "model": "URX22" },
-            ] });
-            assert_eq!(
-                vdp_targets(&list),
-                Ok(vec![
-                    (49444, "URX44V".to_string()),
-                    (55999, "URX22".to_string())
-                ])
-            );
-        }
-
-        // One malformed entry fails the list rather than dropping out of it: the entry
-        // it hides could be the attached unit.
-        #[test]
-        fn a_malformed_entry_anywhere_in_the_list_fails_it() {
-            let list = json!({ "list": [
-                { "vdpport": 49444, "model": "URX44V" },
-                { "model": "URX22" },
-            ] });
-            let err = vdp_targets(&list).unwrap_err();
-            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
-        }
-
-        fn online(models: &[&str]) -> Vec<(usize, String)> {
-            models
-                .iter()
-                .enumerate()
-                .map(|(i, m)| (i, m.to_string()))
-                .collect()
-        }
-
-        #[test]
-        fn nothing_online_is_no_device() {
-            assert_eq!(choose_online(online(&[]), "URX22"), Err("no-device".into()));
-        }
-
-        // The one online unit is taken even when it is not the selected model: the
-        // frontend's own model check decides what happens next, as it did when the
-        // list held one entry.
-        #[test]
-        fn a_single_online_device_is_taken_whatever_its_model() {
-            assert_eq!(
-                choose_online(online(&["URX22"]), "URX44V"),
-                Ok((0, "URX22".to_string()))
-            );
-        }
-
-        #[test]
-        fn the_selected_model_picks_among_several_online_devices() {
-            assert_eq!(
-                choose_online(online(&["URX44V", "URX22"]), "URX22"),
-                Ok((1, "URX22".to_string()))
-            );
-            assert_eq!(
-                choose_online(online(&["URX44V", "URX22"]), "URX44V"),
-                Ok((0, "URX44V".to_string()))
-            );
-        }
-
-        #[test]
-        fn two_online_devices_of_the_selected_model_are_refused() {
-            let err = choose_online(online(&["URX22", "URX44V", "URX22"]), "URX22").unwrap_err();
-            assert!(err.starts_with("multiple-devices:"), "{err}");
-        }
-
-        #[test]
-        fn several_online_devices_none_of_the_selected_model_are_refused() {
-            let err = choose_online(online(&["URX22", "URX44"]), "URX44V").unwrap_err();
-            assert!(err.starts_with("multiple-devices:"), "{err}");
-        }
-
-        // The boundary the checked conversion is drawn at: the last port that exists is
-        // still a port. A cap written one short here would refuse a working broker.
-        #[test]
-        fn the_highest_real_port_is_accepted() {
-            assert_eq!(
-                vdp_target(&devices(json!({ "vdpport": 65535 }))).map(|(p, _)| p),
-                Ok(65535)
-            );
-        }
-
-        // What the truncating cast did: 65537 became 1, and the connect that followed
-        // failed naming port 1 — a port the broker never advertised, which sends whoever
-        // reads that error looking at the wrong process entirely.
-        #[test]
-        fn a_port_past_u16_is_refused_naming_the_value_the_broker_sent() {
-            let err = vdp_target(&devices(json!({ "vdpport": 65537 })))
-                .expect_err("out of range is an error, not a truncation");
-
-            assert!(
-                err.starts_with("broker-bad-response:"),
-                "attributed to the broker's answer: {err}"
-            );
-            assert!(
-                err.contains("65537"),
-                "naming what was actually sent, not what it truncates to: {err}"
-            );
-        }
-
-        #[test]
-        fn a_list_entry_with_no_port_is_a_missing_port_rather_than_a_bad_one() {
-            let err = vdp_target(&devices(json!({ "model": "URX22" }))).unwrap_err();
-            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
-        }
-
-        // Device Center up with no URX attached. Distinct from every error above: it is
-        // the state the frontend turns into "connect the unit", not into a fault report.
-        #[test]
-        fn an_empty_list_is_no_device() {
-            assert_eq!(vdp_target(&json!({ "list": [] })), Err("no-device".into()));
-            assert_eq!(vdp_target(&json!({})), Err("no-device".into()));
-        }
-
-        // An unnamed unit is shown under the shared placeholder rather than as blank.
-        #[test]
-        fn an_unnamed_device_falls_back_to_the_shared_placeholder() {
-            assert_eq!(
-                vdp_target(&devices(json!({ "vdpport": 51234 }))).map(|(_, m)| m),
-                Ok("URX".to_string())
-            );
-        }
-    }
-
-    #[cfg(test)]
-    mod session_tests {
-        // The readers that consume frames during a session, and the worker loop around
-        // them, driven over a loopback socket whose other end the test writes as the
-        // broker. A frame the test sends is buffered before the reader that has to see
-        // it runs, a link watch is queued before the worker starts so it is in place
-        // before the pump first reads, and a case that waits on the worker waits for
-        // what the worker sends back, under a bound, so no case depends on a peer's
-        // timing.
-        use super::super::{watch_link, Cmd, LinkCounters, EXIT_TEARDOWN_WAIT};
-        use super::{
-            arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, handshake,
-            pump, serve, synchronize_lost, LineReader, Link, Subs, DEVICE_LOST_PREFIX,
-            READ_TIMEOUT,
-        };
-        use serde_json::{json, Value};
-        use std::io::Write;
-        use std::io::{BufRead, BufReader, Read};
+        use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
-        use std::sync::{mpsc, Arc};
+        use std::sync::{mpsc, Arc, Mutex};
+        use std::thread;
         use std::time::{Duration, Instant};
         use tauri::ipc::{Channel, InvokeResponseBody};
+        use urx_device_transport::connection::{LinkFailure, LinkLoss};
+        use urx_device_transport::lifecycle::{Cause, Failure, Phase};
 
-        /// A link, and the broker's end of it. Nagle is off on the broker's end as well, so
-        /// a case's small writes reach the link when it writes them, not when the previous
-        /// one's (possibly delayed) acknowledgement comes back.
-        fn vdp_link() -> (Link, TcpStream) {
-            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-            let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-            let (peer, _) = listener.accept().unwrap();
-            peer.set_nodelay(true).unwrap();
-            arm_socket(&sock, READ_TIMEOUT).unwrap();
-            (
-                Link {
-                    sock,
-                    reader: LineReader::new(),
-                },
-                peer,
-            )
+        type Answer = Arc<dyn Fn(&Value) -> Vec<Value> + Send + Sync>;
+
+        /// One unit Device Center lists: its vdp port, the requests it received, and the
+        /// writer of its latest connection, for what it pushes on its own.
+        struct Unit {
+            port: u16,
+            seen: Arc<Mutex<Vec<String>>>,
+            latest: Arc<Mutex<Option<TcpStream>>>,
         }
 
-        /// One `vdp` message from the broker, as one line.
-        fn send(peer: &mut TcpStream, vdp: Value) {
-            peer.write_all(format!("{}\n", json!({ "vdp": vdp })).as_bytes())
-                .unwrap();
+        impl Unit {
+            /// A unit that opens as `id`, online, with System firmware 1.5.0.1, and answers
+            /// everything else as `answer` says.
+            fn start(
+                id: &'static str,
+                answer: impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static,
+            ) -> Unit {
+                Unit::serving(move |request| {
+                    opening(id, request).unwrap_or_else(|| answer(request))
+                })
+            }
+
+            /// A unit that answers every request, the opening's included, as `answer` says.
+            fn serving(answer: impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static) -> Unit {
+                let answer: Answer = Arc::new(answer);
+                let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let seen = Arc::new(Mutex::new(Vec::new()));
+                let latest = Arc::new(Mutex::new(None));
+                let (seen_in, latest_in) = (Arc::clone(&seen), Arc::clone(&latest));
+                thread::spawn(move || {
+                    for stream in listener.incoming() {
+                        let Ok(stream) = stream else { return };
+                        stream.set_nodelay(true).unwrap();
+                        *latest_in.lock().unwrap() = Some(stream.try_clone().unwrap());
+                        let (answer, seen) = (Arc::clone(&answer), Arc::clone(&seen_in));
+                        thread::spawn(move || serve_unit(stream, answer, seen));
+                    }
+                });
+                Unit { port, seen, latest }
+            }
+
+            /// A frame the unit sends on its own, on the connection the worker holds.
+            fn push(&self, vdp: Value) {
+                let mut latest = self.latest.lock().unwrap();
+                let stream = latest.as_mut().expect("a connection is open");
+                stream
+                    .write_all(format!("{}\n", json!({ "vdp": vdp })).as_bytes())
+                    .unwrap();
+            }
+
+            /// Bytes the unit writes on its own, as they are: part of a line, or one that is
+            /// not JSON.
+            fn push_raw(&self, bytes: &[u8]) {
+                let mut latest = self.latest.lock().unwrap();
+                let stream = latest.as_mut().expect("a connection is open");
+                stream.write_all(bytes).unwrap();
+            }
+
+            /// Ends the worker's connection from the unit's side.
+            fn close(&self) {
+                let latest = self.latest.lock().unwrap();
+                latest
+                    .as_ref()
+                    .unwrap()
+                    .shutdown(std::net::Shutdown::Both)
+                    .unwrap();
+            }
+
+            fn seen(&self) -> Vec<String> {
+                self.seen.lock().unwrap().clone()
+            }
+        }
+
+        fn serve_unit(stream: TcpStream, answer: Answer, seen: Arc<Mutex<Vec<String>>>) {
+            let mut writer = stream.try_clone().unwrap();
+            for line in BufReader::new(stream).lines() {
+                let Ok(line) = line else { return };
+                let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                    return;
+                };
+                let vdp = &request["vdp"];
+                let uri = vdp["uri"].as_str().unwrap_or("").to_string();
+                seen.lock().unwrap().push(uri);
+                for reply in answer(&request) {
+                    // `{"raw": ...}` is written as it is: a line that is not JSON.
+                    let bytes = match reply.get("raw").and_then(Value::as_str) {
+                        Some(raw) => raw.as_bytes().to_vec(),
+                        None => format!("{}\n", json!({ "vdp": reply })).into_bytes(),
+                    };
+                    if writer.write_all(&bytes).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+
+        /// The opening's two reads as a unit answers them online as `id`: its link state and
+        /// its firmware.
+        fn opening(id: &str, request: &Value) -> Option<Vec<Value>> {
+            match request["vdp"]["uri"].as_str()? {
+                "/vd/synchronize" => Some(vec![status_reply(id, "online")]),
+                "/vd/device" => Some(vec![device_reply(
+                    json!([{ "firm_name": "System", "firm_version": "1.5.0.1" }]),
+                )]),
+                _ => None,
+            }
+        }
+
+        fn status_reply(id: &str, status: &str) -> Value {
+            json!({ "method": "get", "uri": "/vd/synchronize",
+                "data": { "response_code": 200, "sync_status": status, "usb_id": id } })
+        }
+
+        fn device_reply(firm_list: Value) -> Value {
+            json!({ "method": "get", "uri": "/vd/device",
+                "data": { "response_code": 200, "firm_list": firm_list } })
         }
 
         fn synchronize(status: &str) -> Value {
-            json!({
-                "method": "notify",
-                "uri": "/vd/synchronize",
-                "data": { "sync_status": status }
-            })
+            json!({ "method": "notify", "uri": "/vd/synchronize", "data": { "sync_status": status } })
         }
 
-        const ADDR: &str = "/vd/parameters/1:0:0";
-
-        // The unplug's push can be the first frame after a command's deadline, where
-        // the late drain is the reader that consumes it. The push is sent once, so the
-        // drain has to hand it back for the command to fail with it — a drain that
-        // dropped it left the command reporting a broker deadline, and the session
-        // unlatched against a broker answering from its cache.
-        #[test]
-        fn the_late_drain_hands_back_a_device_lost_push() {
-            let (mut link, mut peer) = vdp_link();
-            send(&mut peer, synchronize("offline"));
-
-            let err = drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None)
-                .expect("the push is what the drain reports");
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-        }
-
-        // The frame a wait read past its deadline is the drain's first: a device-lost push
-        // there is the command's error, and a straggler there is consumed, leaving the
-        // next read on the address its own.
-        #[test]
-        fn the_late_drain_takes_the_frame_its_wait_read_late_first() {
-            let (mut link, mut peer) = vdp_link();
-            let late = |vdp: Value| Some(json!({ "vdp": vdp }));
-            let err = drain_late_reply(
-                &mut link,
-                &mut Subs::new(),
-                late(synchronize("lost")),
-                ADDR,
-                "get",
-                None,
-            )
-            .expect("the push is what the drain reports");
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-
-            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
-            assert_eq!(
-                drain_late_reply(
-                    &mut link,
-                    &mut Subs::new(),
-                    late(reply(3)),
-                    ADDR,
-                    "get",
-                    None
-                ),
-                None
-            );
-            send(&mut peer, reply(7));
-            assert_eq!(
-                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
-                Ok(json!(7))
-            );
-        }
-
-        // …while a straggler, an `online` status and silence leave the command's own
-        // deadline as its error.
-        #[test]
-        fn the_late_drain_reports_nothing_for_a_straggler_or_silence() {
-            let (mut link, mut peer) = vdp_link();
-            send(&mut peer, synchronize("online"));
-            send(
-                &mut peer,
-                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
-            );
-            assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
-                None
-            );
-            assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
-                None,
-                "a quiet link ends the drain at its floor"
-            );
-        }
-
-        // A write, a registration and an unregistration are all POSTs on the address, and
-        // a registration's reply can still be in flight when the next write starts. Only
-        // the reply carrying the write's own operation is its verdict: the refusal here,
-        // behind two acknowledgements of registrations.
-        #[test]
-        fn a_write_takes_its_verdict_only_from_its_own_operations_reply() {
-            let (mut link, mut peer) = vdp_link();
-            for (operation, code) in [("regist", 200), ("unregist", 200), ("value", 400)] {
-                send(
-                    &mut peer,
-                    json!({
-                        "method": "post",
-                        "uri": format!("{ADDR}?operation={operation}"),
-                        "data": { "response_code": code }
-                    }),
-                );
-            }
-            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
-            assert!(err.starts_with("broker-rejected:"), "{err}");
-        }
-
-        /// The broker's end, on its own thread: each of `before` answers one request at
-        /// once, and `reply` answers the request after them across that request's 3 s
-        /// deadline — the first half of its line 20 ms before the deadline, the rest 20 ms
-        /// after, so the one read that finishes the line begins in time and ends late.
-        fn across_the_deadline(
-            peer: TcpStream,
-            before: Vec<Value>,
-            reply: Value,
-        ) -> std::thread::JoinHandle<TcpStream> {
-            std::thread::spawn(move || {
-                let mut peer = peer;
-                let mut requests = BufReader::new(peer.try_clone().unwrap());
-                let mut request = String::new();
-                for frame in before {
-                    requests.read_line(&mut request).unwrap();
-                    send(&mut peer, frame);
-                }
-                requests.read_line(&mut request).unwrap();
-                let asked = Instant::now();
-                let line = format!("{}\n", json!({ "vdp": reply }));
-                let (head, tail) = line.split_at(line.len() / 2);
-                std::thread::sleep(Duration::from_millis(2_980).saturating_sub(asked.elapsed()));
-                peer.write_all(head.as_bytes()).unwrap();
-                std::thread::sleep(Duration::from_millis(3_020).saturating_sub(asked.elapsed()));
-                peer.write_all(tail.as_bytes()).unwrap();
-                peer
-            })
-        }
-
-        // A reply whose line is finished after the read's deadline is not its answer,
-        // though the read that finished it began in time: the read fails at its deadline,
-        // and the late drain takes the reply, so the next read on the address gets its own.
-        #[test]
-        fn a_read_takes_no_reply_completed_after_its_deadline() {
-            let (mut link, peer) = vdp_link();
-            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
-            let peer = across_the_deadline(peer, vec![], reply(3));
-            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
-            let mut peer = peer.join().unwrap();
-            send(&mut peer, reply(7));
-            assert_eq!(
-                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
-                Ok(json!(7))
-            );
-        }
-
-        // The frame the wait read past its deadline goes to the late drain, not away: the
-        // unit lost, pushed across a read's deadline, is still the read's error.
-        #[test]
-        fn a_unit_lost_across_a_reads_deadline_is_its_error() {
-            let (mut link, peer) = vdp_link();
-            let peer = across_the_deadline(peer, vec![], synchronize("lost"));
-            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-            drop(peer.join());
-        }
-
-        /// The broker's end, on its own thread: each of `before` answers one request at
-        /// once, and the request after them is met with notifies for another address every
-        /// 10 ms from 2.90 s to 2.99 s after it, then silence — so a read begins just
-        /// before the request's 3 s deadline with nothing left to arrive.
-        fn chatter_up_to_the_deadline(
-            peer: TcpStream,
-            before: Vec<Value>,
-        ) -> std::thread::JoinHandle<TcpStream> {
-            std::thread::spawn(move || {
-                let mut peer = peer;
-                let mut requests = BufReader::new(peer.try_clone().unwrap());
-                let mut request = String::new();
-                for frame in before {
-                    requests.read_line(&mut request).unwrap();
-                    send(&mut peer, frame);
-                }
-                requests.read_line(&mut request).unwrap();
-                let asked = Instant::now();
-                for at in (2_900..=2_990).step_by(10) {
-                    std::thread::sleep(Duration::from_millis(at).saturating_sub(asked.elapsed()));
-                    send(
-                        &mut peer,
-                        json!({ "method": "notify", "uri": "/vd/parameters/2:0:0", "data": {} }),
-                    );
-                }
-                peer
-            })
-        }
-
-        // A wait ends at its deadline, not one read's timeout past it: the last read is
-        // armed with what is left. The handshake's status read ends within 30 ms of its
-        // deadline. Not on Windows, whose timer ticks about every 15.6 ms: an armed read
-        // there ended 31 ms past the deadline on CI, which leaves no room between the two
-        // outcomes; the read itself is held there by the case below.
-        #[test]
-        #[cfg(not(windows))]
-        fn a_wait_ends_at_its_deadline_with_nothing_left_to_arrive() {
-            let (mut link, peer) = vdp_link();
-            let peer = chatter_up_to_the_deadline(peer, vec![]);
-            let started = Instant::now();
-            let err = handshake(&mut link).unwrap_err();
-            let took = started.elapsed();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
-            assert!(
-                took < Duration::from_millis(3_030),
-                "the handshake read took {took:?}"
-            );
-            assert_eq!(
-                link.sock.read_timeout().unwrap(),
-                Some(READ_TIMEOUT),
-                "the socket is armed for the pump again"
-            );
-            drop(peer.join());
-        }
-
-        // The read every wait makes: on a silent link it blocks for what is left of its
-        // deadline when that is under READ_TIMEOUT, for READ_TIMEOUT otherwise, and not at
-        // all once the deadline has passed — and it leaves the socket at READ_TIMEOUT.
-        #[test]
-        fn a_read_before_a_deadline_blocks_no_longer_than_what_is_left() {
-            let (mut link, _peer) = vdp_link();
-            // A read left at READ_TIMEOUT blocks that long at least; one armed with a
-            // millisecond returns under it even on a timer as coarse as Windows' (~31 ms).
-            for (left, under) in [
-                (Duration::ZERO, Duration::from_millis(5)),
-                (
-                    Duration::from_millis(1),
-                    READ_TIMEOUT - Duration::from_millis(5),
-                ),
-            ] {
-                let started = Instant::now();
-                assert_eq!(link.read_frame_before(started + left), Ok(None));
-                let took = started.elapsed();
-                assert!(took < under, "{left:?} left: blocked {took:?}");
-                assert_eq!(link.sock.read_timeout().unwrap(), Some(READ_TIMEOUT));
-            }
-            let started = Instant::now();
-            assert_eq!(
-                link.read_frame_before(started + Duration::from_secs(1)),
-                Ok(None)
-            );
-            assert!(
-                started.elapsed() >= READ_TIMEOUT - Duration::from_millis(5),
-                "a deadline further off than READ_TIMEOUT blocks for READ_TIMEOUT"
-            );
-        }
-
-        // …and a write's: an acknowledgement finished after the deadline is not its
-        // verdict, and the next write on the address takes its own (a refusal here).
-        #[test]
-        fn a_write_takes_no_verdict_completed_after_its_deadline() {
-            let (mut link, peer) = vdp_link();
-            let reply = |code: i64| {
-                json!({
-                    "method": "post",
-                    "uri": format!("{ADDR}?operation=value"),
-                    "data": { "response_code": code }
-                })
-            };
-            let peer = across_the_deadline(peer, vec![], reply(200));
-            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
-            let mut peer = peer.join().unwrap();
-            send(&mut peer, reply(400));
-            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
-            assert!(err.starts_with("broker-rejected:"), "{err}");
-        }
-
-        // The late drain consumes the straggler of the write that gave up, and only that
-        // one: a registration's reply is not it, and taking it for one would leave the
-        // straggler on the socket for the next write on the address to take as its own.
-        #[test]
-        fn the_late_drain_takes_only_the_straggler_of_its_own_operation() {
-            let (mut link, mut peer) = vdp_link();
-            let post = |operation: &str, code: i64| {
-                json!({
-                    "method": "post",
-                    "uri": format!("{ADDR}?operation={operation}"),
-                    "data": { "response_code": code }
-                })
-            };
-            send(&mut peer, post("regist", 200));
-            send(&mut peer, post("value", 200));
-            assert_eq!(
-                drain_late_reply(
-                    &mut link,
-                    &mut Subs::new(),
-                    None,
-                    ADDR,
-                    "post",
-                    Some("value")
-                ),
-                None
-            );
-            send(&mut peer, post("value", 400));
-            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
-            assert!(err.starts_with("broker-rejected:"), "{err}");
-        }
-
-        // The drains read on past `None` while a line is still arriving, and treat `None`
-        // from a read that timed out as silence even with half a line pending:
-        // `still_arriving` is what tells the two apart.
-        #[test]
-        fn a_line_still_arriving_is_told_from_a_read_that_timed_out() {
-            let (mut link, mut peer) = vdp_link();
-            assert!(!link.still_arriving());
-            peer.write_all(b"{\"vdp\":").unwrap();
-            assert_eq!(link.read_frame(), Ok(None));
-            assert!(link.still_arriving(), "half a line has arrived");
-            assert_eq!(link.read_frame(), Ok(None), "then the link falls quiet");
-            assert!(
-                !link.still_arriving(),
-                "a timeout, though half a line is pending"
-            );
-            peer.write_all(b"{}}\n").unwrap();
-            assert_eq!(link.read_frame(), Ok(Some(json!({ "vdp": {} }))));
-            assert!(!link.still_arriving());
-        }
-
-        /// Sends each of `lines` in two writes, a pause after each, so the reader on the
-        /// other end meets every line in two reads. Returns once the first write is out, so
-        /// the reader that starts next does not wait out its quiet floor on a writer that
-        /// has not started yet.
-        fn send_split(
-            mut peer: TcpStream,
-            lines: Vec<Value>,
-        ) -> std::thread::JoinHandle<TcpStream> {
-            let (started, wait) = mpsc::channel();
-            let writer = std::thread::spawn(move || {
-                for line in lines {
-                    let text = format!("{}\n", json!({ "vdp": line }));
-                    let (head, tail) = text.split_at(text.len() / 2);
-                    for part in [head, tail] {
-                        peer.write_all(part.as_bytes()).unwrap();
-                        let _ = started.send(());
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                }
-                peer
-            });
-            wait.recv().unwrap();
-            writer
-        }
-
-        // The late drain's frame budget counts whole lines, so a stream that reaches it in
-        // pieces still leads it to the straggler: left on the socket, the straggler would
-        // be the next read's answer on the address.
-        #[test]
-        fn the_late_drain_counts_lines_not_reads() {
-            let (mut link, peer) = vdp_link();
-            let mut lines: Vec<Value> = (0..33)
-                .map(|i| {
-                    json!({
-                        "method": "notify",
-                        "uri": format!("/vd/meters/{i}:0"),
-                        "data": { "current_value": -60 }
-                    })
-                })
+        /// Device Center's device list, naming each unit by its model.
+        fn device_list(units: &[(&Unit, &str)]) -> u16 {
+            let list: Vec<Value> = units
+                .iter()
+                .map(|(u, model)| json!({ "vdpport": u.port, "model": model }))
                 .collect();
-            lines.push(json!({ "method": "get", "uri": ADDR, "data": { "current_value": 11 } }));
-            let writer = send_split(peer, lines);
-            assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
-                None
-            );
-            let mut peer = writer.join().unwrap();
-            send(
-                &mut peer,
-                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
-            );
-            assert_eq!(
-                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
-                Ok(json!(22)),
-                "the straggler was drained"
-            );
+            list_server(vec![
+                json!({ "method": "get", "uri": "/vddp_srv/devices", "data": { "list": list } }),
+            ])
         }
 
-        // Where the late drain ends does not depend on how the last line was read: the
-        // floor runs from the last whole line whether what follows it is silence or the
-        // first half of the straggler.
-        #[test]
-        fn the_late_drain_ends_alike_for_a_straggler_read_whole_or_in_halves() {
-            for split in [false, true] {
-                let (mut link, mut peer) = vdp_link();
-                let (started, wait) = mpsc::channel();
-                // 13 notifies 20 ms apart outlast the floor counted from the drain's start;
-                // then ONE pause longer than READ_TIMEOUT, so the drain meets a read that
-                // times out, and far enough under the floor that a runner's late wake-up from
-                // that one sleep does not reach it.
-                let writer = std::thread::spawn(move || {
-                    for i in 0..13 {
-                        if i > 0 {
-                            std::thread::sleep(Duration::from_millis(20));
-                        }
-                        let notify = json!({ "vdp": {
-                            "method": "notify",
-                            "uri": format!("/vd/meters/{i}:0"),
-                            "data": { "current_value": -60 }
-                        }});
-                        peer.write_all(format!("{notify}\n").as_bytes()).unwrap();
-                        let _ = started.send(());
-                    }
-                    let straggler = format!(
-                        "{}\n",
-                        json!({ "vdp": { "method": "get", "uri": ADDR, "data": { "current_value": 11 } } })
-                    );
-                    let (head, tail) = straggler.split_at(straggler.len() / 2);
-                    if split {
-                        peer.write_all(head.as_bytes()).unwrap();
-                    }
-                    std::thread::sleep(Duration::from_millis(60));
-                    peer.write_all(if split { tail } else { &straggler }.as_bytes())
-                        .unwrap();
-                    peer
-                });
-                // The drain starts once the writer has, as in send_split.
-                wait.recv().unwrap();
-                assert_eq!(
-                    drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
-                    None
-                );
-                let mut peer = writer.join().unwrap();
-                send(
-                    &mut peer,
-                    json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
-                );
-                assert_eq!(
-                    do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
-                    Ok(json!(22)),
-                    "split {split}: the straggler was drained"
-                );
-            }
-        }
-
-        // A peer that keeps sending pieces of a line it never ends: the close drain reads
-        // on for one READ_TIMEOUT past the last whole line and then lets the shutdown go.
-        #[test]
-        fn the_close_drain_ends_while_a_line_never_ends() {
-            let (link, mut peer) = vdp_link();
-            let (tx, rx) = mpsc::channel();
-            let worker =
-                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-            let trickle = std::thread::spawn(move || {
-                let until = Instant::now() + Duration::from_secs(5);
-                peer.write_all(b"{\"vdp\":").unwrap();
-                while Instant::now() < until && peer.write_all(b" ").is_ok() {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-            });
-            std::thread::sleep(Duration::from_millis(100));
-            let (done, closed) = mpsc::channel();
-            let started = Instant::now();
-            tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
-            })
-            .unwrap();
-            closed
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the session closes");
-            let took = started.elapsed();
-            assert!(
-                took < Duration::from_millis(500),
-                "the close drain held the shutdown: {took:?}"
-            );
-            worker.join().unwrap();
-            drop(trickle);
-        }
-
-        // The app-exit teardown's caller stops waiting at its instant, and the close drain
-        // ends ahead of it however the broker's frames arrive: whole lines 32 ms apart, or
-        // whole lines and then pieces of one that never ends. Read to CLOSE_FRAMES, those
-        // whole lines alone would hold the drain about two seconds.
-        #[test]
-        fn the_close_drain_ends_before_the_exit_teardowns_caller_stops_waiting() {
-            for never_ends_after in [None, Some(47)] {
-                let (link, mut peer) = vdp_link();
-                let (tx, rx) = mpsc::channel();
-                let worker =
-                    std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-                let (done, closed) = mpsc::channel();
-                let by = Instant::now() + EXIT_TEARDOWN_WAIT;
-                tx.send(Cmd::Shutdown {
-                    done: Some((done, by)),
-                })
-                .unwrap();
-                let feed = std::thread::spawn(move || {
-                    // The close is under way once this side's write half is shut.
-                    let mut byte = [0u8; 1];
-                    while peer.read(&mut byte).is_ok_and(|n| n > 0) {}
-                    for i in 0..60 {
-                        let line = if never_ends_after.is_some_and(|after| i >= after) {
-                            " ".to_string()
-                        } else {
-                            format!(
-                                "{}\n",
-                                json!({ "vdp": {
-                                    "method": "notify",
-                                    "uri": format!("/vd/meters/{i}:0"),
-                                    "data": { "current_value": -60 }
-                                }})
-                            )
-                        };
-                        if peer.write_all(line.as_bytes()).is_err() {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(32));
-                    }
-                });
-                assert!(
-                    closed
-                        .recv_timeout(by.saturating_duration_since(Instant::now()))
-                        .is_ok(),
-                    "{never_ends_after:?}: the close outlasted its caller's wait"
-                );
-                worker.join().unwrap();
-                drop(feed);
-            }
-        }
-
-        // Half a line and then silence at close: the close drain ends at the read that
-        // times out, as it does on a quiet link, rather than holding the shutdown.
-        #[test]
-        fn the_close_drain_ends_at_a_timeout_with_half_a_line_pending() {
-            let (link, mut peer) = vdp_link();
-            let (tx, rx) = mpsc::channel();
-            let worker =
-                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-            peer.write_all(b"{\"vdp\":").unwrap();
-            std::thread::sleep(Duration::from_millis(100));
-            let (done, closed) = mpsc::channel();
-            let started = Instant::now();
-            tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
-            })
-            .unwrap();
-            closed
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the session closes");
-            let took = started.elapsed();
-            assert!(
-                took < Duration::from_millis(500),
-                "the close drain held the shutdown: {took:?}"
-            );
-            worker.join().unwrap();
-        }
-
-        /// A device-list endpoint on a free port, answering the one request with `frames`
-        /// and holding the connection open until the reader closes it.
-        fn device_list(frames: Vec<Value>) -> u16 {
+        /// Device Center's list port, answering each request with `frames`, in order.
+        fn list_server(frames: Vec<Value>) -> u16 {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let port = listener.local_addr().unwrap().port();
-            std::thread::spawn(move || {
-                let (sock, _) = listener.accept().unwrap();
-                let mut lines = BufReader::new(sock.try_clone().unwrap());
-                let mut request = String::new();
-                lines.read_line(&mut request).unwrap();
-                let mut out = sock;
-                for frame in frames {
-                    out.write_all(format!("{frame}\n").as_bytes()).unwrap();
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { return };
+                    let frames = frames.clone();
+                    thread::spawn(move || {
+                        let mut writer = stream.try_clone().unwrap();
+                        for line in BufReader::new(stream).lines() {
+                            let Ok(_) = line else { return };
+                            for frame in &frames {
+                                let reply = json!({ "vddp": frame });
+                                let _ = writer.write_all(format!("{reply}\n").as_bytes());
+                            }
+                        }
+                    });
                 }
-                let mut rest = String::new();
-                while lines.read_line(&mut rest).is_ok_and(|n| n > 0) {}
             });
             port
         }
 
-        fn list_reply(uri: &str, method: &str, data: Option<Value>) -> Value {
-            let mut vddp = json!({ "method": method, "uri": uri });
-            if let Some(data) = data {
-                vddp["data"] = data;
-            }
-            json!({ "vddp": vddp })
-        }
-
-        // Only the `get` reply for `/vddp_srv/devices` is the device list. Another vddp
-        // frame that carries `data` — a notify, or the reply to another uri — does not
-        // decide which units this session asks about.
-        #[test]
-        fn the_device_list_is_only_the_list_reply() {
-            let decoy = json!({ "list": [{ "vdpport": 1, "model": "URX44V" }] });
-            let port = device_list(vec![
-                list_reply("/vddp_srv/devices", "notify", Some(decoy.clone())),
-                list_reply("/vddp_srv/other", "get", Some(decoy)),
-                list_reply(
-                    "/vddp_srv/devices",
-                    "get",
-                    Some(json!({ "list": [{ "vdpport": 51234, "model": "URX22" }] })),
-                ),
-            ]);
-            assert_eq!(
-                discover_vdp_targets(port),
-                Ok(vec![(51234, "URX22".to_string())])
-            );
-        }
-
-        // The list reply without `data` is a bad answer as soon as it arrives, rather than
-        // a wait that runs out its deadline as if nothing had answered.
-        #[test]
-        fn a_list_reply_without_data_is_a_bad_response_at_once() {
-            let port = device_list(vec![list_reply("/vddp_srv/devices", "get", None)]);
-            let started = Instant::now();
-            let err = discover_vdp_targets(port).unwrap_err();
-            assert!(err.starts_with("broker-bad-response:"), "{err}");
-            assert!(
-                started.elapsed() < Duration::from_secs(1),
-                "answered at once, not at the deadline: {:?}",
-                started.elapsed()
-            );
-        }
-
-        // A peer that keeps sending bytes and never ends the line. The wait for the list
-        // ends at its 3 s deadline, as it does on a silent link, instead of lasting as
-        // long as the bytes keep coming.
-        #[test]
-        fn a_wait_ends_at_its_deadline_while_a_line_keeps_arriving() {
-            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-            let port = listener.local_addr().unwrap().port();
-            std::thread::spawn(move || {
-                let (mut sock, _) = listener.accept().unwrap();
-                let until = Instant::now() + Duration::from_secs(12);
-                while Instant::now() < until && sock.write_all(b"x").is_ok() {
-                    std::thread::sleep(Duration::from_millis(20));
+        /// Answers a GET with `current_value: 7` and every POST with `response_code: 200`.
+        fn plain(request: &Value) -> Vec<Value> {
+            let vdp = &request["vdp"];
+            let uri = vdp["uri"].as_str().unwrap();
+            match vdp["method"].as_str().unwrap() {
+                "get" => vec![
+                    json!({ "method": "get", "uri": uri, "data": { "response_code": 200, "current_value": 7 } }),
+                ],
+                _ => {
+                    vec![json!({ "method": "post", "uri": uri, "data": { "response_code": 200 } })]
                 }
-            });
-            let started = Instant::now();
-            let err = discover_vdp_targets(port).unwrap_err();
-            let took = started.elapsed();
-            assert!(
-                took < Duration::from_secs(5),
-                "the 3 s deadline held while bytes kept arriving: {took:?} ({err})"
-            );
-            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
-        }
-
-        // Something arriving just before the deadline — half a line, or a whole frame
-        // that is not the list — does not buy the wait another read's worth of time.
-        #[test]
-        fn a_frame_just_before_the_deadline_does_not_extend_the_wait() {
-            let other = format!(
-                "{}\n",
-                list_reply("/vddp_srv/other", "get", Some(json!({})))
-            );
-            for (label, bytes) in [
-                ("half a line", "{\"vddp\":".to_string()),
-                ("another frame", other),
-            ] {
-                let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-                let port = listener.local_addr().unwrap().port();
-                let peer = std::thread::spawn(move || {
-                    let (mut sock, _) = listener.accept().unwrap();
-                    std::thread::sleep(Duration::from_millis(2_400));
-                    sock.write_all(bytes.as_bytes()).unwrap();
-                    std::thread::sleep(Duration::from_secs(5));
-                });
-                let started = Instant::now();
-                let err = discover_vdp_targets(port).unwrap_err();
-                let took = started.elapsed();
-                assert!(
-                    took < Duration::from_millis(3_500),
-                    "{label}: the wait ran past its 3 s deadline: {took:?} ({err})"
-                );
-                drop(peer);
             }
         }
 
-        fn status_reply(status: &str) -> Value {
-            json!({
-                "method": "get",
-                "uri": "/vd/synchronize",
-                "data": { "sync_status": status }
-            })
-        }
+        const DEADLINE: Duration = Duration::from_millis(200);
 
-        fn device_reply(firm_list: Value) -> Value {
-            json!({
-                "method": "get",
-                "uri": "/vd/device",
-                "data": { "firm_list": firm_list }
-            })
-        }
-
-        fn system(version: &str) -> Value {
-            json!([{ "firm_name": "System", "firm_version": version }])
-        }
-
-        /// The handshake against a unit that answers with `frames`, in order.
-        fn handshake_with(frames: Vec<Value>) -> Result<Option<String>, String> {
-            let (mut link, mut peer) = vdp_link();
-            for frame in frames {
-                send(&mut peer, frame);
-            }
-            handshake(&mut link)
-        }
-
-        // Device Center keeps answering `/vd/device` from its cache once the unit is
-        // unplugged, so a unit lost between its `online` and its firmware reply has to
-        // fail the handshake on the push, or the session starts against a unit that is gone.
-        #[test]
-        fn a_unit_lost_during_the_firmware_read_fails_the_handshake() {
-            let err = handshake_with(vec![
-                status_reply("online"),
-                synchronize("lost"),
-                device_reply(system("1.5.0")),
-            ])
-            .unwrap_err();
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-        }
-
-        // The handshake's reads take no reply finished after their deadline either: a
-        // status finished late is the status read's timeout, not an `online`…
-        #[test]
-        fn the_handshake_takes_no_reply_completed_after_its_deadline() {
-            let (mut link, peer) = vdp_link();
-            let peer = across_the_deadline(peer, vec![], status_reply("online"));
-            let err = handshake(&mut link).unwrap_err();
-            assert!(err.starts_with("broker-timeout:"), "{err}");
-            drop(peer.join());
-        }
-
-        // …while the unit lost, pushed across the firmware read's deadline, is never lost
-        // with it: a read that returns it late fails the handshake with it, and otherwise the
-        // firmware is unknown and the push stays on the link for the session's reader, which
-        // ends the session with it. Which of the two happens is the timer's, not the code's.
-        #[test]
-        fn a_unit_lost_across_the_firmware_reads_deadline_is_never_dropped() {
-            let (mut link, peer) = vdp_link();
-            let peer = across_the_deadline(peer, vec![status_reply("online")], synchronize("lost"));
-            match handshake(&mut link) {
-                Err(err) => {
-                    assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-                    drop(peer.join());
-                    return;
-                }
-                Ok(firmware) => assert_eq!(firmware, None),
-            }
-            let until = Instant::now() + Duration::from_secs(1);
-            let pushed = loop {
-                if let Some(msg) = link.read_frame().unwrap() {
-                    break msg;
-                }
-                assert!(Instant::now() < until, "the push never reached the link");
-            };
-            let err = synchronize_lost(&pushed).expect("the push is the unit lost");
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-            drop(peer.join());
-        }
-
-        // …while an `online` push there, a push before the status reply, a status reply
-        // that is not a notify and a notify with no status leave the handshake to the
-        // replies it waits for.
-        #[test]
-        fn only_a_lost_status_notify_during_the_firmware_read_fails_the_handshake() {
-            for (label, frames) in [
-                (
-                    "online push",
-                    vec![
-                        status_reply("online"),
-                        synchronize("online"),
-                        device_reply(system("1.5.0")),
-                    ],
-                ),
-                (
-                    "push before the status reply",
-                    vec![
-                        synchronize("lost"),
-                        status_reply("online"),
-                        device_reply(system("1.5.0")),
-                    ],
-                ),
-                (
-                    "a reply, not a notify",
-                    vec![
-                        status_reply("online"),
-                        status_reply("lost"),
-                        device_reply(system("1.5.0")),
-                    ],
-                ),
-                (
-                    "an empty status",
-                    vec![
-                        status_reply("online"),
-                        synchronize(""),
-                        device_reply(system("1.5.0")),
-                    ],
-                ),
-            ] {
-                assert_eq!(
-                    handshake_with(frames),
-                    Ok(Some("1.5.0".to_string())),
-                    "{label}"
-                );
-            }
-        }
-
-        // The device-lost push is a `/vd/synchronize` notify whose status is there and is
-        // not `online`. A reply to a read of the status and a notify with an empty status
-        // say nothing about the unit going away.
-        #[test]
-        fn only_a_status_notify_counts_as_the_unit_lost() {
-            let frame = |vdp: Value| json!({ "vdp": vdp });
-            assert!(synchronize_lost(&frame(synchronize("lost"))).is_some());
-            assert!(synchronize_lost(&frame(synchronize("offline"))).is_some());
-            assert!(synchronize_lost(&frame(synchronize("online"))).is_none());
-            assert!(synchronize_lost(&frame(synchronize(""))).is_none());
-            assert!(synchronize_lost(&frame(status_reply("lost"))).is_none());
-            assert!(synchronize_lost(&frame(json!({
-                "uri": "/vd/synchronize",
-                "data": { "sync_status": "lost" }
-            })))
-            .is_none());
-        }
-
-        // The firmware version is three-valued (architecture.md "Live control
-        // connection"): `Some("")` only when the unit's list was read in full and holds
-        // no System entry, and `None` whenever the version cannot be read from it — a
-        // row whose name cannot be read could be the System entry, a System row with no
-        // string version has no version, and two System rows that disagree name none.
-        #[test]
-        fn the_firmware_is_unknown_when_its_rows_cannot_be_read() {
-            for (label, firm_list, expected) in [
-                ("one System row", system("1.5.0"), Some("1.5.0")),
-                (
-                    "System after another row",
-                    json!([
-                        { "firm_name": "MCU Main", "firm_version": "1.0" },
-                        { "firm_name": "system", "firm_version": "1.5.0" }
-                    ]),
-                    Some("1.5.0"),
-                ),
-                (
-                    "two System rows that agree",
-                    json!([
-                        { "firm_name": "System", "firm_version": "1.5.0" },
-                        { "firm_name": "SYSTEM", "firm_version": "1.5.0" }
-                    ]),
-                    Some("1.5.0"),
-                ),
-                (
-                    "no System row",
-                    json!([{ "firm_name": "MCU Main", "firm_version": "1.0" }]),
-                    Some(""),
-                ),
-                ("an empty System version", system(""), None),
-                (
-                    "an empty System version beside a readable one",
-                    json!([
-                        { "firm_name": "System", "firm_version": "" },
-                        { "firm_name": "System", "firm_version": "1.5.0" }
-                    ]),
-                    None,
-                ),
-                (
-                    "a System row with a number for its version",
-                    json!([{ "firm_name": "System", "firm_version": 150 }]),
-                    None,
-                ),
-                (
-                    "a System row with no version",
-                    json!([{ "firm_name": "System" }]),
-                    None,
-                ),
-                (
-                    "a row with no name",
-                    json!([{ "firm_version": "1.5.0" }]),
-                    None,
-                ),
-                (
-                    "a row with a number for its name",
-                    json!([
-                        { "firm_name": 1, "firm_version": "1.4.0" },
-                        { "firm_name": "System", "firm_version": "1.5.0" }
-                    ]),
-                    None,
-                ),
-                (
-                    "a row with an empty name",
-                    json!([{ "firm_name": "", "firm_version": "1.5.0" }]),
-                    None,
-                ),
-                (
-                    "two System rows that disagree",
-                    json!([
-                        { "firm_name": "System", "firm_version": "1.4.0" },
-                        { "firm_name": "System", "firm_version": "1.5.0" }
-                    ]),
-                    None,
-                ),
-            ] {
-                assert_eq!(
-                    handshake_with(vec![status_reply("online"), device_reply(firm_list)]),
-                    Ok(expected.map(str::to_string)),
-                    "{label}"
-                );
-            }
-        }
-
-        // An empty status is a status that is not `online`, which is `no-device`
-        // (architecture.md "Live control connection").
-        #[test]
-        fn an_empty_status_is_no_device() {
-            assert_eq!(
-                handshake_with(vec![status_reply("")]),
-                Err("no-device".to_string())
-            );
-        }
-
-        /// A line from the broker that is not JSON.
-        fn send_garbage(peer: &mut TcpStream) {
-            peer.write_all(b"not json\n").unwrap();
-        }
-
-        // A stray line that is not JSON on the idle drain is dropped rather than failed
-        // on: it ends that pump as a drained socket does, and the push behind it is what
-        // the next pump reports.
-        #[test]
-        fn the_idle_pump_drops_a_line_that_is_not_json() {
-            let (mut link, mut peer) = vdp_link();
-            send_garbage(&mut peer);
-            send(&mut peer, synchronize("lost"));
-            assert_eq!(pump(&mut link, &mut Subs::new()), Ok(()));
-            let err = pump(&mut link, &mut Subs::new()).unwrap_err();
-            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
-        }
-
-        // …and a command waiting for its reply reads past one to the reply behind it.
-        #[test]
-        fn a_reply_loop_reads_past_a_line_that_is_not_json() {
-            let (mut link, mut peer) = vdp_link();
-            send_garbage(&mut peer);
-            send(
-                &mut peer,
-                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
-            );
-            assert_eq!(
-                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
-                Ok(json!(3))
-            );
-        }
-
-        // What the idle pump hands the worker is the read's own error: the socket's end
-        // of stream is the broker closing the connection.
-        #[test]
-        fn the_idle_pump_reports_the_reads_own_failure() {
-            let (mut link, peer) = vdp_link();
-            drop(peer);
-            assert_eq!(
-                pump(&mut link, &mut Subs::new()),
-                Err("broker-closed".to_string())
-            );
-        }
-
-        /// A watch channel whose events land on a queue the test can wait on.
-        fn watch() -> (Channel<super::super::LinkEvent>, mpsc::Receiver<Value>) {
+        fn start(
+            list_port: u16,
+            preferred: &str,
+        ) -> (
+            mpsc::Sender<Cmd>,
+            Result<DeviceSummary, String>,
+            Arc<LinkCounters>,
+        ) {
             let (tx, rx) = mpsc::channel();
-            let ch = Channel::new(move |body| {
+            let (ready_tx, ready_rx) = mpsc::channel();
+            let counters = Arc::new(LinkCounters::default());
+            let (worker_counters, preferred) = (Arc::clone(&counters), preferred.to_string());
+            thread::spawn(move || {
+                worker_at(
+                    list_port,
+                    DEADLINE,
+                    rx,
+                    ready_tx,
+                    worker_counters,
+                    &preferred,
+                )
+            });
+            let summary = ready_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the worker answers the connect");
+            (tx, summary, counters)
+        }
+
+        fn connected(
+            answer: impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static,
+        ) -> (mpsc::Sender<Cmd>, Unit, Arc<LinkCounters>) {
+            let unit = Unit::start("<device-id-a>", answer);
+            let list = device_list(&[(&unit, "URX44V")]);
+            let (tx, summary, counters) = start(list, "URX44V");
+            summary.expect("the unit opens");
+            (tx, unit, counters)
+        }
+
+        /// A channel whose sends land in the returned receiver, one JSON value each.
+        fn capture<T: serde::Serialize + Clone + 'static>() -> (Channel<T>, mpsc::Receiver<Value>) {
+            let (tx, rx) = mpsc::channel();
+            let channel = Channel::new(move |body| {
                 if let InvokeResponseBody::Json(s) = body {
                     let _ = tx.send(serde_json::from_str(&s).unwrap());
                 }
                 Ok(())
             });
-            (ch, rx)
+            (channel, rx)
         }
 
-        /// Queue a link watch on a worker's command queue, and return where its events
-        /// land. Queued before the worker starts, it is the first command the worker
-        /// takes.
-        fn queue_watch(tx: &mpsc::Sender<Cmd>) -> mpsc::Receiver<Value> {
-            let (channel, events) = watch();
-            watch_link(tx.clone(), channel).expect("the command queue is open");
-            events
+        fn next(rx: &mpsc::Receiver<Value>) -> Value {
+            rx.recv_timeout(Duration::from_secs(5)).expect("a send")
         }
 
-        // A failure the idle pump meets ends the session the way a command's device-lost
-        // does: latched, with every later command answered by that cause at once. A
-        // worker that exited instead left the commands after it reporting the worker
-        // gone, which names no cause and tells the operator to restart the app.
         #[test]
-        fn a_failure_the_idle_pump_meets_answers_every_later_command() {
-            let (link, mut peer) = vdp_link();
-            let (tx, rx) = mpsc::channel();
-            let events = queue_watch(&tx);
-            let worker =
-                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-
-            // Idle, so only the pump reads it.
-            send(&mut peer, synchronize("lost"));
-            let event = events
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the pump pushed the link-lost event");
-            let reason = event["reason"].as_str().unwrap().to_string();
-            assert!(reason.starts_with(DEVICE_LOST_PREFIX), "{reason}");
-
-            // The worker is still there, and answers from the latch rather than from the
-            // broker: no request reaches the socket, so no deadline is waited out.
-            let asked = Instant::now();
-            let (reply, wait) = mpsc::channel();
-            tx.send(Cmd::Get {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                reply,
-            })
-            .expect("the worker is serving");
-            assert_eq!(wait.recv_timeout(Duration::from_secs(10)), Ok(Err(reason)));
-            assert!(asked.elapsed() < Duration::from_secs(1));
-
-            let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
-            })
-            .unwrap();
-            closed
-                .recv_timeout(Duration::from_secs(10))
-                .expect("a lost session still closes on Shutdown");
-            worker.join().unwrap();
-        }
-
-        /// Send one command built around its reply channel, and wait for the answer.
-        fn ask<T>(
-            tx: &mpsc::Sender<Cmd>,
-            cmd: impl FnOnce(mpsc::Sender<Result<T, String>>) -> Cmd,
-        ) -> Result<T, String> {
-            let (reply, wait) = mpsc::channel();
-            tx.send(cmd(reply)).expect("the worker is serving");
-            wait.recv_timeout(Duration::from_secs(10))
-                .expect("the worker answers")
-        }
-
-        // The ledger counts what was put on the socket. A command the latch refuses never
-        // reaches it, so a lost session's later gets, sets and registrations leave their
-        // rows where they were — while one that does reach the socket is counted.
-        #[test]
-        fn a_command_the_latch_refuses_is_not_counted_as_sent() {
-            let (link, mut peer) = vdp_link();
-            let counters = Arc::new(LinkCounters::default());
-            let (tx, rx) = mpsc::channel();
-            let events = queue_watch(&tx);
-            let worker = {
-                let counters = Arc::clone(&counters);
-                std::thread::spawn(move || serve(link, rx, counters))
-            };
-            let get = |reply| Cmd::Get {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                reply,
-            };
-
-            send(
-                &mut peer,
-                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 5 } }),
+        fn reads_and_writes_reach_the_unit_and_the_summary_names_it() {
+            let unit = Unit::start("<device-id-a>", plain);
+            let list = device_list(&[(&unit, "URX44V")]);
+            let (tx, summary, counters) = start(list, "URX44V");
+            let summary = summary.unwrap();
+            assert_eq!(
+                (
+                    summary.model.as_str(),
+                    summary.label.as_str(),
+                    summary.firmware.as_deref()
+                ),
+                ("URX44V", "URX44V", Some("1.5.0.1"))
             );
-            assert_eq!(ask(&tx, get), Ok(5));
+            assert_eq!(get(tx.clone(), 1, 0, 2), Ok(7));
+            assert_eq!(set(tx.clone(), 1, 0, 2, -600), Ok(()));
+            assert!(unit.seen().contains(&"/vd/parameters/1:0:2".to_string()));
+            let stats = counters.read();
+            assert_eq!((stats.gets, stats.sets), (1, 1));
+        }
+
+        #[test]
+        fn a_refused_write_is_broker_rejected() {
+            let (tx, _unit, _) = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                vec![json!({ "method": "post", "uri": uri, "data": { "response_code": 400 } })]
+            });
+            let err = set(tx, 502, 0, 0, 101).unwrap_err();
+            assert!(err.starts_with("broker-rejected: 502:0:0"), "{err}");
+        }
+
+        #[test]
+        fn a_name_reads_as_its_text_or_as_no_custom_name() {
+            let (tx, _unit, _) = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                if request["vdp"]["method"] == "post" {
+                    return plain(request);
+                }
+                let value = if uri.contains("18:0:0") {
+                    json!("Vox")
+                } else {
+                    json!(3)
+                };
+                vec![
+                    json!({ "method": "get", "uri": uri, "data": { "response_code": 200, "current_value": value } }),
+                ]
+            });
+            assert_eq!(get_str(tx.clone(), 18, 0, 0), Ok("Vox".to_string()));
+            assert_eq!(get_str(tx.clone(), 18, 0, 1), Ok(String::new()));
+            assert_eq!(set_str(tx, 18, 0, 0, "Kick".to_string()), Ok(()));
+        }
+        // A missed response deadline ends the session (N1): the command fails with its own
+        // deadline, its late reply answers nothing, and the watch and every command after it
+        // get the session's end.
+        #[test]
+        fn a_missed_deadline_ends_the_session() {
+            let (tx, _unit, counters) = connected(counted(|n, request| {
+                let at = address_of(request);
+                if n == 1 {
+                    thread::sleep(LATE);
+                }
+                vec![get_reply(&at, 111)]
+            }));
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            let err = get(tx.clone(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with("broker-timeout: 1:0:0"), "{err}");
+            assert_eq!(next(&events), json!({ "reason": BROKER_UNRESPONSIVE }));
+            assert_eq!(
+                get(tx.clone(), 1, 0, 0),
+                Err(BROKER_UNRESPONSIVE.to_string())
+            );
+            let stats = counters.read();
+            assert_eq!((stats.deadlines, stats.stalled, stats.gets), (1, 1, 1));
+        }
+
+        #[test]
+        fn the_unit_going_offline_is_device_lost_for_the_watch_and_every_later_command() {
+            let (tx, unit, _) = connected(plain);
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            assert_eq!(get(tx.clone(), 1, 0, 0), Ok(7));
+            unit.push(json!({ "method": "notify", "uri": "/vd/synchronize", "data": { "sync_status": "offline" } }));
+            let reason = next(&events)["reason"].as_str().unwrap().to_string();
+            assert!(reason.starts_with("device-lost"), "{reason}");
+            assert_eq!(get(tx, 1, 0, 0), Err(reason));
+        }
+
+        #[test]
+        fn a_link_the_peer_closes_is_broker_closed() {
+            let (tx, unit, _) = connected(plain);
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            unit.close();
+            assert_eq!(next(&events), json!({ "reason": "broker-closed" }));
+            assert_eq!(get(tx, 1, 0, 0), Err("broker-closed".to_string()));
+        }
+
+        // What each subscription registered reaches its own channel, and nothing else does;
+        // the bulk-change push reaches the parameter channels as its sentinel.
+        #[test]
+        fn notifies_reach_the_channel_of_the_subscription_that_registered_them() {
+            let (tx, unit, counters) = connected(plain);
+            let (params, params_seen) = capture();
+            let (probe, probe_seen) = capture();
+            let (meters, meters_seen) = capture();
+            params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], params).unwrap();
+            probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
+            meters_subscribe(tx.clone(), vec![(115, 0)], meters).unwrap();
+            // The shared address (2:0:0) is registered once.
+            let regist = |uri: &str| unit.seen().iter().filter(|s| s.as_str() == uri).count();
+            assert_eq!(regist("/vd/parameters/2:0:0?operation=regist"), 1);
+            assert_eq!(counters.read().regist_frames, 4);
+            for (uri, value) in [
+                ("/vd/parameters/9:0:0", 9),
+                ("/vd/parameters/1:0:0", 5),
+                ("/vd/parameters/3:0:0", 6),
+            ] {
+                unit.push(
+                    json!({ "method": "notify", "uri": uri, "data": { "current_value": value } }),
+                );
+            }
+            unit.push(json!({ "method": "notify", "uri": "/vd/meters/115:1", "data": { "current_value": -300 } }));
+            unit.push(json!({ "method": "notify", "uri": "/vd/meters/115:0", "data": { "current_value": -200 } }));
+            assert_eq!(
+                next(&params_seen),
+                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
+            );
+            assert_eq!(
+                next(&probe_seen),
+                json!([{ "param_id": 3, "x": 0, "y": 0, "value": 6 }])
+            );
+            assert_eq!(
+                next(&meters_seen),
+                json!([{ "meter_id": 115, "x": 0, "value": -200 }])
+            );
+            unit.push(json!({ "method": "notify", "uri": "/vd/parameters", "data": {} }));
+            let bulk = serde_json::to_value(vec![BULK_CHANGE]).unwrap();
+            assert_eq!(next(&params_seen), bulk);
+            assert_eq!(next(&probe_seen), bulk);
+        }
+
+        #[test]
+        fn replacing_a_subscription_registers_the_new_addresses_and_releases_the_old() {
+            let (tx, unit, counters) = connected(plain);
+            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, seen) = capture();
+            params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], first).unwrap();
+            params_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], second).unwrap();
+            let posts: Vec<String> = unit
+                .seen()
+                .into_iter()
+                .filter(|s| s.contains("operation="))
+                .collect();
+            assert_eq!(
+                posts,
+                [
+                    "/vd/parameters/1:0:0?operation=regist",
+                    "/vd/parameters/2:0:0?operation=regist",
+                    "/vd/parameters/3:0:0?operation=regist",
+                    "/vd/parameters/1:0:0?operation=unregist",
+                ]
+            );
+            let stats = counters.read();
+            assert_eq!(
+                (
+                    stats.param_subscribes,
+                    stats.regist_frames,
+                    stats.unregist_frames
+                ),
+                (2, 3, 1)
+            );
+            unit.push(json!({ "method": "notify", "uri": "/vd/parameters/3:0:0", "data": { "current_value": 1 } }));
+            assert_eq!(
+                next(&seen),
+                json!([{ "param_id": 3, "x": 0, "y": 0, "value": 1 }])
+            );
+        }
+
+        // A notify that arrives while the new subscription's registrations are in flight is
+        // judged by the new set and goes out on the new channel.
+        #[test]
+        fn a_notify_during_the_registrations_goes_out_on_the_new_channel() {
+            let (tx, _unit, _) = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                if uri == "/vd/parameters/3:0:0?operation=regist" {
+                    return vec![
+                        json!({ "method": "notify", "uri": "/vd/parameters/3:0:0", "data": { "current_value": 9 } }),
+                        json!({ "method": "post", "uri": uri, "data": { "response_code": 200 } }),
+                    ];
+                }
+                plain(request)
+            });
+            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, seen) = capture();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
+            params_subscribe(tx, vec![(3, 0, 0)], second).unwrap();
+            assert_eq!(
+                next(&seen),
+                json!([{ "param_id": 3, "x": 0, "y": 0, "value": 9 }])
+            );
+        }
+
+        // A refused subscribe reports the refusal and leaves nothing subscribed on its
+        // channel: neither the refused set nor the one it was replacing.
+        #[test]
+        fn a_refused_subscribe_leaves_neither_set_subscribed() {
+            let (tx, unit, _) = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                if uri == "/vd/parameters/3:0:0?operation=regist" {
+                    return vec![
+                        json!({ "method": "post", "uri": uri, "data": { "response_code": 400 } }),
+                    ];
+                }
+                plain(request)
+            });
+            let (first, first_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, second_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
+            let err = params_subscribe(tx.clone(), vec![(3, 0, 0)], second).unwrap_err();
+            assert!(err.starts_with("broker-rejected"), "{err}");
+            assert!(unit
+                .seen()
+                .contains(&"/vd/parameters/1:0:0?operation=unregist".to_string()));
+            unit.push(json!({ "method": "notify", "uri": "/vd/parameters/1:0:0", "data": { "current_value": 1 } }));
+            unit.push(json!({ "method": "notify", "uri": "/vd/parameters/3:0:0", "data": { "current_value": 3 } }));
+            assert!(second_seen
+                .recv_timeout(Duration::from_millis(300))
+                .is_err());
+            assert!(first_seen.recv_timeout(Duration::from_millis(100)).is_err());
+            assert_eq!(get(tx, 1, 0, 0), Ok(7), "the session goes on");
+        }
+
+        #[test]
+        fn the_unit_is_chosen_by_model_and_none_or_an_ambiguous_choice_is_refused() {
+            let a = Unit::start("<device-id-a>", plain);
+            let b = Unit::start("<device-id-b>", plain);
+            let list = device_list(&[(&a, "URX22"), (&b, "URX44V")]);
+            assert_eq!(
+                start(list, "URX44V").1.map(|s| s.model),
+                Ok("URX44V".to_string())
+            );
+            let err = start(list, "URX44").1.err().unwrap();
+            assert!(
+                err.starts_with("multiple-devices: 2 online (URX22, URX44V), 0 of them URX44"),
+                "{err}"
+            );
+            assert_eq!(
+                start(device_list(&[]), "URX44V").1.err(),
+                Some("no-device".to_string())
+            );
+        }
+
+        fn get_reply(uri: &str, value: i64) -> Value {
+            json!({ "method": "get", "uri": uri, "data": { "response_code": 200, "current_value": value } })
+        }
+
+        /// The reply to one POST operation on `address`.
+        fn post_reply(address: &str, operation: &str, code: u16) -> Value {
+            json!({ "method": "post", "uri": format!("{address}?operation={operation}"),
+                "data": { "response_code": code } })
+        }
+
+        /// The address a request names, its operation left out.
+        fn address_of(request: &Value) -> String {
+            let uri = request["vdp"]["uri"].as_str().unwrap();
+            uri.split('?').next().unwrap().to_string()
+        }
+
+        /// Counts each request `answer` is asked about, from 1, beside the request.
+        fn counted(
+            answer: impl Fn(usize, &Value) -> Vec<Value> + Send + Sync + 'static,
+        ) -> impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static {
+            let calls = Mutex::new(0);
+            move |request| {
+                let n = {
+                    let mut calls = calls.lock().unwrap();
+                    *calls += 1;
+                    *calls
+                };
+                answer(n, request)
+            }
+        }
+
+        /// The error an open that should fail failed with.
+        fn refused(summary: Result<DeviceSummary, String>) -> String {
+            match summary {
+                Ok(summary) => panic!("the unit opened as {}", summary.model),
+                Err(e) => e,
+            }
+        }
+
+        /// How late a case's straggler comes: past the deadline.
+        const LATE: Duration = Duration::from_millis(300);
+
+        // A write, a registration and an unregistration are all POSTs on the address, and a
+        // registration's reply can still be in flight when the next write starts. Only the
+        // reply carrying the write's own operation is its verdict: the refusal here, behind
+        // two acknowledgements of registrations.
+        #[test]
+        fn a_write_takes_its_verdict_only_from_its_own_operations_reply() {
+            let (tx, _unit, _) = connected(|request| {
+                let at = address_of(request);
+                vec![
+                    post_reply(&at, "regist", 200),
+                    post_reply(&at, "unregist", 200),
+                    post_reply(&at, "value", 400),
+                ]
+            });
+            let err = set(tx, 1, 0, 0, 5).unwrap_err();
+            assert!(err.starts_with("broker-rejected: 1:0:0"), "{err}");
+        }
+        // A write past its deadline ends the session, so the acknowledgement that comes after
+        // it is no write's verdict: the next write fails with the session's end.
+        #[test]
+        fn a_write_past_its_deadline_ends_the_session_before_its_late_acknowledgement() {
+            let (tx, _unit, _) = connected(counted(|n, request| {
+                let at = address_of(request);
+                if n == 1 {
+                    thread::sleep(LATE);
+                    vec![post_reply(&at, "value", 200)]
+                } else {
+                    vec![post_reply(&at, "value", 400)]
+                }
+            }));
+            let err = set(tx.clone(), 1, 0, 0, 5).unwrap_err();
+            assert!(err.starts_with("broker-timeout: 1:0:0"), "{err}");
+            assert_eq!(set(tx, 1, 0, 0, 6), Err(BROKER_UNRESPONSIVE.to_string()));
+        }
+        // The unit lost after a read's deadline changes nothing: the deadline already ended
+        // the session, as unresponsive.
+        #[test]
+        fn a_unit_lost_after_a_reads_deadline_does_not_change_how_the_session_ended() {
+            let (tx, _unit, _) = connected(|_| {
+                thread::sleep(LATE);
+                vec![synchronize("offline")]
+            });
+            let err = get(tx.clone(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with("broker-timeout: 1:0:0"), "{err}");
+            thread::sleep(Duration::from_millis(200));
+            assert_eq!(get(tx, 1, 0, 0), Err(BROKER_UNRESPONSIVE.to_string()));
+        }
+
+        // A stray line that is not JSON is dropped rather than failed on: a command waiting
+        // for its reply reads past it to the reply behind it…
+        #[test]
+        fn a_reply_is_read_past_a_line_that_is_not_json() {
+            let (tx, _unit, _) = connected(|request| {
+                vec![
+                    json!({ "raw": "not json\n" }),
+                    get_reply(&address_of(request), 5),
+                ]
+            });
+            assert_eq!(get(tx, 1, 0, 0), Ok(5));
+        }
+
+        // …and on an idle session the push behind it is what ends the session.
+        #[test]
+        fn a_line_that_is_not_json_while_idle_is_dropped_and_the_push_behind_it_reported() {
+            let (tx, unit, _) = connected(plain);
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            unit.push_raw(b"not json\n");
+            unit.push(synchronize("offline"));
+            let reason = next(&events)["reason"].as_str().unwrap().to_string();
+            assert!(reason.starts_with("device-lost"), "{reason}");
+        }
+
+        // The ledger counts what was put on the socket. A command refused because the session
+        // is over never reaches it, so a lost session's later gets, sets and registrations
+        // leave their rows where they were — while one that does reach the socket is counted.
+        #[test]
+        fn a_command_after_the_session_ended_is_not_counted_as_sent() {
+            let (tx, unit, counters) = connected(plain);
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            assert_eq!(get(tx.clone(), 1, 0, 0), Ok(7));
             assert_eq!(
                 counters.read().gets,
                 1,
                 "a get put on the socket is counted"
             );
-
-            send(&mut peer, synchronize("lost"));
-            events
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the pump latched the loss");
-
-            assert!(ask(&tx, get).is_err());
-            assert!(ask(&tx, |reply| Cmd::GetStr {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                reply
-            })
-            .is_err());
-            assert!(ask(&tx, |reply| Cmd::Set {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                value: 0,
-                reply
-            })
-            .is_err());
-            assert!(ask(&tx, |reply| Cmd::SetStr {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                value: "ch 1".into(),
-                reply
-            })
-            .is_err());
-            let meters = Channel::new(|_| Ok(()));
-            assert!(ask(&tx, |reply| Cmd::MetersSubscribe {
-                addrs: vec![(115, 0)],
-                channel: meters,
-                reply
-            })
-            .is_err());
-            let params = Channel::new(|_| Ok(()));
-            assert!(ask(&tx, |reply| Cmd::ParamsSubscribe {
-                addrs: vec![(1, 0, 0)],
-                channel: params,
-                reply
-            })
-            .is_err());
-
+            unit.push(synchronize("lost"));
+            next(&events);
+            assert!(get(tx.clone(), 1, 0, 0).is_err());
+            assert!(get_str(tx.clone(), 18, 0, 0).is_err());
+            assert!(set(tx.clone(), 1, 0, 0, 0).is_err());
+            assert!(set_str(tx.clone(), 18, 0, 0, "ch 1".to_string()).is_err());
+            let (meters, _) = capture::<Vec<super::super::MeterUpdate>>();
+            assert!(meters_subscribe(tx.clone(), vec![(115, 0)], meters).is_err());
+            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            assert!(params_subscribe(tx, vec![(1, 0, 0)], params).is_err());
             let after = counters.read();
             assert_eq!(
                 (after.gets, after.sets, after.regist_frames),
                 (1, 0, 0),
-                "commands the latch refused were counted as sent"
+                "commands refused after the end were counted as sent"
             );
-
-            let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
-            })
-            .unwrap();
-            closed.recv_timeout(Duration::from_secs(10)).unwrap();
-            worker.join().unwrap();
         }
 
-        // The dev build's parameter watch and the live-sync subscription share the
-        // broker's one registration per address: an address both hold is registered once,
-        // stays registered while either holds it — across the live-sync set being
-        // replaced, which follows every structural edit — and is unregistered once when
-        // the session closes. Driven in the order a session takes: live sync first, the
-        // watch once the session is up.
+        // A notify whose address has more coordinates than its kind takes is not an update of
+        // the address its first coordinates name.
+        #[test]
+        fn a_notify_with_more_coordinates_than_its_kind_is_not_an_update() {
+            let (tx, unit, _) = connected(plain);
+            let (params, params_seen) = capture();
+            let (meters, meters_seen) = capture();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
+            meters_subscribe(tx, vec![(115, 0)], meters).unwrap();
+            for (uri, value) in [
+                ("/vd/parameters/1:0:0:7", 9),
+                ("/vd/meters/115:0:1", -100),
+                ("/vd/parameters/1:0:0", 5),
+                ("/vd/meters/115:0", -200),
+            ] {
+                unit.push(
+                    json!({ "method": "notify", "uri": uri, "data": { "current_value": value } }),
+                );
+            }
+            assert_eq!(
+                next(&params_seen),
+                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
+            );
+            assert_eq!(
+                next(&meters_seen),
+                json!([{ "meter_id": 115, "x": 0, "value": -200 }])
+            );
+        }
+
+        // The dev build's parameter watch and the live-sync subscription share the broker's
+        // one registration per address: an address both hold is registered once, stays
+        // registered while either holds it — across the live-sync set being replaced, which
+        // follows every structural edit — and is unregistered once when the session closes.
         #[test]
         fn the_parameter_watch_and_live_sync_register_a_shared_address_once() {
-            use std::collections::HashSet;
-            use std::io::Read;
-            let (link, mut peer) = vdp_link();
-            let (tx, rx) = mpsc::channel();
-            let worker =
-                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-            let params = |addrs: Vec<(u32, i64, i64)>| {
-                move |reply| Cmd::ParamsSubscribe {
-                    addrs,
-                    channel: Channel::new(|_| Ok(())),
-                    reply,
-                }
-            };
-
-            ask(&tx, params(vec![(1, 0, 0), (2, 0, 0)])).unwrap();
-            ask(&tx, |reply| Cmd::ProbeSubscribe {
-                addrs: vec![(838, 0, 0), (1, 0, 0)],
-                channel: Channel::new(|_| Ok(())),
-                reply,
-            })
-            .unwrap();
-            ask(&tx, params(vec![(1, 0, 0), (3, 0, 0)])).unwrap();
-            tx.send(Cmd::ParamsUnsubscribe).unwrap();
-            let (done, closed) = mpsc::channel();
+            let (tx, unit, _) = connected(plain);
+            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (probe, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], first).unwrap();
+            probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
+            params_subscribe(tx.clone(), vec![(2, 0, 0), (4, 0, 0)], second).unwrap();
+            let count = |uri: &str| unit.seen().iter().filter(|s| s.as_str() == uri).count();
+            for (param, regist, unregist) in [(1, 1, 1), (2, 1, 0), (3, 1, 0), (4, 1, 0)] {
+                let at = format!("/vd/parameters/{param}:0:0");
+                assert_eq!(count(&format!("{at}?operation=regist")), regist, "{at}");
+                assert_eq!(count(&format!("{at}?operation=unregist")), unregist, "{at}");
+            }
+            let (done, signalled) = mpsc::channel();
             tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+                done: Some((done, Instant::now() + Duration::from_secs(2))),
             })
             .unwrap();
-            closed.recv_timeout(Duration::from_secs(10)).unwrap();
-            worker.join().unwrap();
+            signalled.recv_timeout(Duration::from_secs(5)).unwrap();
+            for param in 1..=4 {
+                let at = format!("/vd/parameters/{param}:0:0?operation=unregist");
+                assert_eq!(count(&at), 1, "{at}");
+            }
+        }
 
-            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-            let mut sent = String::new();
-            peer.read_to_string(&mut sent).unwrap();
-            let posts: Vec<String> = sent
-                .lines()
-                .map(|l| serde_json::from_str::<Value>(l).unwrap())
-                .filter_map(|v| v["vdp"]["uri"].as_str().map(str::to_string))
-                .map(|u| u.trim_start_matches("/vd/parameters/").to_string())
-                .collect();
-            let set = |s: &[String]| s.iter().cloned().collect::<HashSet<_>>();
-            let want = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<HashSet<_>>();
-            assert_eq!(posts.len(), 8, "{posts:?}");
-            assert_eq!(
-                set(&posts[0..2]),
-                want(&["1:0:0?operation=regist", "2:0:0?operation=regist"])
-            );
-            assert_eq!(posts[2], "838:0:0?operation=regist");
-            assert_eq!(posts[3], "2:0:0?operation=unregist");
-            assert_eq!(posts[4], "3:0:0?operation=regist");
-            assert_eq!(posts[5], "3:0:0?operation=unregist");
-            assert_eq!(
-                set(&posts[6..8]),
-                want(&["838:0:0?operation=unregist", "1:0:0?operation=unregist"])
+        // The app-exit teardown's caller stops waiting at its instant, and the close ends by
+        // it however the broker behaves: it never answers the unregistrations, sends whole
+        // lines 30 ms apart, and then pieces of one that never ends.
+        #[test]
+        fn the_exit_teardown_ends_by_its_instant_while_the_broker_never_answers() {
+            let (tx, unit, _) = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                if uri.ends_with("operation=unregist") {
+                    vec![]
+                } else {
+                    plain(request)
+                }
+            });
+            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
+            let latest = Arc::clone(&unit.latest);
+            thread::spawn(move || {
+                let write = |bytes: &[u8]| {
+                    let mut latest = latest.lock().unwrap();
+                    latest
+                        .as_mut()
+                        .map(|s| s.write_all(bytes).is_ok())
+                        .unwrap_or(false)
+                };
+                let notify = format!(
+                    "{}\n",
+                    json!({ "vdp": { "method": "notify", "uri": "/vd/parameters/1:0:0",
+                        "data": { "current_value": 1 } } })
+                );
+                for _ in 0..10 {
+                    if !write(notify.as_bytes()) {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(30));
+                }
+                write(b"{\"vdp\": ");
+                for _ in 0..200 {
+                    if !write(b" ") {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            });
+            thread::sleep(Duration::from_millis(100));
+            let wait = Duration::from_millis(500);
+            let started = Instant::now();
+            let (done, signalled) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, started + wait)),
+            })
+            .unwrap();
+            signalled
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the close signals");
+            assert!(
+                started.elapsed() < wait + Duration::from_millis(300),
+                "the close took {:?}",
+                started.elapsed()
             );
         }
 
-        // Device Center quitting is the vdp socket's end of stream. The cause the later
-        // commands get is the broker closing the connection, and the pump stops at the
-        // latch instead of reading the dead socket again on every idle wake.
+        // A read's wait ends at its deadline while bytes keep arriving that never end a line,
+        // as it does on a silent link, instead of lasting as long as the bytes keep coming.
         #[test]
-        fn a_closed_link_is_latched_once_and_the_pump_stops_there() {
-            let (link, peer) = vdp_link();
-            let (tx, rx) = mpsc::channel();
-            let events = queue_watch(&tx);
-            let worker =
-                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
-
-            drop(peer);
-            let event = events
-                .recv_timeout(Duration::from_secs(10))
-                .expect("the pump pushed the link-lost event");
-            assert_eq!(event["reason"], "broker-closed");
-
-            let (reply, wait) = mpsc::channel();
-            tx.send(Cmd::Set {
-                param_id: 1,
-                x: 0,
-                y: 0,
-                value: 0,
-                reply,
-            })
-            .expect("the worker is serving");
-            assert_eq!(
-                wait.recv_timeout(Duration::from_secs(10)),
-                Ok(Err("broker-closed".to_string()))
-            );
-            // Several idle wakes' worth: a pump still running would meet the closed
-            // socket again on each and push another event.
+        fn a_read_ends_at_its_deadline_while_a_line_keeps_arriving() {
+            let (tx, unit, _) = connected(|_| vec![json!({ "raw": "{\"vdp\": " })]);
+            let latest = Arc::clone(&unit.latest);
+            let feeding = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let feed = Arc::clone(&feeding);
+            thread::spawn(move || {
+                while feed.load(std::sync::atomic::Ordering::SeqCst) {
+                    if let Some(s) = latest.lock().unwrap().as_mut() {
+                        let _ = s.write_all(b" ");
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            });
+            let started = Instant::now();
+            let err = get(tx, 1, 0, 0).unwrap_err();
+            let took = started.elapsed();
+            feeding.store(false, std::sync::atomic::Ordering::SeqCst);
+            assert!(err.starts_with("broker-timeout: 1:0:0"), "{err}");
             assert!(
-                events.recv_timeout(Duration::from_millis(300)).is_err(),
-                "the pump went on reading a closed link"
+                took < DEADLINE + Duration::from_millis(300),
+                "the read took {took:?}"
             );
+        }
 
-            let (done, closed) = mpsc::channel();
+        // Only the `get` reply for `/vddp_srv/devices` is the device list. Another frame that
+        // carries a list — a notify, or the reply to another uri — does not decide which units
+        // this session asks about.
+        #[test]
+        fn the_device_list_is_only_the_list_reply() {
+            let unit = Unit::start("<device-id-a>", plain);
+            let decoy = Unit::start("<device-id-b>", plain);
+            let decoys = json!({ "list": [{ "vdpport": decoy.port, "model": "URX22" }] });
+            let list = list_server(vec![
+                json!({ "method": "notify", "uri": "/vddp_srv/devices", "data": decoys }),
+                json!({ "method": "get", "uri": "/vddp_srv/other", "data": decoys }),
+                json!({ "method": "get", "uri": "/vddp_srv/devices",
+                    "data": { "list": [{ "vdpport": unit.port, "model": "URX44V" }] } }),
+            ]);
+            let (_tx, summary, _) = start(list, "URX44V");
+            assert_eq!(summary.unwrap().model, "URX44V");
+            assert!(decoy.seen().is_empty(), "{:?}", decoy.seen());
+        }
+
+        // The list reply without `data` is a bad answer as soon as it arrives, rather than a
+        // wait that runs out its deadline as if nothing had answered.
+        #[test]
+        fn a_list_reply_without_data_is_a_bad_response_at_once() {
+            let list = list_server(vec![json!({ "method": "get", "uri": "/vddp_srv/devices" })]);
+            let started = Instant::now();
+            let (_tx, summary, _) = start(list, "URX44V");
+            let err = refused(summary);
+            assert!(err.starts_with("broker-bad-response"), "{err}");
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{:?}",
+                started.elapsed()
+            );
+        }
+
+        // A discovery or an opening that loses its link says how, as the worker did before
+        // the shared transport: a closed stream is broker-closed, a socket error broker-io,
+        // and the unit going offline device-lost.
+        #[test]
+        fn a_lost_link_while_listing_or_opening_is_told_by_how_it_was_lost() {
+            // A device list that reads the request and closes: the stream ends.
+            let closing = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let list = closing.local_addr().unwrap().port();
+            thread::spawn(move || {
+                let (stream, _) = closing.accept().unwrap();
+                let mut request = String::new();
+                let _ = BufReader::new(stream).read_line(&mut request);
+            });
+            let (_tx, summary, _) = start(list, "URX44V");
+            assert_eq!(refused(summary), "broker-closed: Discovery");
+
+            // A device list that closes with the request unread: the system resets the
+            // connection instead of ending the stream, and the read fails.
+            let resetting = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let list = resetting.local_addr().unwrap().port();
+            thread::spawn(move || {
+                let (stream, _) = resetting.accept().unwrap();
+                // Wait for the request without taking it off the socket.
+                let _ = stream.peek(&mut [0u8; 1]);
+                drop(stream);
+            });
+            let (_tx, summary, _) = start(list, "URX44V");
+            assert_eq!(refused(summary), "broker-io: ConnectionReset");
+
+            let lost = |phase, lost_link| LinkFailure {
+                failure: Failure::Cause {
+                    code: Cause::ConnectionLost,
+                    phase,
+                },
+                lost_link,
+            };
+            assert_eq!(
+                link_failure_text(&lost(Phase::Identity, Some(LinkLoss::UnitLost)), "opened"),
+                "device-lost: the unit went offline while it was opened"
+            );
+            assert_eq!(
+                link_failure_text(&lost(Phase::Identity, None), "opened"),
+                "broker-closed: Identity"
+            );
+        }
+
+        // An empty status is a status that is not `online`: no unit to open.
+        #[test]
+        fn an_empty_status_is_no_device() {
+            let unit = Unit::serving(|request| match request["vdp"]["uri"].as_str() {
+                Some("/vd/synchronize") => vec![status_reply("<device-id-a>", "")],
+                _ => opening("<device-id-a>", request).unwrap_or_else(|| plain(request)),
+            });
+            let list = device_list(&[(&unit, "URX44V")]);
+            let (_tx, summary, _) = start(list, "URX44V");
+            assert_eq!(refused(summary), "no-device");
+        }
+
+        // Device Center keeps answering `/vd/device` from its cache once the unit is unplugged,
+        // so a unit lost between its `online` and its firmware reply fails the open on the
+        // push, as the unit lost.
+        #[test]
+        fn a_unit_lost_during_the_firmware_read_fails_the_open() {
+            let unit = Unit::serving(|request| match request["vdp"]["uri"].as_str() {
+                Some("/vd/device") => vec![synchronize("offline")],
+                _ => opening("<device-id-a>", request).unwrap_or_else(|| plain(request)),
+            });
+            let list = device_list(&[(&unit, "URX44V")]);
+            let (_tx, summary, _) = start(list, "URX44V");
+            let err = refused(summary);
+            assert!(err.starts_with("device-lost"), "{err}");
+        }
+
+        // The firmware is three-valued: a unit whose list holds no System row opens with an
+        // empty version, and one whose rows cannot be read opens with the version unknown,
+        // an empty System version included.
+        #[test]
+        fn the_firmware_is_absent_without_a_system_row_and_unknown_when_rows_cannot_be_read() {
+            let with = |firm_list: Value| {
+                Unit::serving(move |request| match request["vdp"]["uri"].as_str() {
+                    Some("/vd/device") => vec![device_reply(firm_list.clone())],
+                    _ => opening("<device-id-a>", request).unwrap_or_else(|| plain(request)),
+                })
+            };
+            let absent = with(json!([{ "firm_name": "Boot", "firm_version": "1.0.0" }]));
+            let (_tx, summary, _) = start(device_list(&[(&absent, "URX44V")]), "URX44V");
+            assert_eq!(summary.unwrap().firmware.as_deref(), Some(""));
+            for rows in [
+                json!([{ "firm_name": 5, "firm_version": "1.5.0.1" }]),
+                json!([{ "firm_name": "System", "firm_version": "" }]),
+                json!([
+                    { "firm_name": "System", "firm_version": "1.5.0.1" },
+                    { "firm_name": "System", "firm_version": "1.5.0.0" }
+                ]),
+            ] {
+                let unreadable = with(rows.clone());
+                let (_tx, summary, _) = start(device_list(&[(&unreadable, "URX44V")]), "URX44V");
+                let firmware = summary.map(|summary| summary.firmware);
+                assert_eq!(firmware, Ok(None), "{rows}");
+            }
+        }
+
+        #[test]
+        fn shutdown_unregisters_what_the_session_registered_before_it_signals() {
+            let (tx, unit, _) = connected(plain);
+            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
+            let (done, signalled) = mpsc::channel();
             tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+                done: Some((done, std::time::Instant::now() + Duration::from_secs(2))),
             })
             .unwrap();
-            closed
-                .recv_timeout(Duration::from_secs(10))
-                .expect("a lost session still closes on Shutdown");
-            worker.join().unwrap();
+            signalled
+                .recv_timeout(Duration::from_secs(5))
+                .expect("the close signals");
+            assert!(unit
+                .seen()
+                .contains(&"/vd/parameters/1:0:0?operation=unregist".to_string()));
         }
     }
 }
