@@ -1378,6 +1378,23 @@ mod imp {
             self.reader.read_json(&mut self.sock)
         }
 
+        /// One inbound message as read_frame gives it, from a read that blocks no later
+        /// than `deadline`: the last read of a wait is armed with what is left of it, as
+        /// each device-list read is, so the wait ends at its deadline.
+        fn read_frame_before(&mut self, deadline: Instant) -> Result<Option<Value>, String> {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left >= READ_TIMEOUT {
+                return self.read_frame();
+            }
+            if left.is_zero() {
+                return Ok(None);
+            }
+            arm_socket(&self.sock, left)?;
+            let read = self.read_frame();
+            arm_socket(&self.sock, READ_TIMEOUT)?;
+            read
+        }
+
         /// Whether the last read_frame read part of a line and not its end, as against
         /// a read that timed out.
         fn still_arriving(&self) -> bool {
@@ -1446,7 +1463,7 @@ mod imp {
         link.send_vdp(json!({ "method": verb, "uri": uri }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
             if watch_lost {
@@ -1575,12 +1592,12 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut late = None;
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
             // A frame completed after the deadline is not the answer, even the reply
-            // itself: the read that finishes it can end one READ_TIMEOUT past the
-            // deadline, and the late drain is the reader for what comes after it.
+            // itself: a read that began in time can still return after it, and the late
+            // drain is the reader for what comes after the deadline.
             if Instant::now() >= deadline {
                 late = Some(msg);
                 break;
@@ -1751,7 +1768,7 @@ mod imp {
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut late = None;
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
             // A frame completed after the deadline is not the answer (see do_set).
@@ -2973,6 +2990,43 @@ mod imp {
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
         }
 
+        // The frame a wait read past its deadline is the drain's first: a device-lost push
+        // there is the command's error, and a straggler there is consumed, leaving the
+        // next read on the address its own.
+        #[test]
+        fn the_late_drain_takes_the_frame_its_wait_read_late_first() {
+            let (mut link, mut peer) = vdp_link();
+            let late = |vdp: Value| Some(json!({ "vdp": vdp }));
+            let err = drain_late_reply(
+                &mut link,
+                &mut Subs::new(),
+                late(synchronize("lost")),
+                ADDR,
+                "get",
+                None,
+            )
+            .expect("the push is what the drain reports");
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+
+            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
+            assert_eq!(
+                drain_late_reply(
+                    &mut link,
+                    &mut Subs::new(),
+                    late(reply(3)),
+                    ADDR,
+                    "get",
+                    None
+                ),
+                None
+            );
+            send(&mut peer, reply(7));
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(7))
+            );
+        }
+
         // …while a straggler, an `online` status and silence leave the command's own
         // deadline as its error.
         #[test]
@@ -3070,6 +3124,99 @@ mod imp {
             let peer = across_the_deadline(peer, vec![], synchronize("lost"));
             let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+            drop(peer.join());
+        }
+
+        /// The broker's end, on its own thread: each of `before` answers one request at
+        /// once, and the request after them is met with notifies for another address every
+        /// 10 ms from 2.90 s to 2.99 s after it, then silence — so a read begins just
+        /// before the request's 3 s deadline with nothing left to arrive.
+        fn chatter_up_to_the_deadline(
+            peer: TcpStream,
+            before: Vec<Value>,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            std::thread::spawn(move || {
+                let mut peer = peer;
+                let mut requests = BufReader::new(peer.try_clone().unwrap());
+                let mut request = String::new();
+                for frame in before {
+                    requests.read_line(&mut request).unwrap();
+                    send(&mut peer, frame);
+                }
+                requests.read_line(&mut request).unwrap();
+                let asked = Instant::now();
+                for at in (2_900..=2_990).step_by(10) {
+                    std::thread::sleep(Duration::from_millis(at).saturating_sub(asked.elapsed()));
+                    send(
+                        &mut peer,
+                        json!({ "method": "notify", "uri": "/vd/parameters/2:0:0", "data": {} }),
+                    );
+                }
+                peer
+            })
+        }
+
+        // A wait ends at its deadline, not one read's timeout past it: the last read is
+        // armed with what is left. The handshake's status read, a read and a write each
+        // end within 20 ms of theirs (the two session waits then spend the late drain's
+        // 200 ms quiet floor on top).
+        #[test]
+        fn a_wait_ends_at_its_deadline_with_nothing_left_to_arrive() {
+            let (mut link, peer) = vdp_link();
+            let peer = chatter_up_to_the_deadline(peer, vec![]);
+            let started = Instant::now();
+            let err = handshake(&mut link).unwrap_err();
+            let took = started.elapsed();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            assert!(
+                took < Duration::from_millis(3_020),
+                "the handshake read took {took:?}"
+            );
+            assert_eq!(
+                link.sock.read_timeout().unwrap(),
+                Some(READ_TIMEOUT),
+                "the socket is armed for the pump again"
+            );
+            drop(peer.join());
+        }
+
+        #[test]
+        fn a_read_ends_at_its_deadline_with_nothing_left_to_arrive() {
+            let (mut link, peer) = vdp_link();
+            let peer = chatter_up_to_the_deadline(peer, vec![]);
+            let started = Instant::now();
+            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
+            let took = started.elapsed();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            assert!(
+                took < Duration::from_millis(3_220),
+                "the read took {took:?}"
+            );
+            assert_eq!(
+                link.sock.read_timeout().unwrap(),
+                Some(READ_TIMEOUT),
+                "the socket is armed for the pump again"
+            );
+            drop(peer.join());
+        }
+
+        #[test]
+        fn a_write_ends_at_its_deadline_with_nothing_left_to_arrive() {
+            let (mut link, peer) = vdp_link();
+            let peer = chatter_up_to_the_deadline(peer, vec![]);
+            let started = Instant::now();
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            let took = started.elapsed();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            assert!(
+                took < Duration::from_millis(3_220),
+                "the write took {took:?}"
+            );
+            assert_eq!(
+                link.sock.read_timeout().unwrap(),
+                Some(READ_TIMEOUT),
+                "the socket is armed for the pump again"
+            );
             drop(peer.join());
         }
 
@@ -3473,14 +3620,22 @@ mod imp {
             drop(peer.join());
         }
 
-        // …while the unit lost, pushed across the firmware read's deadline, still fails
-        // the handshake with it, as the late drain hands such a push back after a
-        // session's command.
+        // …and the unit lost, pushed across the firmware read's deadline, is not that
+        // read's either: the firmware is unknown, and the push stays on the link for the
+        // session's reader, which ends the session with it.
         #[test]
-        fn a_unit_lost_across_the_firmware_reads_deadline_fails_the_handshake() {
+        fn a_unit_lost_across_the_firmware_reads_deadline_is_left_for_the_session() {
             let (mut link, peer) = vdp_link();
             let peer = across_the_deadline(peer, vec![status_reply("online")], synchronize("lost"));
-            let err = handshake(&mut link).unwrap_err();
+            assert_eq!(handshake(&mut link), Ok(None));
+            let until = Instant::now() + Duration::from_secs(1);
+            let pushed = loop {
+                if let Some(msg) = link.read_frame().unwrap() {
+                    break msg;
+                }
+                assert!(Instant::now() < until, "the push never reached the link");
+            };
+            let err = synchronize_lost(&pushed).expect("the push is the unit lost");
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
             drop(peer.join());
         }
