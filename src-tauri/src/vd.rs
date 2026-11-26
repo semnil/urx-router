@@ -919,17 +919,15 @@ mod imp {
     impl Session {
         /// Runs a parameter command and keeps the ledger's deadline rows: a missed
         /// deadline adds to the total, and the run is the transport's. `sent` counts the command once it
-        /// reached the socket: one refused before it was sent — the session already over
-        /// included — leaves the ledger's row where it was.
+        /// reached the socket: one the transport refused before it was sent — the session
+        /// already over included — leaves the ledger's row where it was, and is worded by
+        /// the session's end (`request_text`).
         fn run(
             &mut self,
             req: Request,
             at: &str,
             sent: &AtomicU64,
         ) -> Result<Option<ReadValue>, String> {
-            if let Some(ended) = self.connection.terminal() {
-                return Err(ended_text(&self.connection, ended));
-            }
             let outcome = request(&self.connection, req);
             if !matches!(
                 outcome,
@@ -1858,7 +1856,7 @@ mod imp {
         // channel: neither the refused set nor the one it was replacing.
         #[test]
         fn a_refused_subscribe_leaves_neither_set_subscribed() {
-            let (tx, unit, _) = connected(|request| {
+            let (tx, unit, counters) = connected(|request| {
                 let uri = request["vdp"]["uri"].as_str().unwrap();
                 if uri == "/vd/parameters/3:0:0?operation=regist" {
                     return vec![
@@ -1881,7 +1879,13 @@ mod imp {
                 .recv_timeout(Duration::from_millis(300))
                 .is_err());
             assert!(first_seen.recv_timeout(Duration::from_millis(100)).is_err());
-            assert_eq!(get(tx, 1, 0, 0), Ok(7), "the session goes on");
+            assert_eq!(get(tx.clone(), 1, 0, 0), Ok(7), "the session goes on");
+            // Nothing of the refused set is held: the next subscribe lets go of no set, so the
+            // ledger counts no unregistration for addresses that were never registered.
+            let released = counters.read().unregist_frames;
+            let (third, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx, vec![(1, 0, 0)], third).unwrap();
+            assert_eq!(counters.read().unregist_frames, released);
         }
 
         #[test]
@@ -1896,6 +1900,15 @@ mod imp {
             let err = start(list, "URX44").1.err().unwrap();
             assert!(
                 err.starts_with("multiple-devices: 2 online (URX22, URX44V), 0 of them URX44"),
+                "{err}"
+            );
+            let c = Unit::start("<device-id-c>", plain);
+            let err = start(device_list(&[(&b, "URX44V"), (&c, "URX44V")]), "URX44V")
+                .1
+                .err()
+                .unwrap();
+            assert!(
+                err.starts_with("multiple-devices: 2 online (URX44V, URX44V), 2 of them URX44V"),
                 "{err}"
             );
             assert_eq!(
