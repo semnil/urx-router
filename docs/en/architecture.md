@@ -2421,7 +2421,9 @@ start of fetch / write / live sync when it differs, letting the user continue or
 **three-valued** `Option<String>`, and the three values do not collapse: a version arms or disarms the warning
 by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
 `None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
-instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
+instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)). A device-lost push that arrives while the handshake waits for
+`/vd/device` fails the connect as `device-lost`: Device Center answers that read from its cache once the unit
+is unplugged.
 
 **One transport, served to concurrent clients.** Device Center advertises a **per-session port** for each
 listed unit on `:51770` (`/vddp_srv/devices`), and the link (`Link` in `vd.rs`) is a plain socket to that port

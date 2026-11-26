@@ -1406,16 +1406,19 @@ mod imp {
         // Read the System firmware version so the frontend can warn when the
         // attached unit's firmware differs from the validated one. A failed read
         // yields None, which the frontend treats as a reason to stop rather than
-        // as a reason to skip the check.
-        Ok(system_firmware(link))
+        // as a reason to skip the check; the unit lost during the read fails the
+        // handshake.
+        system_firmware(link)
     }
 
     /// Send a GET for `uri` and return the matched response's `vdp.data`.
     /// Shared by the handshake-time reads (synchronize, device); drains non-matching
-    /// frames until the address echoes back or the 3s deadline lapses. The parameter
-    /// read path (do_get_value) keeps its own loop — it also screens for a mid-read
-    /// device-lost push, which these handshake reads run before a session exists.
-    fn vd_get_data(link: &mut Link, uri: &str) -> Result<Value, String> {
+    /// frames until the address echoes back or the 3s deadline lapses. With
+    /// `watch_lost`, a device-lost push met while waiting fails the read with it: the
+    /// `/vd/device` read follows the unit's `online`, and Device Center answers it from
+    /// its cache once the unit is unplugged. The parameter read path (do_get_value)
+    /// keeps its own loop, since it also absorbs a session's notifies.
+    fn vd_get_data(link: &mut Link, uri: &str, watch_lost: bool) -> Result<Value, String> {
         let base = uri.split('?').next().unwrap_or(uri).to_string();
         // Sent and awaited under one spelling, as in do_get_value.
         let verb = "get";
@@ -1425,12 +1428,17 @@ mod imp {
             let Some(msg) = link.read_frame()? else {
                 continue;
             };
+            if watch_lost {
+                if let Some(err) = synchronize_lost(&msg) {
+                    return Err(err);
+                }
+            }
             // This loop is separate from reply_for's: it runs before a session
-            // exists, so there is nothing to absorb into and it does not screen for
-            // a device-lost push. The verb is matched for the same reason reply_for
-            // matches it — a notify echoes the address it is about, and taking one
-            // as the answer here would decide the handshake off another client's
-            // traffic (a `/vd/synchronize` push is the shape that reaches this one).
+            // exists, so there is nothing to absorb into. The verb is matched for
+            // the same reason reply_for matches it — a notify echoes the address it
+            // is about, and taking one as the answer here would decide the handshake
+            // off another client's traffic (a `/vd/synchronize` push is the shape
+            // that reaches this one).
             let Some(vdp) = vdp_of(&msg) else { continue };
             if vdp.get("method").and_then(Value::as_str) != Some(verb) {
                 continue;
@@ -1452,7 +1460,7 @@ mod imp {
     /// unit is unplugged but reports a non-"online" status here, so this is what
     /// separates a present device from a stale list entry.
     fn sync_status(link: &mut Link) -> Result<String, String> {
-        vd_get_data(link, "/vd/synchronize")?
+        vd_get_data(link, "/vd/synchronize", false)?
             .pointer("/sync_status")
             .and_then(Value::as_str)
             .map(str::to_string)
@@ -1464,9 +1472,18 @@ mod imp {
     /// disables the frontend's mismatch warning. `None` means the read itself did
     /// not land — an unanswered /vd/device or a response without a firm_list — so
     /// the version is unknown rather than absent, and the frontend refuses to touch
-    /// the device instead of proceeding with the gate silently disabled.
-    fn system_firmware(link: &mut Link) -> Option<String> {
-        let data = vd_get_data(link, "/vd/device").ok()?;
+    /// the device instead of proceeding with the gate silently disabled. A device-lost
+    /// push during the read is the handshake's error.
+    fn system_firmware(link: &mut Link) -> Result<Option<String>, String> {
+        match vd_get_data(link, "/vd/device", true) {
+            Ok(data) => Ok(firmware_of(&data)),
+            Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => Err(e),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// The System version in a /vd/device answer.
+    fn firmware_of(data: &Value) -> Option<String> {
         let list = data.pointer("/firm_list").and_then(Value::as_array)?;
         // The System entry, matched by name (case-insensitive). A missing or renamed
         // entry leaves the version empty (warning disabled) rather than mistaking
@@ -1813,21 +1830,26 @@ mod imp {
     }
 
     /// Detect a device-lost push: Device Center spontaneously sends a
-    /// `/vd/synchronize` frame with `sync_status` flipping to "offline"/"lost" the
+    /// `/vd/synchronize` notify with `sync_status` flipping to "offline"/"lost" the
     /// moment the URX is physically unplugged. It arrives on `/vd/synchronize`, not
     /// `/vd/parameters`, so the notify forwarders miss it; the broker also keeps
     /// ACKing writes (response_code 200) with no unit attached, so a write error
     /// cannot reveal the drop. Returns the ready-to-use error message when seen, so
     /// each read loop just `return Err(..)`s on it.
-    /// Not used by handshake / sync_status, which read `/vd/synchronize` on purpose.
+    /// Only a notify with a non-empty status counts: a reply to a read of the status,
+    /// and a notify whose status is empty, say nothing about the unit going away.
+    /// Not used by sync_status, which reads `/vd/synchronize` on purpose.
     fn synchronize_lost(msg: &Value) -> Option<String> {
         let vdp = vdp_of(msg)?;
+        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
+            return None;
+        }
         let uri = vdp.get("uri").and_then(Value::as_str)?;
         if uri.split('?').next().unwrap_or(uri) != "/vd/synchronize" {
             return None;
         }
         let status = vdp.pointer("/data/sync_status").and_then(Value::as_str)?;
-        if status == "online" {
+        if status.is_empty() || status == "online" {
             return None;
         }
         Some(format!("{DEVICE_LOST_PREFIX}: sync_status {status}"))
@@ -2832,8 +2854,9 @@ mod imp {
         // timing.
         use super::super::{watch_link, Cmd, LinkCounters};
         use super::{
-            arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, pump, serve,
-            LineReader, Link, Subs, DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, handshake,
+            pump, serve, synchronize_lost, LineReader, Link, Subs, DEVICE_LOST_PREFIX,
+            READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
@@ -3057,6 +3080,114 @@ mod imp {
                 "the 3 s deadline held while bytes kept arriving: {took:?} ({err})"
             );
             assert!(err.starts_with("broker-no-vdpport:"), "{err}");
+        }
+
+        fn status_reply(status: &str) -> Value {
+            json!({
+                "method": "get",
+                "uri": "/vd/synchronize",
+                "data": { "sync_status": status }
+            })
+        }
+
+        fn device_reply(firm_list: Value) -> Value {
+            json!({
+                "method": "get",
+                "uri": "/vd/device",
+                "data": { "firm_list": firm_list }
+            })
+        }
+
+        fn system(version: &str) -> Value {
+            json!([{ "firm_name": "System", "firm_version": version }])
+        }
+
+        /// The handshake against a unit that answers with `frames`, in order.
+        fn handshake_with(frames: Vec<Value>) -> Result<Option<String>, String> {
+            let (mut link, mut peer) = vdp_link();
+            for frame in frames {
+                send(&mut peer, frame);
+            }
+            handshake(&mut link)
+        }
+
+        // Device Center keeps answering `/vd/device` from its cache once the unit is
+        // unplugged, so a unit lost between its `online` and its firmware reply has to
+        // fail the handshake on the push, or the session starts against a unit that is gone.
+        #[test]
+        fn a_unit_lost_during_the_firmware_read_fails_the_handshake() {
+            let err = handshake_with(vec![
+                status_reply("online"),
+                synchronize("lost"),
+                device_reply(system("1.5.0")),
+            ])
+            .unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // …while an `online` push there, a push before the status reply, a status reply
+        // that is not a notify and a notify with no status leave the handshake to the
+        // replies it waits for.
+        #[test]
+        fn only_a_lost_status_notify_during_the_firmware_read_fails_the_handshake() {
+            for (label, frames) in [
+                (
+                    "online push",
+                    vec![
+                        status_reply("online"),
+                        synchronize("online"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "push before the status reply",
+                    vec![
+                        synchronize("lost"),
+                        status_reply("online"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "a reply, not a notify",
+                    vec![
+                        status_reply("online"),
+                        status_reply("lost"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "an empty status",
+                    vec![
+                        status_reply("online"),
+                        synchronize(""),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+            ] {
+                assert_eq!(
+                    handshake_with(frames),
+                    Ok(Some("1.5.0".to_string())),
+                    "{label}"
+                );
+            }
+        }
+
+        // The device-lost push is a `/vd/synchronize` notify whose status is there and is
+        // not `online`. A reply to a read of the status and a notify with an empty status
+        // say nothing about the unit going away.
+        #[test]
+        fn only_a_status_notify_counts_as_the_unit_lost() {
+            let frame = |vdp: Value| json!({ "vdp": vdp });
+            assert!(synchronize_lost(&frame(synchronize("lost"))).is_some());
+            assert!(synchronize_lost(&frame(synchronize("offline"))).is_some());
+            assert!(synchronize_lost(&frame(synchronize("online"))).is_none());
+            assert!(synchronize_lost(&frame(synchronize(""))).is_none());
+            assert!(synchronize_lost(&frame(status_reply("lost"))).is_none());
+            assert!(synchronize_lost(&frame(json!({
+                "uri": "/vd/synchronize",
+                "data": { "sync_status": "lost" }
+            })))
+            .is_none());
         }
 
         /// A line from the broker that is not JSON.
