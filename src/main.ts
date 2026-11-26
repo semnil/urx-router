@@ -1261,15 +1261,21 @@ function rereadTrackCount(mark: number, rate: number): void {
   // a SENDS choice never does.
   trackCountRereads = trackCountRereads
     .then(async () => {
-      // The undo's own flush is armed behind a debounce, so the session is waited out until it
-      // has nothing armed or running, not only past the flush running now.
-      while (live?.isWriting()) {
-        await live.idle();
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      // Until the session has written and the unit announced the rate the plan holds: a rate
+      // chosen while this waited is the one the count now follows, so the wait starts again for
+      // it, from a mark taken then.
+      for (let target = { mark, rate }; ; target = { mark: writeSettle.mark(), rate: plan.sampleRate }) {
+        // The entry's own flush is armed behind a debounce, so the session is waited out until it
+        // has nothing armed or running, not only past the flush running now.
+        while (live?.isWriting()) {
+          await live.idle();
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        if (!liveSessionUp) return;
+        await writeSettle.announcement(addrKey(PARAMS.SAMPLE_RATE.id, 0, 0), target.mark, target.rate);
+        if (!liveSessionUp) return;
+        if (!live?.isWriting() && plan.sampleRate === target.rate) break;
       }
-      if (!liveSessionUp) return;
-      await writeSettle.announcement(addrKey(PARAMS.SAMPLE_RATE.id, 0, 0), mark, rate);
-      if (!liveSessionUp) return;
       const merged = await followRead("track count after an undo moved the rate", (into, signal) =>
         applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
       );

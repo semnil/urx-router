@@ -17,6 +17,7 @@ import type { Plan } from "./core/plan";
 import { CURRENT_FIELDS, buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import type { Field } from "./core/control/urxf.test-util";
 import { formatRate, trackCountCeiling } from "./core/constraints";
+import { SETTLE_TIMEOUT_MS } from "./core/control/settle";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import {
@@ -745,13 +746,23 @@ describe("importing a settings file", () => {
     // lowers its count, 110 ms after the ack, announcing both then. The count is read once the
     // unit has announced the rate, so the plan takes the 8 it lands on, not the 16 a read
     // straight after the ack would still be answered.
+    //
+    // And a rate chosen while the read waits for an announcement is the one the count then
+    // follows: with that rate's write held, nothing reads the count, and once the unit has
+    // re-clocked to it the plan holds the 2 tracks it left.
     it.each([
-      ["undoing a rate the session had not sent", false],
-      ["redoing it once the unit has announced the rate", true],
-    ])("reads the unit's Track Count after %s", SLOW, async (_, redoes) => {
+      ["undoing a rate the session had not sent", "undo"],
+      ["redoing it once the unit has announced the rate", "redo"],
+      ["choosing another rate while the read waits", "next"],
+    ] as const)("reads the unit's Track Count after %s", SLOW, async (_, then) => {
+      const redoes = then !== "undo";
       let release = (): void => {};
       const held = new Promise<void>((resolve) => (release = resolve));
       let holding = false;
+      let releaseNext = (): void => {};
+      const heldNext = new Promise<void>((resolve) => (releaseNext = resolve));
+      // Where the invokes stood when the next rate's write reached the unit and was held.
+      let nextHeldAt = -1;
       let shell!: TauriShell;
       // Where the invokes stood when the unit announced the rate it re-clocked to.
       let announcedAt = -1;
@@ -778,7 +789,14 @@ describe("importing a settings file", () => {
         false,
         undefined,
         redoes ? reclocksLate : unitLowersTrackCount,
-        (a) => (holding && a.paramId === OSC ? held : undefined),
+        (a) => {
+          if (holding && a.paramId === OSC) return held;
+          if (then === "next" && a.paramId === RATE && a.value === 192_000) {
+            nextHeldAt = shell.invokes.length;
+            return heldNext;
+          }
+          return undefined;
+        },
       );
       try {
         holding = true;
@@ -799,6 +817,22 @@ describe("importing a settings file", () => {
         await vi.waitFor(() => expect(written(shell, PARAMS.CUE_MONO.id, cueFrom)).toEqual([1]), { timeout: 15_000 });
         const released = shell.invokes.length;
         release();
+        if (then === "next") {
+          // Once the held flush has ended, the read waits for an announcement the 48 kHz never
+          // makes, and the next rate is chosen inside that wait.
+          await synced();
+          chooseRate(192_000);
+          await vi.waitFor(() => expect(nextHeldAt).toBeGreaterThan(-1), { timeout: 15_000 });
+          // An absence over the whole of that wait's bound, and past it.
+          await new Promise((resolve) => setTimeout(resolve, SETTLE_TIMEOUT_MS + 100));
+          expect(countReads(shell, nextHeldAt), "a read while the next rate's write is held").toBe(0);
+          releaseNext();
+          await vi.waitFor(() => expect(announcedAt).toBeGreaterThan(-1), { timeout: 15_000 });
+          await vi.waitFor(async () => expect(await savedRecorder(shell)).toEqual({ tracks: 2, rate: 192_000 }), {
+            timeout: 15_000,
+          });
+          return;
+        }
         await vi.waitFor(() => expect(countReads(shell, released)).toBeGreaterThan(0), { timeout: 15_000 });
         // The count is read on its own once the session's writes settle, not by the full
         // reconcile follow runs after the link has been quiet a while, which reads it as well.
@@ -830,6 +864,7 @@ describe("importing a settings file", () => {
         }
       } finally {
         release(); // a case that fails part-way does not leave the next one a held write
+        releaseNext();
       }
     });
 
