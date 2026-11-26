@@ -641,8 +641,8 @@ mod imp {
 
     use tauri::ipc::Channel;
     use urx_device_transport::connection::{
-        open_with, Connection, ConnectionOptions, LinkFailure, LinkLoss, NotificationHandler,
-        Subscription,
+        open_with, CloseOutcome, Connection, ConnectionOptions, LinkFailure, LinkLoss,
+        NotificationHandler, Subscription,
     };
     use urx_device_transport::delivery::NotificationBatch;
     use urx_device_transport::discovery::{discover, DiscoveryOptions, SystemFirmware};
@@ -1051,8 +1051,9 @@ mod imp {
         /// that arrives while the registrations are in flight is judged by the NEW set and
         /// goes out on the NEW channel, and what the old token received before the switch
         /// still goes out on the old one (`Route`). Registration runs one address at a
-        /// time with each verdict checked (K9); the reply carries the first failure. A
-        /// refused subscribe leaves nothing subscribed on its channel: the transport releases a token whose
+        /// time with each verdict checked (K9); the reply carries the first failure, of
+        /// the registrations or of the old token's release. A refused subscribe leaves
+        /// nothing subscribed on its channel: the transport releases a token whose
         /// activation failed, unregistering what it had registered, and the previous token
         /// is released as on success, so neither set is left installed.
         fn subscribe(
@@ -1096,7 +1097,7 @@ mod imp {
             });
             let activated = match rx.recv() {
                 Ok(Ok(())) => Ok(()),
-                Ok(Err(failure)) => Err(self.lifecycle_failure_text(&failure)),
+                Ok(Err(failure)) => Err(self.lifecycle_failed(&failure)),
                 Err(_) => Err(CONTROL_WORKER_GONE.to_string()),
             };
             let others = self.others(which);
@@ -1104,22 +1105,26 @@ mod imp {
                 subscription: new,
                 addresses: wanted.clone(),
             });
+            let mut released = Ok(());
             if let Some(old) = replaced {
                 let kept: HashSet<SubscriptionAddress> = others.union(&wanted).copied().collect();
                 LinkCounters::add(
                     &self.counters.unregist_frames,
                     old.addresses.difference(&kept).count(),
                 );
-                release(&old.subscription);
+                released = self.release(&old.subscription);
             }
             if activated.is_err() {
                 if let Some(failed) = self.slot(which).take() {
-                    release(&failed.subscription);
+                    // The activation's own failure is what the reply carries.
+                    let _ = self.release(&failed.subscription);
                 }
             }
-            activated
+            activated.and(released)
         }
 
+        /// Takes a subscription away. A release that fails ends the connection, and the
+        /// link watch reports that end; the call itself has no reply to carry it.
         fn unsubscribe(&mut self, which: Which, clear: impl FnOnce(&mut Routes)) {
             clear(&mut self.routes.lock().unwrap_or_else(|p| p.into_inner()));
             let others = self.others(which);
@@ -1128,8 +1133,42 @@ mod imp {
                     &self.counters.unregist_frames,
                     old.addresses.difference(&others).count(),
                 );
-                release(&old.subscription);
+                let _ = self.release(&old.subscription);
             }
+        }
+
+        /// Releases a token and waits for the outcome: what it was the last holder of is
+        /// unregistered, and a failure ends the connection (K10).
+        fn release(&self, subscription: &Subscription) -> Result<(), String> {
+            let (tx, rx) = mpsc::channel();
+            subscription.release(move |outcome| {
+                let _ = tx.send(outcome);
+            });
+            match rx.recv() {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(failure)) => Err(self.lifecycle_failed(&failure)),
+                Err(_) => Err(CONTROL_WORKER_GONE.to_string()),
+            }
+        }
+
+        /// A registration's or an unregistration's failure, the ledger's deadline row
+        /// kept: a response deadline that ran out there ended the connection (N1) as one
+        /// in a parameter command does.
+        fn lifecycle_failed(&self, failure: &LifecycleFailure) -> String {
+            let deadline = |failure: &Failure| {
+                matches!(
+                    failure,
+                    Failure::Cause {
+                        code: Cause::ResponseTimeout,
+                        ..
+                    }
+                )
+            };
+            if deadline(&failure.failure) || failure.cleanup.failure.as_ref().is_some_and(deadline)
+            {
+                self.counters.note_deadline();
+            }
+            self.lifecycle_failure_text(failure)
         }
 
         fn slot(&mut self, which: Which) -> &mut Option<Held> {
@@ -1153,15 +1192,6 @@ mod imp {
         Meters,
         Params,
         Probe,
-    }
-
-    /// Releases a token and waits for its unregistrations to settle.
-    fn release(subscription: &Subscription) {
-        let (tx, rx) = mpsc::channel();
-        subscription.release(move |_| {
-            let _ = tx.send(());
-        });
-        let _ = rx.recv();
     }
 
     /// Discovery picks the unit: the one online unit, or among several the one of the
@@ -1426,7 +1456,12 @@ mod imp {
         let teardown = exit_done.as_ref().map_or(CLOSE_TEARDOWN, |(_, by)| {
             by.saturating_duration_since(Instant::now())
         });
-        session.connection.close(teardown);
+        match session.connection.close(teardown) {
+            CloseOutcome::Closed | CloseOutcome::Started => {}
+            // The socket is closed, or shut down, either way: what the close could not
+            // finish is told here, since nothing after this reads the session.
+            unfinished => eprintln!("vd: the session's close did not finish: {unfinished:?}"),
+        }
         // Sent LAST, so the app-exit path is released by the close having happened and
         // not merely by the intent to close.
         if let Some((done, _)) = exit_done.take() {
@@ -2023,6 +2058,50 @@ mod imp {
                     .starts_with(DEVICE_LOST_PREFIX),
                 "a request the end met is told by the end"
             );
+        }
+
+        // A replacement is a success only once the old set is let go as well: a release
+        // that fails ends the connection, and the reply says so instead of Ok.
+        #[test]
+        fn a_replacement_whose_old_set_is_not_released_fails() {
+            let (tx, _unit, _) = connected(|request| {
+                if request["vdp"]["uri"] == "/vd/parameters/1:0:0?operation=unregist" {
+                    return vec![post_reply("/vd/parameters/1:0:0", "unregist", 400)];
+                }
+                plain(request)
+            });
+            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
+            assert!(params_subscribe(tx.clone(), vec![(2, 0, 0)], second).is_err());
+            assert!(
+                get(tx, 1, 0, 0).is_err(),
+                "the failed release ended the session"
+            );
+        }
+
+        // A response deadline that runs out in a registration or in the old set's release
+        // ends the connection as one in a get does, and the ledger's deadline rows say so.
+        #[test]
+        fn a_registration_or_a_release_past_its_deadline_is_on_the_ledger() {
+            for late in [
+                "/vd/parameters/1:0:0?operation=regist",
+                "/vd/parameters/1:0:0?operation=unregist",
+            ] {
+                let (tx, _unit, counters) = connected(move |request| {
+                    if request["vdp"]["uri"] == late {
+                        thread::sleep(LATE);
+                    }
+                    plain(request)
+                });
+                let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+                let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+                let replaced = params_subscribe(tx.clone(), vec![(1, 0, 0)], first)
+                    .and_then(|()| params_subscribe(tx.clone(), vec![(2, 0, 0)], second));
+                assert!(replaced.is_err(), "{late}");
+                let stats = counters.read();
+                assert_eq!((stats.deadlines, stats.stalled), (1, 1), "{late}");
+            }
         }
 
         #[test]
