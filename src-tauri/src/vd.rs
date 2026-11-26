@@ -2288,7 +2288,8 @@ mod imp {
             let (params, params_seen) = capture();
             let (meters, meters_seen) = capture();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
-            meters_subscribe(tx, vec![(115, 0)], meters).unwrap();
+            // A clone: the last sender gone ends the worker, and the session with it.
+            meters_subscribe(tx.clone(), vec![(115, 0)], meters).unwrap();
             for (uri, value) in [
                 ("/vd/parameters/1:0:0:7", 9),
                 ("/vd/meters/115:0:1", -100),
