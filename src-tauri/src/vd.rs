@@ -994,6 +994,7 @@ mod imp {
         // still has queued until its EOF, so the socket is not dropped mid-stream.
         link.begin_close();
         let mut frames = 0;
+        let mut progress = Instant::now();
         while frames < CLOSE_FRAMES {
             // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
             // peer has nothing queued, so its EOF is not coming and there is nothing
@@ -1008,10 +1009,14 @@ mod imp {
             // right direction for it. Said out loud so the next change to READ_TIMEOUT
             // knows it is moving this too.
             match link.read_frame() {
-                Ok(Some(_)) => frames += 1,
-                // A line still arriving is read on to its end; only a whole line counts
-                // against the budget, and a read timeout ends the drain mid-line too.
-                Ok(None) if link.still_arriving() => {}
+                Ok(Some(_)) => {
+                    frames += 1;
+                    progress = Instant::now();
+                }
+                // A line still arriving is read on, for one READ_TIMEOUT past the last
+                // whole line at most; only a whole line counts against the budget, and a
+                // read timeout ends the drain mid-line too.
+                Ok(None) if link.still_arriving() && progress.elapsed() < READ_TIMEOUT => {}
                 _ => break, // a closed / dead socket, or nothing more to read
             }
         }
@@ -3123,6 +3128,37 @@ mod imp {
                     "split {split}: the straggler was drained"
                 );
             }
+        }
+
+        // A peer that keeps sending pieces of a line it never ends: the close drain reads
+        // on for one READ_TIMEOUT past the last whole line and then lets the shutdown go.
+        #[test]
+        fn the_close_drain_ends_while_a_line_never_ends() {
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            let trickle = std::thread::spawn(move || {
+                let until = Instant::now() + Duration::from_secs(5);
+                peer.write_all(b"{\"vdp\":").unwrap();
+                while Instant::now() < until && peer.write_all(b" ").is_ok() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            std::thread::sleep(Duration::from_millis(100));
+            let (done, closed) = mpsc::channel();
+            let started = Instant::now();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the session closes");
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_millis(500),
+                "the close drain held the shutdown: {took:?}"
+            );
+            worker.join().unwrap();
+            drop(trickle);
         }
 
         // Half a line and then silence at close: the close drain ends at the read that
