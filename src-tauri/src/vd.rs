@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
@@ -267,8 +267,10 @@ pub enum Cmd {
     /// Unregister everything this session registered, close the socket, and exit.
     /// `done` is signalled once that has actually happened — only the app-exit path
     /// passes one, because it is the only caller whose process may not outlive the
-    /// worker. Everywhere else the worker keeps running and finishes on its own.
-    Shutdown { done: Option<Sender<()>> },
+    /// worker. Everywhere else the worker keeps running and finishes on its own. It
+    /// comes with the instant that caller stops waiting, which the close drain ends
+    /// ahead of, so the signal is in time.
+    Shutdown { done: Option<(Sender<()>, Instant)> },
 }
 
 /// The installed connection: the channel to the live worker (if any) and the
@@ -597,11 +599,15 @@ pub fn shutdown_blocking(state: &VdState) {
     // step added there reaches app quit too — which is the one teardown with no second
     // chance to run it.
     let (done, wait) = mpsc::channel();
-    let sent = stop(&mut state.conn.lock().unwrap(), Some(done));
+    let by = Instant::now() + EXIT_TEARDOWN_WAIT;
+    let sent = stop(&mut state.conn.lock().unwrap(), Some((done, by)));
     if !sent {
         return; // nothing installed, or the worker is already gone
     }
-    if wait.recv_timeout(EXIT_TEARDOWN_WAIT).is_err() {
+    if wait
+        .recv_timeout(by.saturating_duration_since(Instant::now()))
+        .is_err()
+    {
         eprintln!("vd: the broker session did not close within the exit teardown window");
     }
 }
@@ -610,7 +616,7 @@ pub fn shutdown_blocking(state: &VdState) {
 /// channel to signal once it has. The one spelling of a teardown, so a step added to it
 /// (dropping a channel eagerly, bumping the epoch) cannot reach one caller and miss
 /// another. Returns whether a live worker was actually told. Caller holds the lock.
-fn stop(c: &mut Conn, done: Option<Sender<()>>) -> bool {
+fn stop(c: &mut Conn, done: Option<(Sender<()>, Instant)>) -> bool {
     c.owner = None;
     let Some(tx) = c.tx.take() else { return false };
     tx.send(Cmd::Shutdown { done }).is_ok()
@@ -801,7 +807,7 @@ mod imp {
         let mut health = Health::new(Arc::clone(&counters));
         // Set by the app-exit teardown, which waits for it: the socket has to be
         // unregistered and closed before the process goes away, not merely told to be.
-        let mut exit_done: Option<Sender<()>> = None;
+        let mut exit_done: Option<(Sender<()>, Instant)> = None;
         loop {
             // While a subscription is streaming, poll for commands briefly so the
             // bounded pump runs back-to-back and keeps up with the ~250/s feed; when
@@ -993,7 +999,13 @@ mod imp {
         // The shutdown ends this side's half; the drain below reads what the broker
         // still has queued until its EOF, so the socket is not dropped mid-stream.
         link.begin_close();
-        for _ in 0..CLOSE_FRAMES {
+        // The app-exit teardown's caller stops waiting at its instant, so the drain ends
+        // one READ_TIMEOUT ahead of it, however the frames arrive: whole lines no longer
+        // than that apart would otherwise keep it reading to CLOSE_FRAMES.
+        let close_by = exit_done.as_ref().map(|(_, by)| *by - READ_TIMEOUT);
+        let mut frames = 0;
+        let mut progress = Instant::now();
+        while frames < CLOSE_FRAMES && close_by.is_none_or(|by| Instant::now() < by) {
             // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
             // peer has nothing queued, so its EOF is not coming and there is nothing
             // left to drain. Counting those against the budget would spend 64 × that on
@@ -1006,14 +1018,25 @@ mod imp {
             // straggler too early, this one must not hold Quit, and shorter is the
             // right direction for it. Said out loud so the next change to READ_TIMEOUT
             // knows it is moving this too.
-            match link.read_frame() {
-                Ok(Some(_)) => {}
+            let read = match close_by {
+                Some(by) => link.read_frame_before(by),
+                None => link.read_frame(),
+            };
+            match read {
+                Ok(Some(_)) => {
+                    frames += 1;
+                    progress = Instant::now();
+                }
+                // A line still arriving is read on, for one READ_TIMEOUT past the last
+                // whole line at most; only a whole line counts against the budget, and a
+                // read timeout ends the drain mid-line too.
+                Ok(None) if link.still_arriving() && progress.elapsed() < READ_TIMEOUT => {}
                 _ => break, // a closed / dead socket, or nothing more to read
             }
         }
         // Sent LAST, so the app-exit path is released by the close having happened and
         // not merely by the intent to close.
-        if let Some(done) = exit_done.take() {
+        if let Some((done, _)) = exit_done.take() {
             let _ = done.send(());
         }
     }
@@ -1101,23 +1124,41 @@ mod imp {
     /// The `:51770` lookup that names this session's `vdp` ports, one per listed
     /// device. Its own short-lived connection: it speaks a different envelope (`vddp`)
     /// and a different uri space (`/vddp_srv*`) from everything else here.
-    fn discover_vdp_targets() -> Result<Vec<(u16, String)>, String> {
-        let mut sock = TcpStream::connect(("127.0.0.1", VDDP_SRV_PORT))
+    fn discover_vdp_targets(port: u16) -> Result<Vec<(u16, String)>, String> {
+        let mut sock = TcpStream::connect(("127.0.0.1", port))
             .map_err(|e| format!("broker-unreachable: {e}"))?;
         arm_socket(&sock, DISCOVERY_TIMEOUT)?;
-        let req = json!({ "vddp": { "method": "get", "uri": "/vddp_srv/devices" } });
+        let req = json!({ "vddp": { "method": "get", "uri": DEVICE_LIST } });
         sock.write_all(format!("{req}\n").as_bytes())
             .map_err(|e| format!("broker-io: {e}"))?;
 
         let mut reader = LineReader::new();
         let deadline = Instant::now() + DISCOVERY_TIMEOUT;
-        while Instant::now() < deadline {
+        loop {
+            // Each read blocks for no longer than what is left, so the wait ends at the
+            // deadline whatever arrives before it.
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            arm_socket(&sock, left)?;
             let Some(msg) = reader.read_json(&mut sock)? else {
                 continue;
             };
-            let Some(data) = msg.get("vddp").and_then(|v| v.get("data")) else {
+            // Only the `get` reply for the list is the list; it answers at once, with
+            // or without the data it should carry.
+            let Some(vddp) = msg.get("vddp") else {
                 continue;
             };
+            let uri = vddp.get("uri").and_then(Value::as_str).unwrap_or("");
+            if vddp.get("method").and_then(Value::as_str) != Some("get")
+                || uri.split('?').next() != Some(DEVICE_LIST)
+            {
+                continue;
+            }
+            let data = vddp
+                .get("data")
+                .ok_or_else(|| format!("broker-bad-response: no data for {DEVICE_LIST}"))?;
             return vdp_targets(data);
         }
         Err("broker-no-vdpport: the device list did not answer".into())
@@ -1186,8 +1227,8 @@ mod imp {
         Ok(sync_status(link)? == "online")
     }
 
-    /// How long discovery waits for the device list, and how long its socket blocks
-    /// for one read — the same number, so the loop makes one read and then the
+    /// How long discovery waits for the device list. Each read on its socket blocks for
+    /// what is left of it at most, so on a silent link the loop makes one read and the
     /// deadline ends it rather than spinning.
     const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -1213,6 +1254,8 @@ mod imp {
     struct LineReader {
         pending: Vec<u8>,
         chunk: Vec<u8>,
+        /// The last call read bytes and completed no line with them.
+        arrived: bool,
     }
 
     impl LineReader {
@@ -1220,61 +1263,77 @@ mod imp {
             LineReader {
                 pending: Vec::new(),
                 chunk: vec![0u8; 8192],
+                arrived: false,
             }
         }
 
-        /// One message, or None on read timeout or on a line that is not parseable
-        /// JSON — callers treat both as "nothing yet" and loop. Parsed in place out
-        /// of `pending`, so a frame is not copied into a `String` on its way to a
-        /// parser that would immediately take it apart again.
+        /// One message, or None on read timeout, on a line that is not parseable JSON,
+        /// or when the one read this call makes leaves the line unfinished — callers
+        /// treat all three as "nothing yet" and loop. A call reads the socket at most
+        /// once, so a caller's deadline is checked after every read, even while a line
+        /// keeps arriving in pieces. Parsed in place out of `pending`, so a frame is not
+        /// copied into a `String` on its way to a parser that would immediately take it
+        /// apart again.
         ///
         /// Generic over the source rather than taking the `TcpStream` both callers
         /// pass, so the chunk-boundary rejoin and the `MAX_PENDING` refusal can be
         /// driven from a byte source a test owns. Neither of those is reachable
         /// through a socket without a peer that misbehaves on cue.
         fn read_json<R: Read>(&mut self, sock: &mut R) -> Result<Option<Value>, String> {
-            loop {
-                if let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
-                    let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
-                    self.pending.drain(..=nl);
-                    return Ok(parsed);
-                }
-                match sock.read(&mut self.chunk) {
-                    Ok(0) => return Err("broker-closed".into()),
-                    // Disjoint field borrows: reading into `chunk` and appending to
-                    // `pending` in one statement is fine, and a temporary between
-                    // them would put back the copy this reader exists to avoid.
-                    Ok(n) => {
-                        self.pending.extend_from_slice(&self.chunk[..n]);
-                        // A peer that never sends a newline would otherwise grow this
-                        // buffer at socket speed for the life of the session — a silent
-                        // memory climb rather than an error anyone can act on. The bound
-                        // is far above any real frame (the largest this protocol carries
-                        // is a device list of a few KiB), so reaching it means the peer
-                        // is not speaking this protocol.
-                        if self.pending.len() > MAX_PENDING {
-                            return Err(format!(
-                                "broker-bad-response: {} bytes with no line break",
-                                self.pending.len()
-                            ));
-                        }
-                    }
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                        ) =>
-                    {
-                        return Ok(None)
-                    }
-                    Err(e) => return Err(format!("broker-io: {e}")),
-                }
+            self.arrived = false;
+            if let Some(line) = self.take_line() {
+                return Ok(line);
             }
+            match sock.read(&mut self.chunk) {
+                Ok(0) => return Err("broker-closed".into()),
+                // Disjoint field borrows: reading into `chunk` and appending to
+                // `pending` in one statement is fine, and a temporary between
+                // them would put back the copy this reader exists to avoid.
+                Ok(n) => {
+                    self.pending.extend_from_slice(&self.chunk[..n]);
+                    // A peer that never sends a newline would otherwise grow this
+                    // buffer at socket speed for the life of the session — a silent
+                    // memory climb rather than an error anyone can act on. The bound
+                    // is far above any real frame (the largest this protocol carries
+                    // is a device list of a few KiB), so reaching it means the peer
+                    // is not speaking this protocol.
+                    if self.pending.len() > MAX_PENDING {
+                        return Err(format!(
+                            "broker-bad-response: {} bytes with no line break",
+                            self.pending.len()
+                        ));
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(None)
+                }
+                Err(e) => return Err(format!("broker-io: {e}")),
+            }
+            let line = self.take_line();
+            self.arrived = line.is_none();
+            Ok(line.flatten())
+        }
+
+        /// The first complete line in `pending`, removed from it and parsed (`Some(None)`
+        /// for a line that is not JSON), or `None` while no line is complete.
+        fn take_line(&mut self) -> Option<Option<Value>> {
+            let nl = self.pending.iter().position(|&b| b == b'\n')?;
+            let parsed = serde_json::from_slice::<Value>(&self.pending[..nl]).ok();
+            self.pending.drain(..=nl);
+            Some(parsed)
         }
     }
 
     /// Device Center's device-list port. Fixed, unlike the `vdp` port it hands out.
     const VDDP_SRV_PORT: u16 = 51770;
+
+    /// The device list's uri on that port.
+    const DEVICE_LIST: &str = "/vddp_srv/devices";
 
     impl Link {
         /// Open the link to the device `choose_online` picks (`preferred` is the model
@@ -1287,7 +1346,7 @@ mod imp {
         /// it could be the online unit, and leaving it out could pick another one.
         fn open(preferred: &str) -> Result<(Link, DeviceSummary), String> {
             let mut online = Vec::new();
-            for (port, model) in discover_vdp_targets()? {
+            for (port, model) in discover_vdp_targets(VDDP_SRV_PORT)? {
                 let sock = TcpStream::connect(("127.0.0.1", port))
                     .map_err(|e| format!("broker-unreachable: vdp port {port}: {e}"))?;
                 arm_socket(&sock, READ_TIMEOUT)?;
@@ -1326,10 +1385,34 @@ mod imp {
             let _ = self.sock.shutdown(std::net::Shutdown::Write);
         }
 
-        /// One inbound message, or None on read timeout or on a line that is not
-        /// parseable JSON — callers treat both as "nothing yet" and loop.
+        /// One inbound message, or None on read timeout, on a line that is not
+        /// parseable JSON, or while a line is still arriving — callers treat all three
+        /// as "nothing yet" and loop. One socket read at most (see read_json).
         fn read_frame(&mut self) -> Result<Option<Value>, String> {
             self.reader.read_json(&mut self.sock)
+        }
+
+        /// One inbound message as read_frame gives it, from a read that blocks no later
+        /// than `deadline`: the last read of a wait is armed with what is left of it, as
+        /// each device-list read is, so the wait ends at its deadline.
+        fn read_frame_before(&mut self, deadline: Instant) -> Result<Option<Value>, String> {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left >= READ_TIMEOUT {
+                return self.read_frame();
+            }
+            if left.is_zero() {
+                return Ok(None);
+            }
+            arm_socket(&self.sock, left)?;
+            let read = self.read_frame();
+            arm_socket(&self.sock, READ_TIMEOUT)?;
+            read
+        }
+
+        /// Whether the last read_frame read part of a line and not its end, as against
+        /// a read that timed out.
+        fn still_arriving(&self) -> bool {
+            self.reader.arrived
         }
     }
 
@@ -1355,8 +1438,8 @@ mod imp {
     /// from ~5/s to ~18/s (one cycle is this timeout plus the 5 ms recv).
     ///
     /// It bounds no command's patience: every reply loop carries its own 3 s wall-clock
-    /// deadline and treats a read timeout as "keep waiting" (`do_set`, `do_get_value`,
-    /// `do_get_str`). `drain_late_reply` is the one reader that used this as its own
+    /// deadline, treats a read timeout as "keep waiting" and takes no frame completed
+    /// after the deadline (`do_set`, `do_get_value`, `vd_get_data`). `drain_late_reply` is the one reader that used this as its own
     /// give-up point, and it now carries an explicit floor instead — see there.
     const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
@@ -1375,31 +1458,43 @@ mod imp {
         // Read the System firmware version so the frontend can warn when the
         // attached unit's firmware differs from the validated one. A failed read
         // yields None, which the frontend treats as a reason to stop rather than
-        // as a reason to skip the check.
-        Ok(system_firmware(link))
+        // as a reason to skip the check; the unit lost during the read fails the
+        // handshake.
+        system_firmware(link)
     }
 
     /// Send a GET for `uri` and return the matched response's `vdp.data`.
     /// Shared by the handshake-time reads (synchronize, device); drains non-matching
-    /// frames until the address echoes back or the 3s deadline lapses. The parameter
-    /// read path (do_get_value) keeps its own loop — it also screens for a mid-read
-    /// device-lost push, which these handshake reads run before a session exists.
-    fn vd_get_data(link: &mut Link, uri: &str) -> Result<Value, String> {
+    /// frames until the address echoes back or the 3s deadline lapses. With
+    /// `watch_lost`, a device-lost push met while waiting fails the read with it: the
+    /// `/vd/device` read follows the unit's `online`, and Device Center answers it from
+    /// its cache once the unit is unplugged. The parameter read path (do_get_value)
+    /// keeps its own loop, since it also absorbs a session's notifies.
+    fn vd_get_data(link: &mut Link, uri: &str, watch_lost: bool) -> Result<Value, String> {
         let base = uri.split('?').next().unwrap_or(uri).to_string();
         // Sent and awaited under one spelling, as in do_get_value.
         let verb = "get";
         link.send_vdp(json!({ "method": verb, "uri": uri }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
+            if watch_lost {
+                if let Some(err) = synchronize_lost(&msg) {
+                    return Err(err);
+                }
+            }
+            // A frame completed after the deadline is not the answer, as in do_set.
+            if Instant::now() >= deadline {
+                break;
+            }
             // This loop is separate from reply_for's: it runs before a session
-            // exists, so there is nothing to absorb into and it does not screen for
-            // a device-lost push. The verb is matched for the same reason reply_for
-            // matches it — a notify echoes the address it is about, and taking one
-            // as the answer here would decide the handshake off another client's
-            // traffic (a `/vd/synchronize` push is the shape that reaches this one).
+            // exists, so there is nothing to absorb into. The verb is matched for
+            // the same reason reply_for matches it — a notify echoes the address it
+            // is about, and taking one as the answer here would decide the handshake
+            // off another client's traffic (a `/vd/synchronize` push is the shape
+            // that reaches this one).
             let Some(vdp) = vdp_of(&msg) else { continue };
             if vdp.get("method").and_then(Value::as_str) != Some(verb) {
                 continue;
@@ -1421,7 +1516,7 @@ mod imp {
     /// unit is unplugged but reports a non-"online" status here, so this is what
     /// separates a present device from a stale list entry.
     fn sync_status(link: &mut Link) -> Result<String, String> {
-        vd_get_data(link, "/vd/synchronize")?
+        vd_get_data(link, "/vd/synchronize", false)?
             .pointer("/sync_status")
             .and_then(Value::as_str)
             .map(str::to_string)
@@ -1429,34 +1524,47 @@ mod imp {
     }
 
     /// The unit's System firmware version, from /vd/device's firm_list. `Some("")`
-    /// means the unit answered but reports no System version, which legitimately
-    /// disables the frontend's mismatch warning. `None` means the read itself did
-    /// not land — an unanswered /vd/device or a response without a firm_list — so
-    /// the version is unknown rather than absent, and the frontend refuses to touch
-    /// the device instead of proceeding with the gate silently disabled.
-    fn system_firmware(link: &mut Link) -> Option<String> {
-        let data = vd_get_data(link, "/vd/device").ok()?;
+    /// means the unit answered with a list read in full that holds no System version,
+    /// which legitimately disables the frontend's mismatch warning. `None` means the
+    /// version could not be read — an unanswered /vd/device, a response without a
+    /// firm_list, or a list the version cannot be taken from — so it is unknown rather
+    /// than absent, and the frontend refuses to touch the device instead of proceeding
+    /// with the gate silently disabled. A device-lost push during the read is the
+    /// handshake's error.
+    fn system_firmware(link: &mut Link) -> Result<Option<String>, String> {
+        match vd_get_data(link, "/vd/device", true) {
+            Ok(data) => Ok(firmware_of(&data)),
+            Err(e) if e.starts_with(DEVICE_LOST_PREFIX) => Err(e),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// The System version in a /vd/device answer, its entries matched by name without
+    /// case, or None when it cannot be read: no firm_list array, an entry without a
+    /// non-empty string firm_name (it could be the System entry), a System entry
+    /// without a non-empty string firm_version, or System entries that disagree. Entry order
+    /// does not change the result, and no System entry is `Some("")`.
+    fn firmware_of(data: &Value) -> Option<String> {
         let list = data.pointer("/firm_list").and_then(Value::as_array)?;
-        // The System entry, matched by name (case-insensitive). A missing or renamed
-        // entry leaves the version empty (warning disabled) rather than mistaking
-        // another component's version for System.
+        let mut version: Option<&str> = None;
         for entry in list {
-            if entry
+            let name = entry
                 .get("firm_name")
                 .and_then(Value::as_str)
-                .unwrap_or("")
-                .eq_ignore_ascii_case("system")
-            {
-                return Some(
-                    entry
-                        .get("firm_version")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                );
+                .filter(|name| !name.is_empty())?;
+            if !name.eq_ignore_ascii_case("system") {
+                continue;
             }
+            let this = entry
+                .get("firm_version")
+                .and_then(Value::as_str)
+                .filter(|version| !version.is_empty())?;
+            if version.is_some_and(|seen| seen != this) {
+                return None;
+            }
+            version = Some(this);
         }
-        Some(String::new())
+        Some(version.unwrap_or("").to_string())
     }
 
     /// What a write's reply says about the write.
@@ -1487,18 +1595,27 @@ mod imp {
         y: i64,
         value: Value,
     ) -> Result<(), String> {
-        let uri = format!("/vd/parameters/{param_id}:{x}:{y}?operation=value");
+        let operation = "value";
         let base = format!("/vd/parameters/{param_id}:{x}:{y}");
+        let uri = format!("{base}?operation={operation}");
         // One spelling for what is sent and for what will be accepted as its reply,
         // so the two cannot drift into a command that can never be answered.
         let verb = "post";
         link.send_vdp(json!({ "method": verb, "uri": uri, "data": { "current_value": value } }))?;
         // Await the matching response, skipping unrelated notifications.
         let deadline = Instant::now() + Duration::from_secs(3);
+        let mut late = None;
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
+            // A frame completed after the deadline is not the answer, even the reply
+            // itself: a read that began in time can still return after it, and the late
+            // drain is the reader for what comes after the deadline.
+            if Instant::now() >= deadline {
+                late = Some(msg);
+                break;
+            }
             // A device-lost push can land mid-write (the broker still ACKs the
             // write itself); fail the command so the session tears down.
             if let Some(err) = synchronize_lost(&msg) {
@@ -1506,13 +1623,15 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb, Some(operation)) else {
                 continue;
             };
             return write_verdict(&vdp, param_id, x, y);
         }
-        Err(drain_late_reply(link, subs, &base, verb)
-            .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")))
+        Err(
+            drain_late_reply(link, subs, late, &base, verb, Some(operation))
+                .unwrap_or_else(|| format!("broker-timeout: write at {param_id}:{x}:{y}")),
+        )
     }
 
     /// A command that timed out may still have its reply in flight. The vd protocol
@@ -1520,16 +1639,22 @@ mod imp {
     /// from the reply to the *next* command on that same address — it would satisfy
     /// it with a stale value. Drain what is already buffered (bounded, and only
     /// after a timeout, so the healthy path pays nothing) and drop any reply for the
-    /// address that just gave up. Notifies stay batched via subs, as everywhere else.
+    /// command that just gave up — its verb, its address and, for a POST, its
+    /// operation. Notifies stay batched via subs, as everywhere else.
     ///
     /// A device-lost push met here ends the drain and comes back as the command's
     /// error, in place of its deadline: this reader consumes frames like the reply
     /// loops do, and the push arrives once.
+    ///
+    /// `late` is the frame the command's wait read past its deadline, if any; the
+    /// drain takes it as its first.
     fn drain_late_reply(
         link: &mut Link,
         subs: &mut Subs,
+        late: Option<Value>,
         base: &str,
         method: &str,
+        operation: Option<&str>,
     ) -> Option<String> {
         // TWO bounds, because they answer different questions and neither covers the
         // other. FRAMES caps the busy case: under Live sync the broker streams meters
@@ -1542,20 +1667,33 @@ mod imp {
         // queue behind it), which would have quartered how long a straggler has to show
         // up — silently, since nothing here tests that. The floor keeps this reader's
         // patience where it was and stops it moving with a constant it does not own.
-        let deadline = Instant::now() + DRAIN_QUIET;
-        for _ in 0..DRAIN_FRAMES {
-            match link.read_frame() {
+        //
+        // Only a whole line counts against FRAMES, so a stream read in pieces is given the
+        // same frames as one read whole, and the floor runs from the last whole line (or
+        // the start): silence and pieces of a line alike end the drain once no line has
+        // completed for that long, so where a line is split does not move the end.
+        let mut progress = Instant::now();
+        let mut frames = 0;
+        let mut late = late;
+        while frames < DRAIN_FRAMES {
+            let read = match late.take() {
+                Some(msg) => Ok(Some(msg)),
+                None => link.read_frame(),
+            };
+            match read {
                 Ok(Some(msg)) => {
+                    frames += 1;
+                    progress = Instant::now();
                     if let Some(err) = synchronize_lost(&msg) {
                         return Some(err);
                     }
-                    if reply_for(subs, &msg, base, method).is_some() {
+                    if reply_for(subs, &msg, base, method, operation).is_some() {
                         return None; // the straggler is consumed; the socket is clean again
                     }
                 }
-                // A read timeout is silence, not the end: keep waiting until the floor.
+                // Silence, or a line still arriving: neither is the end before the floor.
                 Ok(None) => {
-                    if Instant::now() >= deadline {
+                    if progress.elapsed() >= DRAIN_QUIET {
                         return None;
                     }
                 }
@@ -1568,12 +1706,16 @@ mod imp {
     /// Frames drain_late_reply will look through for a straggler before giving up.
     const DRAIN_FRAMES: usize = 64;
 
-    /// How long drain_late_reply keeps waiting on a link that is saying nothing. Held
+    /// How long drain_late_reply keeps waiting with no whole line arriving. Held
     /// separately from READ_TIMEOUT so shortening that one cannot quietly shorten this.
     const DRAIN_QUIET: Duration = Duration::from_millis(200);
 
     /// The reply body for `method` at `base`, or None when the message was a notify,
-    /// a reply to a different verb, or a reply for another address. Shared by the two
+    /// a reply to a different verb, a reply for another address, or a POST reply whose
+    /// single `operation` is not `operation` (none, an unknown one and a repeated one
+    /// included). A write, a registration and an unregistration are all POSTs on one
+    /// address, and `reg_param` / `reg_meter` do not wait for their replies, so only the
+    /// operation tells a write's verdict from a registration's. Shared by the two
     /// await loops and the late drain so the matching cannot drift — the exact-address
     /// compare is what stops another instance's reply (e.g. y=12) satisfying a y=1
     /// request through a prefix match.
@@ -1592,6 +1734,7 @@ mod imp {
         msg: &'a Value,
         base: &str,
         method: &str,
+        operation: Option<&str>,
     ) -> Option<&'a Value> {
         if subs.absorb(msg) {
             return None;
@@ -1601,7 +1744,25 @@ mod imp {
             return None;
         }
         let uri = vdp.get("uri").and_then(Value::as_str).unwrap_or("");
-        (uri.split('?').next().unwrap_or(uri) == base).then_some(vdp)
+        if uri.split('?').next().unwrap_or(uri) != base {
+            return None;
+        }
+        if operation.is_some() && operation_of(uri) != operation {
+            return None;
+        }
+        Some(vdp)
+    }
+
+    /// The value of the single `operation` query parameter in `uri`, or None when the
+    /// query has none or more than one.
+    fn operation_of(uri: &str) -> Option<&str> {
+        let (_, query) = uri.split_once('?')?;
+        let mut values = query.split('&').filter_map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (name == "operation").then_some(value)
+        });
+        let value = values.next()?;
+        values.next().is_none().then_some(value)
     }
 
     // Read a parameter instance's raw current_value (numeric or string). do_get /
@@ -1619,10 +1780,16 @@ mod imp {
         let verb = "get";
         link.send_vdp(json!({ "method": verb, "uri": base }))?;
         let deadline = Instant::now() + Duration::from_secs(3);
+        let mut late = None;
         while Instant::now() < deadline {
-            let Some(msg) = link.read_frame()? else {
+            let Some(msg) = link.read_frame_before(deadline)? else {
                 continue;
             };
+            // A frame completed after the deadline is not the answer (see do_set).
+            if Instant::now() >= deadline {
+                late = Some(msg);
+                break;
+            }
             // A device-lost push can land mid-read; fail the command so the caller
             // (readback / converge / live) surfaces the drop instead of timing out.
             if let Some(err) = synchronize_lost(&msg) {
@@ -1630,14 +1797,14 @@ mod imp {
             }
             // Subscribed notifies landing mid-command are batched, not discarded
             // (see Subs).
-            let Some(vdp) = reply_for(subs, &msg, &base, verb) else {
+            let Some(vdp) = reply_for(subs, &msg, &base, verb, None) else {
                 continue;
             };
             return vdp.pointer("/data/current_value").cloned().ok_or_else(|| {
                 format!("broker-bad-response: no current_value at {param_id}:{x}:{y}")
             });
         }
-        Err(drain_late_reply(link, subs, &base, verb)
+        Err(drain_late_reply(link, subs, late, &base, verb, None)
             .unwrap_or_else(|| format!("broker-timeout: value at {param_id}:{x}:{y}")))
     }
 
@@ -1704,6 +1871,10 @@ mod imp {
         let mut parts = addr.split(':');
         let (id, xs) = (parts.next()?, parts.next()?);
         let (meter_id, x) = (id.parse::<u32>().ok()?, xs.parse::<i64>().ok()?);
+        // Two coordinates exactly: one with more is another address, not this one.
+        if parts.next().is_some() {
+            return None;
+        }
         // Drop the frame rather than substituting a value, like parse_param does:
         // 0 here is not "no reading", it is 0.0 dBFS, so a malformed frame would
         // slam the bar to full scale and read as clipping that never happened.
@@ -1730,6 +1901,10 @@ mod imp {
             xs.parse::<i64>().ok()?,
             ys.parse::<i64>().ok()?,
         );
+        // Three coordinates exactly, as for a meter's two.
+        if parts.next().is_some() {
+            return None;
+        }
         // Integer first — that is every notify but the name ones, and it must stay
         // the cheap path. A frame carrying neither is still dropped, as before.
         let raw = vdp.pointer("/data/current_value")?;
@@ -1747,21 +1922,26 @@ mod imp {
     }
 
     /// Detect a device-lost push: Device Center spontaneously sends a
-    /// `/vd/synchronize` frame with `sync_status` flipping to "offline"/"lost" the
+    /// `/vd/synchronize` notify with `sync_status` flipping to "offline"/"lost" the
     /// moment the URX is physically unplugged. It arrives on `/vd/synchronize`, not
     /// `/vd/parameters`, so the notify forwarders miss it; the broker also keeps
     /// ACKing writes (response_code 200) with no unit attached, so a write error
     /// cannot reveal the drop. Returns the ready-to-use error message when seen, so
     /// each read loop just `return Err(..)`s on it.
-    /// Not used by handshake / sync_status, which read `/vd/synchronize` on purpose.
+    /// Only a notify with a non-empty status counts: a reply to a read of the status,
+    /// and a notify whose status is empty, say nothing about the unit going away.
+    /// Not used by sync_status, which reads `/vd/synchronize` on purpose.
     fn synchronize_lost(msg: &Value) -> Option<String> {
         let vdp = vdp_of(msg)?;
+        if vdp.get("method").and_then(Value::as_str) != Some("notify") {
+            return None;
+        }
         let uri = vdp.get("uri").and_then(Value::as_str)?;
         if uri.split('?').next().unwrap_or(uri) != "/vd/synchronize" {
             return None;
         }
         let status = vdp.pointer("/data/sync_status").and_then(Value::as_str)?;
-        if status == "online" {
+        if status.is_empty() || status == "online" {
             return None;
         }
         Some(format!("{DEVICE_LOST_PREFIX}: sync_status {status}"))
@@ -1888,7 +2068,8 @@ mod imp {
             // re-parsing per consumer).
             //
             // `None` ends this pump. It means the socket is drained (its 50 ms
-            // read timeout) — but it also covers a line that is not JSON, which is
+            // read timeout), or that the one read left a line unfinished, whose rest
+            // the next pump reads — but it also covers a line that is not JSON, which is
             // dropped rather than failed on: on the idle link it is noise rather than
             // a failed operation (architecture.md "Aborting on failure", exception 3).
             // It carries no notify, and the worker re-enters pump on its next 5 ms
@@ -1988,7 +2169,10 @@ mod imp {
         // batch must flush on the pump cadence. Plus reply_for, which is where a
         // frame absorb declined lands — the two together decide whether a notify
         // can be mistaken for the answer to a command.
-        use super::{reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET, READ_TIMEOUT};
+        use super::{
+            parse_meter, parse_param, reply_for, write_verdict, Subs, DRAIN_QUIET, PUMP_BUDGET,
+            READ_TIMEOUT,
+        };
         use serde_json::{json, Value};
         use std::sync::{Arc, Mutex};
         use std::time::Instant;
@@ -2273,7 +2457,7 @@ mod imp {
             let verdict = |data: Value| {
                 let mut subs = Subs::new();
                 let msg = reply("post", &format!("{base}?operation=value"), data);
-                let vdp = reply_for(&mut subs, &msg, base, "post")
+                let vdp = reply_for(&mut subs, &msg, base, "post", Some("value"))
                     .expect("the reply the write is waiting for");
                 write_verdict(vdp, 142, 0, 0)
             };
@@ -2316,8 +2500,8 @@ mod imp {
             let push = notify(base.into(), 1);
 
             assert!(!subs.absorb(&push), "nothing subscribed to absorb it");
-            assert!(reply_for(&mut subs, &push, base, "get").is_none());
-            assert!(reply_for(&mut subs, &push, base, "post").is_none());
+            assert!(reply_for(&mut subs, &push, base, "get", None).is_none());
+            assert!(reply_for(&mut subs, &push, base, "post", Some("value")).is_none());
 
             // The replies those two commands are actually waiting for still match,
             // query string and all — the broker echoes it back on a write.
@@ -2325,7 +2509,8 @@ mod imp {
                 &mut subs,
                 &reply("get", base, json!({ "current_value": 1 })),
                 base,
-                "get"
+                "get",
+                None
             )
             .is_some());
             assert!(reply_for(
@@ -2336,7 +2521,8 @@ mod imp {
                     json!({ "response_code": 200 })
                 ),
                 base,
-                "post"
+                "post",
+                Some("value")
             )
             .is_some());
         }
@@ -2352,8 +2538,95 @@ mod imp {
             let ack = reply("post", base, json!({ "response_code": 200 }));
             let value = reply("get", base, json!({ "current_value": 1 }));
 
-            assert!(reply_for(&mut subs, &ack, base, "get").is_none());
-            assert!(reply_for(&mut subs, &value, base, "post").is_none());
+            assert!(reply_for(&mut subs, &ack, base, "get", None).is_none());
+            assert!(reply_for(&mut subs, &value, base, "post", Some("value")).is_none());
+        }
+
+        /// A write, a registration and an unregistration are all POSTs, and a
+        /// registration's reply arrives while the next command runs (`reg_param` and
+        /// `reg_meter` do not wait for it), so on one address the verb does not tell
+        /// them apart: the reply's `operation` does. A POST reply answers only the
+        /// request whose single `operation` it carries; one with none, an unknown one
+        /// or a repeated one answers no POST. A GET reply still matches whatever its
+        /// query holds.
+        #[test]
+        fn reply_for_takes_a_post_reply_only_for_its_own_single_operation() {
+            let posts = [
+                ("/vd/parameters/142:0:1", "value"),
+                ("/vd/parameters/142:0:1", "regist"),
+                ("/vd/parameters/142:0:1", "unregist"),
+                ("/vd/meters/7:-1", "regist"),
+                ("/vd/meters/7:-1", "unregist"),
+            ];
+            let queries = [
+                "?operation=value",
+                "?operation=regist",
+                "?operation=unregist",
+                "",
+                "?",
+                "?operation",
+                "?operation=",
+                "?operation=foo",
+                "?operation=Value",
+                "?x=1&operation=value",
+                "?operation=value&operation=value",
+                "?operation=regist&operation=value",
+            ];
+            for (base, operation) in posts {
+                for query in queries {
+                    let mut subs = Subs::new();
+                    let msg = reply(
+                        "post",
+                        &format!("{base}{query}"),
+                        json!({ "response_code": 200 }),
+                    );
+                    let own = query == format!("?operation={operation}")
+                        || (operation == "value" && query == "?x=1&operation=value");
+                    assert_eq!(
+                        reply_for(&mut subs, &msg, base, "post", Some(operation)).is_some(),
+                        own,
+                        "{base} {operation} answered by {query:?}"
+                    );
+                }
+            }
+            for query in ["", "?x=1", "?operation=value"] {
+                let base = "/vd/parameters/142:0:1";
+                let msg = reply(
+                    "get",
+                    &format!("{base}{query}"),
+                    json!({ "current_value": 1 }),
+                );
+                assert!(
+                    reply_for(&mut Subs::new(), &msg, base, "get", None).is_some(),
+                    "a get reply with {query:?}"
+                );
+            }
+        }
+
+        /// A notify names the address it is about with exactly the coordinates of its
+        /// kind: three for a parameter, two for a meter. One with more is not read as
+        /// the shorter address, which would forward another address's value as this one's.
+        #[test]
+        fn a_notify_with_more_coordinates_than_its_kind_is_not_an_update() {
+            for uri in [
+                "/vd/parameters/142:0:1:9",
+                "/vd/parameters/142:0:1:",
+                "/vd/parameters/142:0:1:x",
+            ] {
+                assert!(parse_param(&notify(uri.into(), 1)).is_none(), "{uri}");
+            }
+            for uri in ["/vd/meters/7:-1:0", "/vd/meters/7:-1:", "/vd/meters/7:-1:x"] {
+                assert!(parse_meter(&notify(uri.into(), 1)).is_none(), "{uri}");
+            }
+            let param = parse_param(&notify("/vd/parameters/142:0:1?x=1".into(), 4))
+                .expect("three coordinates are a parameter address");
+            assert_eq!(
+                (param.param_id, param.x, param.y, param.value),
+                (142, 0, 1, 4)
+            );
+            let meter = parse_meter(&notify("/vd/meters/7:-1".into(), -60))
+                .expect("two coordinates are a meter address");
+            assert_eq!((meter.meter_id, meter.x, meter.value), (7, -1, -60));
         }
     }
 
@@ -2406,10 +2679,30 @@ mod imp {
             let mut reader = LineReader::new();
             let mut sock = Chunks::of(&["{\"vddp\":{\"seq\"", ":7}}\n"]);
 
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "half a line");
             assert_eq!(
                 reader.read_json(&mut sock).unwrap(),
                 Some(json!({ "vddp": { "seq": 7 } }))
             );
+        }
+
+        // Every caller checks its own deadline between calls, so a call reads at most
+        // once: a line that keeps arriving in pieces hands control back after each piece
+        // instead of holding the caller until the line ends or reaches the cap.
+        #[test]
+        fn a_line_still_arriving_hands_control_back_after_each_read() {
+            let mut reader = LineReader::new();
+            let mut sock = Chunks::of(&["{\"a\"", ":1", "}\n{\"b\":2}\n"]);
+
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None);
+            assert_eq!(reader.read_json(&mut sock).unwrap(), Some(json!({"a": 1})));
+            assert_eq!(
+                reader.read_json(&mut sock).unwrap(),
+                Some(json!({"b": 2})),
+                "buffered, no read"
+            );
+            assert_eq!(reader.read_json(&mut sock).unwrap(), None, "then quiet");
         }
 
         // …and the same buffer is what lets two messages arrive in one read. The second
@@ -2457,9 +2750,14 @@ mod imp {
             }
 
             let mut reader = LineReader::new();
-            let err = reader
-                .read_json(&mut Noise(0))
-                .expect_err("an unterminated stream must end as an error, not as memory");
+            let mut noise = Noise(0);
+            let err = loop {
+                match reader.read_json(&mut noise) {
+                    Ok(None) => continue,
+                    Ok(Some(msg)) => panic!("no line was ever terminated, yet read {msg}"),
+                    Err(e) => break e,
+                }
+            };
 
             assert!(
                 err.starts_with("broker-bad-response:"),
@@ -2481,7 +2779,10 @@ mod imp {
             let mut reader = LineReader::new();
             let mut sock = Chunks::of(&["{\"note\":\"", &big, "\"}\n"]);
 
-            let msg = reader.read_json(&mut sock).unwrap().expect("one frame");
+            // One call per read, as the reply loops make them: the frame spans several.
+            let msg = (0..64)
+                .find_map(|_| reader.read_json(&mut sock).unwrap())
+                .expect("one frame");
             assert_eq!(msg["note"].as_str().map(str::len), Some(big.len()));
         }
 
@@ -2643,23 +2944,28 @@ mod imp {
         // before the pump first reads, and a case that waits on the worker waits for
         // what the worker sends back, under a bound, so no case depends on a peer's
         // timing.
-        use super::super::{watch_link, Cmd, LinkCounters};
+        use super::super::{watch_link, Cmd, LinkCounters, EXIT_TEARDOWN_WAIT};
         use super::{
-            arm_socket, do_get_value, drain_late_reply, pump, serve, LineReader, Link, Subs,
-            DEVICE_LOST_PREFIX, READ_TIMEOUT,
+            arm_socket, discover_vdp_targets, do_get_value, do_set, drain_late_reply, handshake,
+            pump, serve, synchronize_lost, LineReader, Link, Subs, DEVICE_LOST_PREFIX,
+            READ_TIMEOUT,
         };
         use serde_json::{json, Value};
         use std::io::Write;
+        use std::io::{BufRead, BufReader, Read};
         use std::net::{TcpListener, TcpStream};
         use std::sync::{mpsc, Arc};
         use std::time::{Duration, Instant};
         use tauri::ipc::{Channel, InvokeResponseBody};
 
-        /// A link, and the broker's end of it.
+        /// A link, and the broker's end of it. Nagle is off on the broker's end as well, so
+        /// a case's small writes reach the link when it writes them, not when the previous
+        /// one's (possibly delayed) acknowledgement comes back.
         fn vdp_link() -> (Link, TcpStream) {
             let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
             let sock = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
             let (peer, _) = listener.accept().unwrap();
+            peer.set_nodelay(true).unwrap();
             arm_socket(&sock, READ_TIMEOUT).unwrap();
             (
                 Link {
@@ -2696,9 +3002,46 @@ mod imp {
             let (mut link, mut peer) = vdp_link();
             send(&mut peer, synchronize("offline"));
 
-            let err = drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get")
+            let err = drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None)
                 .expect("the push is what the drain reports");
             assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // The frame a wait read past its deadline is the drain's first: a device-lost push
+        // there is the command's error, and a straggler there is consumed, leaving the
+        // next read on the address its own.
+        #[test]
+        fn the_late_drain_takes_the_frame_its_wait_read_late_first() {
+            let (mut link, mut peer) = vdp_link();
+            let late = |vdp: Value| Some(json!({ "vdp": vdp }));
+            let err = drain_late_reply(
+                &mut link,
+                &mut Subs::new(),
+                late(synchronize("lost")),
+                ADDR,
+                "get",
+                None,
+            )
+            .expect("the push is what the drain reports");
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+
+            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
+            assert_eq!(
+                drain_late_reply(
+                    &mut link,
+                    &mut Subs::new(),
+                    late(reply(3)),
+                    ADDR,
+                    "get",
+                    None
+                ),
+                None
+            );
+            send(&mut peer, reply(7));
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(7))
+            );
         }
 
         // …while a straggler, an `online` status and silence leave the command's own
@@ -2712,13 +3055,838 @@ mod imp {
                 json!({ "method": "get", "uri": ADDR, "data": { "current_value": 3 } }),
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                 None
             );
             assert_eq!(
-                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get"),
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
                 None,
                 "a quiet link ends the drain at its floor"
+            );
+        }
+
+        // A write, a registration and an unregistration are all POSTs on the address, and
+        // a registration's reply can still be in flight when the next write starts. Only
+        // the reply carrying the write's own operation is its verdict: the refusal here,
+        // behind two acknowledgements of registrations.
+        #[test]
+        fn a_write_takes_its_verdict_only_from_its_own_operations_reply() {
+            let (mut link, mut peer) = vdp_link();
+            for (operation, code) in [("regist", 200), ("unregist", 200), ("value", 400)] {
+                send(
+                    &mut peer,
+                    json!({
+                        "method": "post",
+                        "uri": format!("{ADDR}?operation={operation}"),
+                        "data": { "response_code": code }
+                    }),
+                );
+            }
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
+        /// The broker's end, on its own thread: each of `before` answers one request at
+        /// once, and `reply` answers the request after them across that request's 3 s
+        /// deadline — the first half of its line 20 ms before the deadline, the rest 20 ms
+        /// after, so the one read that finishes the line begins in time and ends late.
+        fn across_the_deadline(
+            peer: TcpStream,
+            before: Vec<Value>,
+            reply: Value,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            std::thread::spawn(move || {
+                let mut peer = peer;
+                let mut requests = BufReader::new(peer.try_clone().unwrap());
+                let mut request = String::new();
+                for frame in before {
+                    requests.read_line(&mut request).unwrap();
+                    send(&mut peer, frame);
+                }
+                requests.read_line(&mut request).unwrap();
+                let asked = Instant::now();
+                let line = format!("{}\n", json!({ "vdp": reply }));
+                let (head, tail) = line.split_at(line.len() / 2);
+                std::thread::sleep(Duration::from_millis(2_980).saturating_sub(asked.elapsed()));
+                peer.write_all(head.as_bytes()).unwrap();
+                std::thread::sleep(Duration::from_millis(3_020).saturating_sub(asked.elapsed()));
+                peer.write_all(tail.as_bytes()).unwrap();
+                peer
+            })
+        }
+
+        // A reply whose line is finished after the read's deadline is not its answer,
+        // though the read that finished it began in time: the read fails at its deadline,
+        // and the late drain takes the reply, so the next read on the address gets its own.
+        #[test]
+        fn a_read_takes_no_reply_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let reply = |value: i64| json!({ "method": "get", "uri": ADDR, "data": { "current_value": value } });
+            let peer = across_the_deadline(peer, vec![], reply(3));
+            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            let mut peer = peer.join().unwrap();
+            send(&mut peer, reply(7));
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(7))
+            );
+        }
+
+        // The frame the wait read past its deadline goes to the late drain, not away: the
+        // unit lost, pushed across a read's deadline, is still the read's error.
+        #[test]
+        fn a_unit_lost_across_a_reads_deadline_is_its_error() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![], synchronize("lost"));
+            let err = do_get_value(&mut link, &mut Subs::new(), 1, 0, 0).unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+            drop(peer.join());
+        }
+
+        /// The broker's end, on its own thread: each of `before` answers one request at
+        /// once, and the request after them is met with notifies for another address every
+        /// 10 ms from 2.90 s to 2.99 s after it, then silence — so a read begins just
+        /// before the request's 3 s deadline with nothing left to arrive.
+        fn chatter_up_to_the_deadline(
+            peer: TcpStream,
+            before: Vec<Value>,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            std::thread::spawn(move || {
+                let mut peer = peer;
+                let mut requests = BufReader::new(peer.try_clone().unwrap());
+                let mut request = String::new();
+                for frame in before {
+                    requests.read_line(&mut request).unwrap();
+                    send(&mut peer, frame);
+                }
+                requests.read_line(&mut request).unwrap();
+                let asked = Instant::now();
+                for at in (2_900..=2_990).step_by(10) {
+                    std::thread::sleep(Duration::from_millis(at).saturating_sub(asked.elapsed()));
+                    send(
+                        &mut peer,
+                        json!({ "method": "notify", "uri": "/vd/parameters/2:0:0", "data": {} }),
+                    );
+                }
+                peer
+            })
+        }
+
+        // A wait ends at its deadline, not one read's timeout past it: the last read is
+        // armed with what is left. The handshake's status read ends within 30 ms of its
+        // deadline. Not on Windows, whose timer ticks about every 15.6 ms: an armed read
+        // there ended 31 ms past the deadline on CI, which leaves no room between the two
+        // outcomes; the read itself is held there by the case below.
+        #[test]
+        #[cfg(not(windows))]
+        fn a_wait_ends_at_its_deadline_with_nothing_left_to_arrive() {
+            let (mut link, peer) = vdp_link();
+            let peer = chatter_up_to_the_deadline(peer, vec![]);
+            let started = Instant::now();
+            let err = handshake(&mut link).unwrap_err();
+            let took = started.elapsed();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            assert!(
+                took < Duration::from_millis(3_030),
+                "the handshake read took {took:?}"
+            );
+            assert_eq!(
+                link.sock.read_timeout().unwrap(),
+                Some(READ_TIMEOUT),
+                "the socket is armed for the pump again"
+            );
+            drop(peer.join());
+        }
+
+        // The read every wait makes: on a silent link it blocks for what is left of its
+        // deadline when that is under READ_TIMEOUT, for READ_TIMEOUT otherwise, and not at
+        // all once the deadline has passed — and it leaves the socket at READ_TIMEOUT.
+        #[test]
+        fn a_read_before_a_deadline_blocks_no_longer_than_what_is_left() {
+            let (mut link, _peer) = vdp_link();
+            // A read left at READ_TIMEOUT blocks that long at least; one armed with a
+            // millisecond returns under it even on a timer as coarse as Windows' (~31 ms).
+            for (left, under) in [
+                (Duration::ZERO, Duration::from_millis(5)),
+                (
+                    Duration::from_millis(1),
+                    READ_TIMEOUT - Duration::from_millis(5),
+                ),
+            ] {
+                let started = Instant::now();
+                assert_eq!(link.read_frame_before(started + left), Ok(None));
+                let took = started.elapsed();
+                assert!(took < under, "{left:?} left: blocked {took:?}");
+                assert_eq!(link.sock.read_timeout().unwrap(), Some(READ_TIMEOUT));
+            }
+            let started = Instant::now();
+            assert_eq!(
+                link.read_frame_before(started + Duration::from_secs(1)),
+                Ok(None)
+            );
+            assert!(
+                started.elapsed() >= READ_TIMEOUT - Duration::from_millis(5),
+                "a deadline further off than READ_TIMEOUT blocks for READ_TIMEOUT"
+            );
+        }
+
+        // …and a write's: an acknowledgement finished after the deadline is not its
+        // verdict, and the next write on the address takes its own (a refusal here).
+        #[test]
+        fn a_write_takes_no_verdict_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let reply = |code: i64| {
+                json!({
+                    "method": "post",
+                    "uri": format!("{ADDR}?operation=value"),
+                    "data": { "response_code": code }
+                })
+            };
+            let peer = across_the_deadline(peer, vec![], reply(200));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            let mut peer = peer.join().unwrap();
+            send(&mut peer, reply(400));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
+        // The late drain consumes the straggler of the write that gave up, and only that
+        // one: a registration's reply is not it, and taking it for one would leave the
+        // straggler on the socket for the next write on the address to take as its own.
+        #[test]
+        fn the_late_drain_takes_only_the_straggler_of_its_own_operation() {
+            let (mut link, mut peer) = vdp_link();
+            let post = |operation: &str, code: i64| {
+                json!({
+                    "method": "post",
+                    "uri": format!("{ADDR}?operation={operation}"),
+                    "data": { "response_code": code }
+                })
+            };
+            send(&mut peer, post("regist", 200));
+            send(&mut peer, post("value", 200));
+            assert_eq!(
+                drain_late_reply(
+                    &mut link,
+                    &mut Subs::new(),
+                    None,
+                    ADDR,
+                    "post",
+                    Some("value")
+                ),
+                None
+            );
+            send(&mut peer, post("value", 400));
+            let err = do_set(&mut link, &mut Subs::new(), 1, 0, 0, json!(5)).unwrap_err();
+            assert!(err.starts_with("broker-rejected:"), "{err}");
+        }
+
+        // The drains read on past `None` while a line is still arriving, and treat `None`
+        // from a read that timed out as silence even with half a line pending:
+        // `still_arriving` is what tells the two apart.
+        #[test]
+        fn a_line_still_arriving_is_told_from_a_read_that_timed_out() {
+            let (mut link, mut peer) = vdp_link();
+            assert!(!link.still_arriving());
+            peer.write_all(b"{\"vdp\":").unwrap();
+            assert_eq!(link.read_frame(), Ok(None));
+            assert!(link.still_arriving(), "half a line has arrived");
+            assert_eq!(link.read_frame(), Ok(None), "then the link falls quiet");
+            assert!(
+                !link.still_arriving(),
+                "a timeout, though half a line is pending"
+            );
+            peer.write_all(b"{}}\n").unwrap();
+            assert_eq!(link.read_frame(), Ok(Some(json!({ "vdp": {} }))));
+            assert!(!link.still_arriving());
+        }
+
+        /// Sends each of `lines` in two writes, a pause after each, so the reader on the
+        /// other end meets every line in two reads. Returns once the first write is out, so
+        /// the reader that starts next does not wait out its quiet floor on a writer that
+        /// has not started yet.
+        fn send_split(
+            mut peer: TcpStream,
+            lines: Vec<Value>,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            let (started, wait) = mpsc::channel();
+            let writer = std::thread::spawn(move || {
+                for line in lines {
+                    let text = format!("{}\n", json!({ "vdp": line }));
+                    let (head, tail) = text.split_at(text.len() / 2);
+                    for part in [head, tail] {
+                        peer.write_all(part.as_bytes()).unwrap();
+                        let _ = started.send(());
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                peer
+            });
+            wait.recv().unwrap();
+            writer
+        }
+
+        // The late drain's frame budget counts whole lines, so a stream that reaches it in
+        // pieces still leads it to the straggler: left on the socket, the straggler would
+        // be the next read's answer on the address.
+        #[test]
+        fn the_late_drain_counts_lines_not_reads() {
+            let (mut link, peer) = vdp_link();
+            let mut lines: Vec<Value> = (0..33)
+                .map(|i| {
+                    json!({
+                        "method": "notify",
+                        "uri": format!("/vd/meters/{i}:0"),
+                        "data": { "current_value": -60 }
+                    })
+                })
+                .collect();
+            lines.push(json!({ "method": "get", "uri": ADDR, "data": { "current_value": 11 } }));
+            let writer = send_split(peer, lines);
+            assert_eq!(
+                drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
+                None
+            );
+            let mut peer = writer.join().unwrap();
+            send(
+                &mut peer,
+                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
+            );
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(22)),
+                "the straggler was drained"
+            );
+        }
+
+        // Where the late drain ends does not depend on how the last line was read: the
+        // floor runs from the last whole line whether what follows it is silence or the
+        // first half of the straggler.
+        #[test]
+        fn the_late_drain_ends_alike_for_a_straggler_read_whole_or_in_halves() {
+            for split in [false, true] {
+                let (mut link, mut peer) = vdp_link();
+                let (started, wait) = mpsc::channel();
+                // 13 notifies 20 ms apart outlast the floor counted from the drain's start;
+                // then ONE pause longer than READ_TIMEOUT, so the drain meets a read that
+                // times out, and far enough under the floor that a runner's late wake-up from
+                // that one sleep does not reach it.
+                let writer = std::thread::spawn(move || {
+                    for i in 0..13 {
+                        if i > 0 {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        let notify = json!({ "vdp": {
+                            "method": "notify",
+                            "uri": format!("/vd/meters/{i}:0"),
+                            "data": { "current_value": -60 }
+                        }});
+                        peer.write_all(format!("{notify}\n").as_bytes()).unwrap();
+                        let _ = started.send(());
+                    }
+                    let straggler = format!(
+                        "{}\n",
+                        json!({ "vdp": { "method": "get", "uri": ADDR, "data": { "current_value": 11 } } })
+                    );
+                    let (head, tail) = straggler.split_at(straggler.len() / 2);
+                    if split {
+                        peer.write_all(head.as_bytes()).unwrap();
+                    }
+                    std::thread::sleep(Duration::from_millis(60));
+                    peer.write_all(if split { tail } else { &straggler }.as_bytes())
+                        .unwrap();
+                    peer
+                });
+                // The drain starts once the writer has, as in send_split.
+                wait.recv().unwrap();
+                assert_eq!(
+                    drain_late_reply(&mut link, &mut Subs::new(), None, ADDR, "get", None),
+                    None
+                );
+                let mut peer = writer.join().unwrap();
+                send(
+                    &mut peer,
+                    json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
+                );
+                assert_eq!(
+                    do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                    Ok(json!(22)),
+                    "split {split}: the straggler was drained"
+                );
+            }
+        }
+
+        // A peer that keeps sending pieces of a line it never ends: the close drain reads
+        // on for one READ_TIMEOUT past the last whole line and then lets the shutdown go.
+        #[test]
+        fn the_close_drain_ends_while_a_line_never_ends() {
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            let trickle = std::thread::spawn(move || {
+                let until = Instant::now() + Duration::from_secs(5);
+                peer.write_all(b"{\"vdp\":").unwrap();
+                while Instant::now() < until && peer.write_all(b" ").is_ok() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            std::thread::sleep(Duration::from_millis(100));
+            let (done, closed) = mpsc::channel();
+            let started = Instant::now();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the session closes");
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_millis(500),
+                "the close drain held the shutdown: {took:?}"
+            );
+            worker.join().unwrap();
+            drop(trickle);
+        }
+
+        // The app-exit teardown's caller stops waiting at its instant, and the close drain
+        // ends ahead of it however the broker's frames arrive: whole lines 32 ms apart, or
+        // whole lines and then pieces of one that never ends. Read to CLOSE_FRAMES, those
+        // whole lines alone would hold the drain about two seconds.
+        #[test]
+        fn the_close_drain_ends_before_the_exit_teardowns_caller_stops_waiting() {
+            for never_ends_after in [None, Some(47)] {
+                let (link, mut peer) = vdp_link();
+                let (tx, rx) = mpsc::channel();
+                let worker =
+                    std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+                let (done, closed) = mpsc::channel();
+                let by = Instant::now() + EXIT_TEARDOWN_WAIT;
+                tx.send(Cmd::Shutdown {
+                    done: Some((done, by)),
+                })
+                .unwrap();
+                let feed = std::thread::spawn(move || {
+                    // The close is under way once this side's write half is shut.
+                    let mut byte = [0u8; 1];
+                    while peer.read(&mut byte).is_ok_and(|n| n > 0) {}
+                    for i in 0..60 {
+                        let line = if never_ends_after.is_some_and(|after| i >= after) {
+                            " ".to_string()
+                        } else {
+                            format!(
+                                "{}\n",
+                                json!({ "vdp": {
+                                    "method": "notify",
+                                    "uri": format!("/vd/meters/{i}:0"),
+                                    "data": { "current_value": -60 }
+                                }})
+                            )
+                        };
+                        if peer.write_all(line.as_bytes()).is_err() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(32));
+                    }
+                });
+                assert!(
+                    closed
+                        .recv_timeout(by.saturating_duration_since(Instant::now()))
+                        .is_ok(),
+                    "{never_ends_after:?}: the close outlasted its caller's wait"
+                );
+                worker.join().unwrap();
+                drop(feed);
+            }
+        }
+
+        // Half a line and then silence at close: the close drain ends at the read that
+        // times out, as it does on a quiet link, rather than holding the shutdown.
+        #[test]
+        fn the_close_drain_ends_at_a_timeout_with_half_a_line_pending() {
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            peer.write_all(b"{\"vdp\":").unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            let (done, closed) = mpsc::channel();
+            let started = Instant::now();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the session closes");
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_millis(500),
+                "the close drain held the shutdown: {took:?}"
+            );
+            worker.join().unwrap();
+        }
+
+        /// A device-list endpoint on a free port, answering the one request with `frames`
+        /// and holding the connection open until the reader closes it.
+        fn device_list(frames: Vec<Value>) -> u16 {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (sock, _) = listener.accept().unwrap();
+                let mut lines = BufReader::new(sock.try_clone().unwrap());
+                let mut request = String::new();
+                lines.read_line(&mut request).unwrap();
+                let mut out = sock;
+                for frame in frames {
+                    out.write_all(format!("{frame}\n").as_bytes()).unwrap();
+                }
+                let mut rest = String::new();
+                while lines.read_line(&mut rest).is_ok_and(|n| n > 0) {}
+            });
+            port
+        }
+
+        fn list_reply(uri: &str, method: &str, data: Option<Value>) -> Value {
+            let mut vddp = json!({ "method": method, "uri": uri });
+            if let Some(data) = data {
+                vddp["data"] = data;
+            }
+            json!({ "vddp": vddp })
+        }
+
+        // Only the `get` reply for `/vddp_srv/devices` is the device list. Another vddp
+        // frame that carries `data` — a notify, or the reply to another uri — does not
+        // decide which units this session asks about.
+        #[test]
+        fn the_device_list_is_only_the_list_reply() {
+            let decoy = json!({ "list": [{ "vdpport": 1, "model": "URX44V" }] });
+            let port = device_list(vec![
+                list_reply("/vddp_srv/devices", "notify", Some(decoy.clone())),
+                list_reply("/vddp_srv/other", "get", Some(decoy)),
+                list_reply(
+                    "/vddp_srv/devices",
+                    "get",
+                    Some(json!({ "list": [{ "vdpport": 51234, "model": "URX22" }] })),
+                ),
+            ]);
+            assert_eq!(
+                discover_vdp_targets(port),
+                Ok(vec![(51234, "URX22".to_string())])
+            );
+        }
+
+        // The list reply without `data` is a bad answer as soon as it arrives, rather than
+        // a wait that runs out its deadline as if nothing had answered.
+        #[test]
+        fn a_list_reply_without_data_is_a_bad_response_at_once() {
+            let port = device_list(vec![list_reply("/vddp_srv/devices", "get", None)]);
+            let started = Instant::now();
+            let err = discover_vdp_targets(port).unwrap_err();
+            assert!(err.starts_with("broker-bad-response:"), "{err}");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "answered at once, not at the deadline: {:?}",
+                started.elapsed()
+            );
+        }
+
+        // A peer that keeps sending bytes and never ends the line. The wait for the list
+        // ends at its 3 s deadline, as it does on a silent link, instead of lasting as
+        // long as the bytes keep coming.
+        #[test]
+        fn a_wait_ends_at_its_deadline_while_a_line_keeps_arriving() {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (mut sock, _) = listener.accept().unwrap();
+                let until = Instant::now() + Duration::from_secs(12);
+                while Instant::now() < until && sock.write_all(b"x").is_ok() {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            let started = Instant::now();
+            let err = discover_vdp_targets(port).unwrap_err();
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_secs(5),
+                "the 3 s deadline held while bytes kept arriving: {took:?} ({err})"
+            );
+            assert!(err.starts_with("broker-no-vdpport:"), "{err}");
+        }
+
+        // Something arriving just before the deadline — half a line, or a whole frame
+        // that is not the list — does not buy the wait another read's worth of time.
+        #[test]
+        fn a_frame_just_before_the_deadline_does_not_extend_the_wait() {
+            let other = format!(
+                "{}\n",
+                list_reply("/vddp_srv/other", "get", Some(json!({})))
+            );
+            for (label, bytes) in [
+                ("half a line", "{\"vddp\":".to_string()),
+                ("another frame", other),
+            ] {
+                let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let peer = std::thread::spawn(move || {
+                    let (mut sock, _) = listener.accept().unwrap();
+                    std::thread::sleep(Duration::from_millis(2_400));
+                    sock.write_all(bytes.as_bytes()).unwrap();
+                    std::thread::sleep(Duration::from_secs(5));
+                });
+                let started = Instant::now();
+                let err = discover_vdp_targets(port).unwrap_err();
+                let took = started.elapsed();
+                assert!(
+                    took < Duration::from_millis(3_500),
+                    "{label}: the wait ran past its 3 s deadline: {took:?} ({err})"
+                );
+                drop(peer);
+            }
+        }
+
+        fn status_reply(status: &str) -> Value {
+            json!({
+                "method": "get",
+                "uri": "/vd/synchronize",
+                "data": { "sync_status": status }
+            })
+        }
+
+        fn device_reply(firm_list: Value) -> Value {
+            json!({
+                "method": "get",
+                "uri": "/vd/device",
+                "data": { "firm_list": firm_list }
+            })
+        }
+
+        fn system(version: &str) -> Value {
+            json!([{ "firm_name": "System", "firm_version": version }])
+        }
+
+        /// The handshake against a unit that answers with `frames`, in order.
+        fn handshake_with(frames: Vec<Value>) -> Result<Option<String>, String> {
+            let (mut link, mut peer) = vdp_link();
+            for frame in frames {
+                send(&mut peer, frame);
+            }
+            handshake(&mut link)
+        }
+
+        // Device Center keeps answering `/vd/device` from its cache once the unit is
+        // unplugged, so a unit lost between its `online` and its firmware reply has to
+        // fail the handshake on the push, or the session starts against a unit that is gone.
+        #[test]
+        fn a_unit_lost_during_the_firmware_read_fails_the_handshake() {
+            let err = handshake_with(vec![
+                status_reply("online"),
+                synchronize("lost"),
+                device_reply(system("1.5.0")),
+            ])
+            .unwrap_err();
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+        }
+
+        // The handshake's reads take no reply finished after their deadline either: a
+        // status finished late is the status read's timeout, not an `online`…
+        #[test]
+        fn the_handshake_takes_no_reply_completed_after_its_deadline() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![], status_reply("online"));
+            let err = handshake(&mut link).unwrap_err();
+            assert!(err.starts_with("broker-timeout:"), "{err}");
+            drop(peer.join());
+        }
+
+        // …while the unit lost, pushed across the firmware read's deadline, is never lost
+        // with it: a read that returns it late fails the handshake with it, and otherwise the
+        // firmware is unknown and the push stays on the link for the session's reader, which
+        // ends the session with it. Which of the two happens is the timer's, not the code's.
+        #[test]
+        fn a_unit_lost_across_the_firmware_reads_deadline_is_never_dropped() {
+            let (mut link, peer) = vdp_link();
+            let peer = across_the_deadline(peer, vec![status_reply("online")], synchronize("lost"));
+            match handshake(&mut link) {
+                Err(err) => {
+                    assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+                    drop(peer.join());
+                    return;
+                }
+                Ok(firmware) => assert_eq!(firmware, None),
+            }
+            let until = Instant::now() + Duration::from_secs(1);
+            let pushed = loop {
+                if let Some(msg) = link.read_frame().unwrap() {
+                    break msg;
+                }
+                assert!(Instant::now() < until, "the push never reached the link");
+            };
+            let err = synchronize_lost(&pushed).expect("the push is the unit lost");
+            assert!(err.starts_with(DEVICE_LOST_PREFIX), "{err}");
+            drop(peer.join());
+        }
+
+        // …while an `online` push there, a push before the status reply, a status reply
+        // that is not a notify and a notify with no status leave the handshake to the
+        // replies it waits for.
+        #[test]
+        fn only_a_lost_status_notify_during_the_firmware_read_fails_the_handshake() {
+            for (label, frames) in [
+                (
+                    "online push",
+                    vec![
+                        status_reply("online"),
+                        synchronize("online"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "push before the status reply",
+                    vec![
+                        synchronize("lost"),
+                        status_reply("online"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "a reply, not a notify",
+                    vec![
+                        status_reply("online"),
+                        status_reply("lost"),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+                (
+                    "an empty status",
+                    vec![
+                        status_reply("online"),
+                        synchronize(""),
+                        device_reply(system("1.5.0")),
+                    ],
+                ),
+            ] {
+                assert_eq!(
+                    handshake_with(frames),
+                    Ok(Some("1.5.0".to_string())),
+                    "{label}"
+                );
+            }
+        }
+
+        // The device-lost push is a `/vd/synchronize` notify whose status is there and is
+        // not `online`. A reply to a read of the status and a notify with an empty status
+        // say nothing about the unit going away.
+        #[test]
+        fn only_a_status_notify_counts_as_the_unit_lost() {
+            let frame = |vdp: Value| json!({ "vdp": vdp });
+            assert!(synchronize_lost(&frame(synchronize("lost"))).is_some());
+            assert!(synchronize_lost(&frame(synchronize("offline"))).is_some());
+            assert!(synchronize_lost(&frame(synchronize("online"))).is_none());
+            assert!(synchronize_lost(&frame(synchronize(""))).is_none());
+            assert!(synchronize_lost(&frame(status_reply("lost"))).is_none());
+            assert!(synchronize_lost(&frame(json!({
+                "uri": "/vd/synchronize",
+                "data": { "sync_status": "lost" }
+            })))
+            .is_none());
+        }
+
+        // The firmware version is three-valued (architecture.md "Live control
+        // connection"): `Some("")` only when the unit's list was read in full and holds
+        // no System entry, and `None` whenever the version cannot be read from it — a
+        // row whose name cannot be read could be the System entry, a System row with no
+        // string version has no version, and two System rows that disagree name none.
+        #[test]
+        fn the_firmware_is_unknown_when_its_rows_cannot_be_read() {
+            for (label, firm_list, expected) in [
+                ("one System row", system("1.5.0"), Some("1.5.0")),
+                (
+                    "System after another row",
+                    json!([
+                        { "firm_name": "MCU Main", "firm_version": "1.0" },
+                        { "firm_name": "system", "firm_version": "1.5.0" }
+                    ]),
+                    Some("1.5.0"),
+                ),
+                (
+                    "two System rows that agree",
+                    json!([
+                        { "firm_name": "System", "firm_version": "1.5.0" },
+                        { "firm_name": "SYSTEM", "firm_version": "1.5.0" }
+                    ]),
+                    Some("1.5.0"),
+                ),
+                (
+                    "no System row",
+                    json!([{ "firm_name": "MCU Main", "firm_version": "1.0" }]),
+                    Some(""),
+                ),
+                ("an empty System version", system(""), None),
+                (
+                    "an empty System version beside a readable one",
+                    json!([
+                        { "firm_name": "System", "firm_version": "" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
+                (
+                    "a System row with a number for its version",
+                    json!([{ "firm_name": "System", "firm_version": 150 }]),
+                    None,
+                ),
+                (
+                    "a System row with no version",
+                    json!([{ "firm_name": "System" }]),
+                    None,
+                ),
+                (
+                    "a row with no name",
+                    json!([{ "firm_version": "1.5.0" }]),
+                    None,
+                ),
+                (
+                    "a row with a number for its name",
+                    json!([
+                        { "firm_name": 1, "firm_version": "1.4.0" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
+                (
+                    "a row with an empty name",
+                    json!([{ "firm_name": "", "firm_version": "1.5.0" }]),
+                    None,
+                ),
+                (
+                    "two System rows that disagree",
+                    json!([
+                        { "firm_name": "System", "firm_version": "1.4.0" },
+                        { "firm_name": "System", "firm_version": "1.5.0" }
+                    ]),
+                    None,
+                ),
+            ] {
+                assert_eq!(
+                    handshake_with(vec![status_reply("online"), device_reply(firm_list)]),
+                    Ok(expected.map(str::to_string)),
+                    "{label}"
+                );
+            }
+        }
+
+        // An empty status is a status that is not `online`, which is `no-device`
+        // (architecture.md "Live control connection").
+        #[test]
+        fn an_empty_status_is_no_device() {
+            assert_eq!(
+                handshake_with(vec![status_reply("")]),
+                Err("no-device".to_string())
             );
         }
 
@@ -2823,7 +3991,10 @@ mod imp {
             assert!(asked.elapsed() < Duration::from_secs(1));
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a lost session still closes on Shutdown");
@@ -2924,7 +4095,10 @@ mod imp {
             );
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
         }
@@ -2961,7 +4135,10 @@ mod imp {
             ask(&tx, params(vec![(1, 0, 0), (3, 0, 0)])).unwrap();
             tx.send(Cmd::ParamsUnsubscribe).unwrap();
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed.recv_timeout(Duration::from_secs(10)).unwrap();
             worker.join().unwrap();
 
@@ -3029,7 +4206,10 @@ mod imp {
             );
 
             let (done, closed) = mpsc::channel();
-            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + EXIT_TEARDOWN_WAIT)),
+            })
+            .unwrap();
             closed
                 .recv_timeout(Duration::from_secs(10))
                 .expect("a lost session still closes on Shutdown");

@@ -2419,9 +2419,14 @@ unit's System firmware version from
 compares it against the validated `SUPPORTED_SYSTEM_FIRMWARE` (`core/control/firmware.ts`) and warns at the
 start of fetch / write / live sync when it differs, letting the user continue or stop. The field is a
 **three-valued** `Option<String>`, and the three values do not collapse: a version arms or disarms the warning
-by comparison, `Some("")` means the unit answered with no System entry and legitimately disables the gate, and
-`None` means the read itself did not land — the version is unknown rather than absent, so the operation stops
-instead of proceeding with the gate silently off ([Aborting on failure](#aborting-on-failure)).
+by comparison, `Some("")` means the unit answered with a list read in full that holds no System entry and legitimately
+disables the gate, and `None` means the version could not be read — the read did not land, a row of the list
+has no readable name or a System row no readable version (an empty name or version included), or two System
+rows disagree — so it is unknown
+rather than absent, and the operation stops instead of proceeding with the gate silently off
+([Aborting on failure](#aborting-on-failure)). A device-lost push that arrives while the handshake waits for
+`/vd/device` fails the connect as `device-lost`: Device Center answers that read from its cache once the unit
+is unplugged.
 
 **One transport, served to concurrent clients.** Device Center advertises a **per-session port** for each
 listed unit on `:51770` (`/vddp_srv/devices`), and the link (`Link` in `vd.rs`) is a plain socket to that port
@@ -2440,7 +2445,9 @@ that ordinary rather than rare. A notify names the address it is about, so match
 lets one answer the command: a read returns the pushed value instead of the read, and a write, finding no
 `response_code`, reports a write that landed as refused and aborts. Replies are therefore matched on **verb
 and address together** (`reply_for`), and each command keeps the verb it sent and the verb it will accept in
-one place so the two cannot drift. Notifies for a subscribed channel are absorbed into that channel's
+one place so the two cannot drift. A write, a registration and an unregistration are all POSTs on the
+address, and a registration's reply can still be in flight when the next write starts, so a POST reply also has
+to carry the request's single `operation` (`value`, `regist` or `unregist`). Notifies for a subscribed channel are absorbed into that channel's
 batch rather than dropped.
 
 **The same on both platforms.** A difference in the endpoints or the
@@ -3886,7 +3893,8 @@ action connecting over that read.
 
 The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
-unregisters and the close to reach the wire. Everywhere else the worker outlives the caller and finishes on its
+unregisters and the close to reach the wire. The worker is handed the instant that wait ends, and its read of what
+the broker still has queued stops one read's timeout ahead of it, however the frames arrive. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
