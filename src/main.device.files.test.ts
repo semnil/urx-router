@@ -753,28 +753,41 @@ describe("importing a settings file", () => {
         unitLowersTrackCount,
         (a) => (holding && a.paramId === OSC ? held : undefined),
       );
-      holding = true;
-      const from = shell.invokes.length;
-      turnOscOn(); // its flush holds the link while the rate is chosen and undone
-      await vi.waitFor(() => expect(written(shell, OSC, from)).toEqual([1]), { timeout: 15_000 });
-      chooseRate(96_000);
-      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 15_000 });
-      selectNode("ch1"); // the press that ends the edit's entry
-      await editMenu(shell, EDIT_UNDO_ID);
-      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), { timeout: 15_000 });
-      const released = shell.invokes.length;
-      release();
-      await vi.waitFor(() => expect(countReads(shell, released)).toBeGreaterThan(0), { timeout: 15_000 });
-      // The count is read on its own once the session's writes settle, not by the full
-      // reconcile follow runs after the link has been quiet a while, which reads it as well.
-      const reads = shell.invokes
-        .map((cmd, i) => (i >= released && cmd === "vd_get" ? (shell.args[i] as Record<string, number>).paramId : null))
-        .filter((id) => id !== null);
-      expect(reads.slice(0, reads.indexOf(COUNT)), "read before the Track Count").not.toContain(PARAMS.CH_FADER.id);
-      await vi.waitFor(async () => expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 }), {
-        timeout: 15_000,
-      });
-      expect(written(shell, RATE, from), "the rate never went out").toEqual([]);
+      try {
+        holding = true;
+        const from = shell.invokes.length;
+        turnOscOn(); // its flush holds the link while the rate is chosen and undone
+        await vi.waitFor(() => expect(written(shell, OSC, from)).toEqual([1]), { timeout: 15_000 });
+        chooseRate(96_000);
+        await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 15_000 });
+        selectNode("ch1"); // the press that ends the edit's entry
+        await editMenu(shell, EDIT_UNDO_ID);
+        await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), { timeout: 15_000 });
+        // The read waits for the session's writes; a CUE press, which never did, still goes out.
+        const cueFrom = shell.invokes.length;
+        selectNode("ch1");
+        [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
+          .find((b) => b.textContent === t().inspector.on)!
+          .click();
+        await vi.waitFor(() => expect(written(shell, PARAMS.CUE_MONO.id, cueFrom)).toEqual([1]), { timeout: 15_000 });
+        const released = shell.invokes.length;
+        release();
+        await vi.waitFor(() => expect(countReads(shell, released)).toBeGreaterThan(0), { timeout: 15_000 });
+        // The count is read on its own once the session's writes settle, not by the full
+        // reconcile follow runs after the link has been quiet a while, which reads it as well.
+        const reads = shell.invokes
+          .map((cmd, i) =>
+            i >= released && cmd === "vd_get" ? (shell.args[i] as Record<string, number>).paramId : null,
+          )
+          .filter((id) => id !== null);
+        expect(reads.slice(0, reads.indexOf(COUNT)), "read before the Track Count").not.toContain(PARAMS.CH_FADER.id);
+        await vi.waitFor(async () => expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 }), {
+          timeout: 15_000,
+        });
+        expect(written(shell, RATE, from), "the rate never went out").toEqual([]);
+      } finally {
+        release(); // a case that fails part-way does not leave the next one a held write
+      }
     });
 
     // What stays the unit's is still read from the file, so a value the file carries wrong or not

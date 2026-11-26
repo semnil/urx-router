@@ -828,6 +828,8 @@ const cueModeEchoes = new LcdEchoes();
 // HOME's [Sends] destination in the same line; a session's release waits for the tail before it
 // disconnects.
 let cueWrites: Promise<void> = Promise.resolve();
+// The Track Count reads after a rate undone or redone during a session, one after another.
+let trackCountRereads: Promise<void> = Promise.resolve();
 let cueWritesPending = 0;
 
 /** The other member of the STEREO-linked mono pair `node` belongs to, which shares its flag. */
@@ -1250,7 +1252,9 @@ function rereadSendsTarget(): void {
  */
 function rereadTrackCount(): void {
   if (!liveSessionUp || !hasRecorder(modelId)) return;
-  cueWrites = cueWrites
+  // A chain of its own, not the unit writes': it waits on the plan flush, which a CUE press or
+  // a SENDS choice never does.
+  trackCountRereads = trackCountRereads
     .then(async () => {
       // The undo's own flush is armed behind a debounce, so the session is waited out until it
       // has nothing armed or running, not only past the flush running now.
