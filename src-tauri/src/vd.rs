@@ -3175,8 +3175,11 @@ mod imp {
 
         // A wait ends at its deadline, not one read's timeout past it: the last read is
         // armed with what is left. The handshake's status read ends within 30 ms of its
-        // deadline.
+        // deadline. Not on Windows, whose timer ticks about every 15.6 ms: an armed read
+        // there ended 31 ms past the deadline on CI, which leaves no room between the two
+        // outcomes; the read itself is held there by the case below.
         #[test]
+        #[cfg(not(windows))]
         fn a_wait_ends_at_its_deadline_with_nothing_left_to_arrive() {
             let (mut link, peer) = vdp_link();
             let peer = chatter_up_to_the_deadline(peer, vec![]);
@@ -3366,8 +3369,15 @@ mod imp {
             for split in [false, true] {
                 let (mut link, mut peer) = vdp_link();
                 let (started, wait) = mpsc::channel();
+                // 13 notifies 20 ms apart outlast the floor counted from the drain's start;
+                // then ONE pause longer than READ_TIMEOUT, so the drain meets a read that
+                // times out, and far enough under the floor that a runner's late wake-up from
+                // that one sleep does not reach it.
                 let writer = std::thread::spawn(move || {
                     for i in 0..13 {
+                        if i > 0 {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
                         let notify = json!({ "vdp": {
                             "method": "notify",
                             "uri": format!("/vd/meters/{i}:0"),
@@ -3375,18 +3385,16 @@ mod imp {
                         }});
                         peer.write_all(format!("{notify}\n").as_bytes()).unwrap();
                         let _ = started.send(());
-                        std::thread::sleep(Duration::from_millis(20));
                     }
                     let straggler = format!(
                         "{}\n",
                         json!({ "vdp": { "method": "get", "uri": ADDR, "data": { "current_value": 11 } } })
                     );
                     let (head, tail) = straggler.split_at(straggler.len() / 2);
-                    std::thread::sleep(Duration::from_millis(40));
                     if split {
                         peer.write_all(head.as_bytes()).unwrap();
                     }
-                    std::thread::sleep(Duration::from_millis(30));
+                    std::thread::sleep(Duration::from_millis(60));
                     peer.write_all(if split { tail } else { &straggler }.as_bytes())
                         .unwrap();
                     peer
