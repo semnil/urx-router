@@ -1388,6 +1388,38 @@ describe("runSelfTest and the side of a mic strip the unit is not using", () => 
     expect(report.diag.unusedSide.filter((line) => !line.startsWith("SSMCS_"))).toEqual([]);
   });
 
+  // The SSMCS internal Threshold is kept and checked through the read every comparison takes: a
+  // reading outside 0..200 is a failed read there too, never a value to put back or to call restored.
+  const answering = (table: Map<string, number>, answer: (n: number) => number | undefined) => {
+    const read = vi.mocked(vdGet).getMockImplementation()!;
+    let n = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, yy) => {
+      if (`${id}:${x}:${yy}` !== THRESHOLD) return read(id, x, yy);
+      const v = answer(++n);
+      return v === undefined ? read(id, x, yy) : Promise.resolve(v);
+    });
+    return table;
+  };
+
+  it("keeps no out-of-range reading of the internal Threshold to write back", async () => {
+    // The capture reads it through the readback (23), the pre-sweep read answers 201.
+    answering(installRefillingDevice(), (n) => (n === 2 ? 201 : undefined));
+    const report = await runSelfTest(model, 0);
+    expect(report.errors).toContain(`pre-sweep read ${THRESHOLD}: read 201, not an integer from 0 to 200`);
+    expect(writesTo(THRESHOLD)).not.toContain(201);
+    expect(report.restored).not.toBe(true);
+  });
+
+  it("calls an out-of-range reading after the write-back a failed check, not a restore", async () => {
+    const table = installRefillingDevice();
+    const wrote = () => writesTo(THRESHOLD).includes(23);
+    answering(table, () => (wrote() ? 201 : undefined));
+    const report = await runSelfTest(model, 0);
+    expect(wrote(), "the premise: the write-back sent the pre-sweep value").toBe(true);
+    expect(report.errors).toContain(`restore verify ${THRESHOLD}: read 201, not an integer from 0 to 200`);
+    expect(report.restored).toBe(false);
+  });
+
   // A value written back can be reset by a later write of the same set, and nothing converges
   // behind this write-back: here the ratio's write puts the output gain at its default.
   it("writes again what a later write of the same set reset", async () => {

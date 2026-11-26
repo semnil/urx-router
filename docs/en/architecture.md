@@ -5277,8 +5277,10 @@ position and the Sweet Spot Data preset recompute — come off a file through th
 defined once (`SSMCS_INTERNAL_SETTINGS` in `control/translate.ts`), and its read, its write and the bound the load
 applies to a document are all built from that definition, so a file needs no reader of its own for them. A value
 outside the setting's value set fails that channel's read, from a file and from the unit alike, rather than reaching
-the plan; the write refuses the same values, and a document holding one is bounded on load like every other leaf the
-write bounds.
+the plan. The reads that compare the unit with a plan or keep its value for a restore — a write's check, Compare with
+device, the self-test's restore — fail on it the same way (`readAddressOf` in `control/client.ts`), so no difference,
+re-send or restore is built from it. The write refuses the same values, and a document holding one is bounded on load
+like every other leaf the write bounds.
 
 Format notes that shape the reader:
 

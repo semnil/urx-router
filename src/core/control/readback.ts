@@ -107,7 +107,7 @@ import {
   ROUTING_SELECTORS,
   sendControl,
   SSMCS_INTERNAL_SETTINGS,
-  ssmcsInternalAdmits,
+  ssmcsInternalReadRefusal,
   ssmcsInternalTarget,
   stereoIndexMap,
 } from "./translate";
@@ -2278,8 +2278,8 @@ async function readSsmcsInternal(
   const y = ssmcsInternalTarget(model, nodeId);
   if (y === null) throw new RangeError(`${setting.name}: ${nodeId} is not a MONO IN channel of the ${model.id}`);
   const v = await source.get(PARAMS[setting.name].id, 0, y);
-  if (!ssmcsInternalAdmits(setting, v))
-    throw new RangeError(`${setting.name}: read ${String(v)}, not an integer from ${setting.min} to ${setting.max}`);
+  const refusal = ssmcsInternalReadRefusal(setting.name, v);
+  if (refusal !== null) throw new RangeError(`${setting.name}: ${refusal}`);
   return v;
 }
 

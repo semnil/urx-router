@@ -1256,8 +1256,9 @@ export function ssmcsEqBandFields(band: SsmcsEqBandName): DynField[] {
  *
  * Not being on a screen is a fact about the surfaces, not about the setting. So the setting is
  * defined here, apart from the slider tables above, and every path that touches it builds on
- * this definition: the readback (and through it the `.urxf` import), the write, and the bound
- * the load applies to a document.
+ * this definition: the readback (and through it the `.urxf` import), the reads that compare the
+ * unit with a plan or keep its value for a restore, the write, and the bound the load applies to a
+ * document.
  */
 export interface SsmcsInternalSetting {
   /** The key under the plan's `ssmcs.comp`. */
@@ -1280,6 +1281,19 @@ export const SSMCS_INTERNAL_SETTINGS: readonly SsmcsInternalSetting[] = [
  *  anything that is not a number are not. */
 export function ssmcsInternalAdmits(setting: SsmcsInternalSetting, v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= setting.min && v <= setting.max;
+}
+
+/**
+ * Why a reading of `name`'s address is refused: where an internal setting is at that address and
+ * the reading is outside its value set, the reason; null for any other reading or address. Every
+ * read of the address answers to this — the read into the plan (`readSsmcsInternal` in
+ * readback.ts) and the reads that compare the unit with a plan or keep its value for a restore
+ * (`readAddressOf` in client.ts) — so no path takes such a value as what the unit holds.
+ */
+export function ssmcsInternalReadRefusal(name: ParamName, value: unknown): string | null {
+  const setting = SSMCS_INTERNAL_SETTINGS.find((s) => s.name === name);
+  if (!setting || ssmcsInternalAdmits(setting, value)) return null;
+  return `read ${String(value)}, not an integer from ${setting.min} to ${setting.max}`;
 }
 
 /** The channel an internal setting addresses: a MONO IN channel the model has, by its input

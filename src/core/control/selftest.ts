@@ -77,6 +77,7 @@ import {
   diffNames,
   diffPlan,
   reachedAndFailed,
+  readAddressOf,
   sendConverging,
   sendNames,
   sendPresetsAndReconverge,
@@ -1452,7 +1453,7 @@ async function readPreSweep(
   for (const [addr, c] of unrestorable) {
     signal?.throwIfAborted();
     try {
-      preSweep.set(addr, await vdGet(c.paramId, c.x, c.y));
+      preSweep.set(addr, await readAddressOf(c));
     } catch (e) {
       report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1536,7 +1537,7 @@ async function restoreUnsent(
       if (want === undefined) continue;
       signal?.throwIfAborted();
       try {
-        const got = await vdGet(c.paramId, c.x, c.y);
+        const got = await readAddressOf(c);
         if (got !== want) left.push({ addr, c, want, got });
       } catch (e) {
         left.push({ addr, c, want, got: null, error: e instanceof Error ? e.message : String(e) });

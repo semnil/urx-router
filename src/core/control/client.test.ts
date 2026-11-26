@@ -224,6 +224,71 @@ describe("diffPlan", () => {
   });
 });
 
+// The SSMCS compressor's internal Threshold and Makeup: a reading outside 0..200 is a failed read on
+// every pass that compares the unit with a plan, as it is on the way into the plan — never a difference to
+// send against, and never a "matches".
+describe("the SSMCS internal settings' readings", () => {
+  // CH 1 in SSMCS mode, both values at the top and the bottom of the set.
+  function ssmcsPlan(): Plan {
+    const plan = basePlan();
+    plan.nodeParams.ch1 = { compEqType: 1, ssmcs: { comp: { threshold: 200, makeup: 0 } } };
+    return plan;
+  }
+  const at = (plan: Plan, name: string) => planToCommands(model, plan).find((c) => c.name === name)!;
+  const reading = (table: Map<string, number>, overrides: Record<string, number>) =>
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      const k = `${id}:${x}:${y}`;
+      return Promise.resolve(overrides[k] ?? table.get(k) ?? 0);
+    });
+
+  it.each([
+    ["SSMCS_COMP_THRESHOLD", 201],
+    ["SSMCS_COMP_MAKEUP", -1],
+  ])("fail diffPlan's and comparePlan's read of %s at %d", async (name, value) => {
+    const plan = ssmcsPlan();
+    const target = at(plan, name);
+    reading(deviceTableFor(plan), { [`${target.paramId}:0:0`]: value });
+    const diff = await diffPlan(model, plan);
+    expect(diff.diffs).toEqual([]);
+    expect(diff.errors).toEqual([`${name}: read ${value}, not an integer from 0 to 200`]);
+    expect(diff.unread).toEqual([target]);
+    const compare = await comparePlan(planToCommands(model, plan));
+    expect(compare.errors).toEqual([`${name}: read ${value}, not an integer from 0 to 200`]);
+    expect(compare.entries.some((e) => e.command.name === name)).toBe(false);
+  });
+
+  it("compare the ends of the set as ordinary readings", async () => {
+    const plan = ssmcsPlan();
+    reading(deviceTableFor(plan), {});
+    const diff = await diffPlan(model, plan);
+    expect([diff.diffs, diff.errors]).toEqual([[], []]);
+    const compare = await comparePlan(planToCommands(model, plan));
+    const both = compare.entries.filter((e) => e.command.name.startsWith("SSMCS_COMP_") && e.command.paramId >= 100);
+    expect(both.map((e) => [e.command.name, e.device, e.match])).toEqual([
+      ["SSMCS_COMP_THRESHOLD", 200, true],
+      ["SSMCS_COMP_MAKEUP", 0, true],
+    ]);
+  });
+
+  // A write the unit answers with an out-of-range value is not re-sent against that answer: the converge
+  // stops at the failed read and says so.
+  it("stop a converge on such a reading instead of re-sending", async () => {
+    const plan = ssmcsPlan();
+    const target = at(plan, "SSMCS_COMP_THRESHOLD");
+    const table = deviceTableFor(plan);
+    table.set(`${target.paramId}:0:0`, 150);
+    reading(table, {});
+    vi.mocked(vdSet).mockImplementation((id, x, y) => {
+      if (id === target.paramId) table.set(`${id}:${x}:${y}`, 201);
+      return Promise.resolve();
+    });
+    const r = await sendConverging(model, plan, { settleMs: 0 });
+    const sent = vi.mocked(vdSet).mock.calls.filter(([id]) => id === target.paramId);
+    expect(sent).toEqual([[target.paramId, 0, 0, 200]]);
+    expect(r.readErrors).toEqual(["SSMCS_COMP_THRESHOLD: read 201, not an integer from 0 to 200"]);
+  });
+});
+
 describe("sendCommands", () => {
   it("sends every command and reports each as ok", async () => {
     vi.mocked(vdSet).mockResolvedValue(undefined);

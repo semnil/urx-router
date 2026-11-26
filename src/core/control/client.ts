@@ -8,7 +8,14 @@ import type { Plan } from "../plan";
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
-import { addrKey, cmdAddr, planToCommands, planToNameWrites, unverifiedGuessNote } from "./translate";
+import {
+  addrKey,
+  cmdAddr,
+  planToCommands,
+  planToNameWrites,
+  ssmcsInternalReadRefusal,
+  unverifiedGuessNote,
+} from "./translate";
 import type { EmitOptions, NameWrite, VdCommand, WriteScope } from "./translate";
 import { SETTLE_TIMEOUT_MS, writeSettle } from "./settle";
 import type { PendingWrites } from "./settle";
@@ -190,6 +197,19 @@ export interface DiffOptions {
   matched?: Set<number>;
 }
 
+/**
+ * One read of a command's address, for a pass that compares the unit with what a plan sends or
+ * keeps the unit's value to put back. A reading the setting at that address refuses (an SSMCS
+ * internal value outside its set, `ssmcsInternalReadRefusal`) fails the read, as it does on the
+ * way into the plan, so no difference, re-send or restore is built from it.
+ */
+export async function readAddressOf(command: VdCommand): Promise<number> {
+  const value = await vdGet(command.paramId, command.x, command.y);
+  const refusal = ssmcsInternalReadRefusal(command.name, value);
+  if (refusal !== null) throw new RangeError(refusal);
+  return value;
+}
+
 export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions = {}): Promise<DiffResult> {
   const { signal, stopOnError = false, scope = "all", emit = {}, exclude, matched } = opts;
   const diffs: CommandDiff[] = [];
@@ -200,7 +220,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
     if (exclude?.has(cmdAddr(command))) continue;
     signal?.throwIfAborted();
     try {
-      const current = await vdGet(command.paramId, command.x, command.y);
+      const current = await readAddressOf(command);
       if (current !== command.vdValue) {
         diffs.push({ command, current });
         matched?.delete(cmdAddr(command));
@@ -958,7 +978,7 @@ export async function comparePlan(
   for (const command of commands) {
     signal?.throwIfAborted();
     try {
-      const device = await vdGet(command.paramId, command.x, command.y);
+      const device = await readAddressOf(command);
       entries.push({ command, device, match: device === command.vdValue });
     } catch (e) {
       const note = model ? unverifiedGuessNote(model, command.paramId, command.y) : "";
