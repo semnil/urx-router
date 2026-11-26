@@ -3649,7 +3649,9 @@ moves the rate takes it — the picker, adopting the unit's rate, a device read,
 also normalises a document naming a rate and a count that cannot both be true. During a session an undo or redo that
 moves the rate holds to it as well: the count stays where it is, under the ceiling of the rate the entry lands on,
 rather than coming back to the one the entry recorded (`unitHoldsTrackCount` in `ui/history.ts`), and once the
-session's writes have settled the unit's count is read back and taken (`rereadTrackCount`), since what the entry
+session's writes have settled and the unit has announced the rate the entry left — or the settle's bound has passed
+without it, where the rate never went out — the unit's count is read back and taken (`rereadTrackCount`): the unit
+acks a rate before it runs at it, and what the entry
 leaves is a prediction: an undo that reaches the unit before the rate it reverses did leaves a unit that never
 lowered its count. Away from a session the count is the plan's own and an undo restores it. Applied when the rate CHANGES rather
 than when the count is read: a read-time clamp would hand 16 back the moment the rate came down, and the plan would

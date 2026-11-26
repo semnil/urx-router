@@ -198,6 +198,7 @@ import {
 } from "./core/control/readback";
 import type { MergedRead, ParamSource, ReadbackResult } from "./core/control/readback";
 import type { PendingWrites } from "./core/control/settle";
+import { writeSettle } from "./core/control/settle";
 import { parseUrxf, paramSourceOf, UrxfError } from "./core/control/urxf";
 import {
   compareCounts,
@@ -237,6 +238,7 @@ import {
   cueAddrs,
   cueAt,
   cueNotifyAddrs,
+  addrKey,
   hpfFreqLeftOut,
   planToCommands,
   planToNameWrites,
@@ -1249,8 +1251,11 @@ function rereadSendsTarget(): void {
  * is left holding is a prediction — the unit lowers its count to a rate's ceiling and never raises
  * it back, but whether it ever ran at the rate the entry moves away from depends on whether the
  * flush had sent that rate yet — and while nothing writes the count, the unit's is the plan's.
+ * `mark` is the notify position when the entry landed, and `rate` the rate it left: the unit acks
+ * a rate before it runs at it, so the count is read once the unit has announced that rate, or once
+ * the settle's bound has passed without it, which is the answer where the rate never went out.
  */
-function rereadTrackCount(): void {
+function rereadTrackCount(mark: number, rate: number): void {
   if (!liveSessionUp || !hasRecorder(modelId)) return;
   // A chain of its own, not the unit writes': it waits on the plan flush, which a CUE press or
   // a SENDS choice never does.
@@ -1262,6 +1267,8 @@ function rereadTrackCount(): void {
         await live.idle();
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      if (!liveSessionUp) return;
+      await writeSettle.announcement(addrKey(PARAMS.SAMPLE_RATE.id, 0, 0), mark, rate);
       if (!liveSessionUp) return;
       const merged = await followRead("track count after an undo moved the rate", (into, signal) =>
         applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
@@ -4111,7 +4118,7 @@ function reflectHistory(touch: PatchTouch): void {
   // out. resync() must NOT be called — it would re-base the snapshot to the plan
   // and suppress the very write the undo needs.
   markChanged();
-  if (liveSessionUp && touch.fields.has("sampleRate")) rereadTrackCount();
+  if (liveSessionUp && touch.fields.has("sampleRate")) rereadTrackCount(writeSettle.mark(), plan.sampleRate);
 }
 
 // Repaint the views for a patch already applied to the plan in place: an undo / redo, or

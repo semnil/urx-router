@@ -740,17 +740,44 @@ describe("importing a settings file", () => {
     // What the plan holds after such an undo is read from the unit, not predicted. Undone before
     // the session sent it — the flush ahead of it still holding the link — the rate never reached
     // the unit, which still runs at 48 kHz with 16 tracks, and so the plan holds 16 again.
-    it("reads the unit's Track Count after undoing a rate the session had not sent", SLOW, async () => {
+    //
+    // Redone, the rate goes out, and the unit acks it before it runs at it: here it re-clocks, and
+    // lowers its count, 110 ms after the ack, announcing both then. The count is read once the
+    // unit has announced the rate, so the plan takes the 8 it lands on, not the 16 a read
+    // straight after the ack would still be answered.
+    it.each([
+      ["undoing a rate the session had not sent", false],
+      ["redoing it once the unit has announced the rate", true],
+    ])("reads the unit's Track Count after %s", SLOW, async (_, redoes) => {
       let release = (): void => {};
       const held = new Promise<void>((resolve) => (release = resolve));
       let holding = false;
-      const shell = await liveImport(
+      let shell!: TauriShell;
+      // Where the invokes stood when the unit announced the rate it re-clocked to.
+      let announcedAt = -1;
+      let running = 48_000;
+      const reclocksLate = (a: Record<string, unknown>, unitHolds: Map<string, number>): void => {
+        if (a.paramId !== RATE) return;
+        const target = a.value as number;
+        unitHolds.set(`${RATE}/0/0`, running); // acked, and not running at it yet
+        setTimeout(() => {
+          running = target;
+          unitHolds.set(`${RATE}/0/0`, target);
+          unitLowersTrackCount(a, unitHolds);
+          announcedAt = shell.invokes.length;
+          notifyChannel(shell).onmessage([
+            { param_id: RATE, x: 0, y: 0, value: target },
+            { param_id: COUNT, x: 0, y: 0, value: unitHolds.get(`${COUNT}/0/0`)! },
+          ]);
+        }, 110);
+      };
+      shell = await liveImport(
         file(false, 48_000),
         unit(false, 48_000, 0, 16),
         () => "Ok",
         false,
         undefined,
-        unitLowersTrackCount,
+        redoes ? reclocksLate : unitLowersTrackCount,
         (a) => (holding && a.paramId === OSC ? held : undefined),
       );
       try {
@@ -785,6 +812,22 @@ describe("importing a settings file", () => {
           timeout: 15_000,
         });
         expect(written(shell, RATE, from), "the rate never went out").toEqual([]);
+        if (redoes) {
+          const at = await editMenu(shell, EDIT_REDO_ID);
+          await vi.waitFor(() => expect(written(shell, RATE, at)).toEqual([96_000]), { timeout: 15_000 });
+          await vi.waitFor(() => expect(announcedAt).toBeGreaterThan(-1), { timeout: 15_000 });
+          await vi.waitFor(async () => expect(await savedRecorder(shell)).toEqual({ tracks: 8, rate: 96_000 }), {
+            timeout: 15_000,
+          });
+          // From the rate's write on: the confirm ahead of it reads the count as well, for the drop it names.
+          const sentAt = shell.invokes.findIndex(
+            (cmd, i) => i >= at && cmd === "vd_set" && (shell.args[i] as Record<string, number>).paramId === RATE,
+          );
+          const firstRead = shell.invokes.findIndex(
+            (cmd, i) => i > sentAt && cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === COUNT,
+          );
+          expect(firstRead, "the count is read after the unit announced the rate").toBeGreaterThanOrEqual(announcedAt);
+        }
       } finally {
         release(); // a case that fails part-way does not leave the next one a held write
       }
