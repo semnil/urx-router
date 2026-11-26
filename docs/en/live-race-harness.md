@@ -407,7 +407,7 @@ windows above exists. The fake must provide the following.
 | i | A MIDI bridge with scripted input bursts and a captured output byte log |
 | j | `menu://edit` emission and edit-menu state/label counters |
 | k | `transformCallback` and `plugin:event|listen` |
-| l | The bridge's notify filter: a param notify is forwarded only while a subscription is installed and only for an address this session registered, plus the `BULK_CHANGE` sentinel — mirroring `Subs::absorb`, per ENTRY inside a batch |
+| l | The bridge's notify filter: a param notify is forwarded only while a subscription is installed and only for an address this session registered, plus the `BULK_CHANGE` sentinel — mirroring the transport's per-token delivery that `vd.rs` sends on, per ENTRY inside a batch |
 | m | The same filter on the meter half: a reading is forwarded only while the meter channel is installed and only for a `(meter_id, x)` this session registered — no sentinel, since every reading carries an address |
 | n | Post-write read staleness: `staleAfterWrite[addr] = n` makes the next `n` reads after EACH write to that address answer the value it held BEFORE that write, while `mem` stays truthful — the unit ACCEPTED the write and cannot yet report it. Numeric path only. What ENDS the window is not this setting's business: every value-changing write is announced (see below), and that announcement closes any window open on the address whether its scripted reads were spent or not |
 | o | The announcement itself, which is unconditional and needs no case to arm it: a write that CHANGES the value the unit reports is announced `cfg.announceMs` after its **ack** — 100 by default, the unit's median delay from a write's ISSUE to its notify, rounded, and counted here from the ack instead. Three silences, all from the one rule — a same-value write (acked in 0-1 ms and never announced), an `ignoreWrites` address (acked and never stored, so nothing it reports moved) and a `diverge`d address (the unit goes on asserting what it already held) |
@@ -475,12 +475,13 @@ would settle it: one gets added if and when such a device behaviour is actually 
 
 **Why the filter has to exist at all.** A client that connects to the broker and registers NOTHING
 still receives the whole push stream — meter frames and the unit's free-running clock fields arrive on
-a connection with no subscription of any kind. The broker broadcasts; `Subs::absorb` is the only thing standing between that stream and the app, which is
+a connection with no subscription of any kind. The broker broadcasts; the transport's per-token delivery is the only thing standing between that stream and the app, which is
 why a fake that forwards unconditionally measures a device nobody ships.
 
 On (l): `vd_params_subscribe` replaces the registered set wholesale and `vd_params_unsubscribe` drops
-the channel, which is the load-bearing half of the Rust `param_ch = None`. It deliberately does NOT
-clear `paramAddrs`, unlike `param_addrs.clear()` on the Rust side: that field is the harness's
+the channel, which is the load-bearing half of `vd.rs` dropping the route and releasing the subscription's
+token. It deliberately does NOT clear `paramAddrs`, unlike the Rust side, which forgets the released
+subscription's addresses: that field is the harness's
 "addresses the app **last** registered" observable, read by ~80 spec sites after a session ends. The
 driver helpers are `pushNotify` (returns one verdict per entry — `""` delivered, the reason refused),
 **`pushNotifyDelivered`** (pushes and throws naming any refused address — what a case whose subject is
@@ -497,20 +498,21 @@ existed was removed once its last caller moved to `pushNameNotify`, since an une
 claim about the device that nothing keeps true.
 
 Both subscriptions are installed **at the queue point**, like every other value the fake settles there,
-and for the same reason: `vd.rs`'s `ParamsSubscribe` / `MetersSubscribe` arms only *send* registrations
-(`reg_param` / `reg_meter` are fire-and-forget — the reply is drained later by `pump`), so the handler
-performs no socket read and `absorb` cannot run inside it. A notify arriving while a registration is in
-flight is therefore judged afterwards, by the NEW set and through the NEW channel. Installing at the
-resolve instead would judge it by the old set and deliver it to the old channel — wrong in both
-directions, and reachable through a barrier on the subscribe or a scripted `subscribe` latency. The
-install also sits ahead of the refusal and device-lost branches, because the Rust assignments run after
-the registration loop whatever it returned and the failure travels back through `reply` alone: a refused
-subscribe still replaces the subscription rather than leaving the previous one installed.
+and for the same reason: `vd.rs` moves the channel to the new subscription's token as soon as the token
+exists, before its registrations run, and the token receives notifications from then on. A notify arriving
+while a registration is in flight is therefore judged by the NEW set and goes out through the NEW channel.
+Installing at the resolve instead would judge it by the old set and deliver it to the old channel — wrong in
+both directions, and reachable through a barrier on the subscribe or a scripted `subscribe` latency. The
+install also sits ahead of the refusal and device-lost branches. **Divergence kept**: after a refused
+subscribe, `vd.rs` leaves neither set subscribed (the transport releases a token whose activation failed),
+where the fake keeps the new set installed. The cases that refuse a subscribe are t7-meter's refused meter
+registrations, where the app ends the session on the refusal and its teardown drops the channel, so what the app
+observes does not depend on the difference; no case refuses a parameter subscribe.
 
 The other channel-dropping path is the **connection generation**. `vd_connect` and an epoch-matching
 `vd_disconnect` both run a teardown that drops both channels and both registered sets, mirroring the
-whole `Subs` going away with the worker on `Cmd::Shutdown` (and `install()` shutting the prior worker
-down). Without it the fake's gate would be "the app called unsubscribe" where the bridge's is "the
+connection and its subscriptions closing with the worker on `Cmd::Shutdown` (and `install()` shutting the
+prior worker down). Without it the fake's gate would be "the app called unsubscribe" where the bridge's is "the
 worker is alive" — and the app's unsubscribe is fire-and-forget, so the two differ by a real window.
 The two address sets survive the teardown, for the reason (l) gives above.
 

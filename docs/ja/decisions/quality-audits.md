@@ -236,6 +236,13 @@ id も) は無い。要求に id を付けたときにブローカーがそれ�
 機器が外れたことを、文字列ではなく型つきのエラーで運ぶようにするとき — 文字列を書くのも (`synchronize_lost`)
 見るのも (`Health::guard`) アプリ自身なので、こちらはブローカーの側の変更を要らない。
 
+**共通の transport に移ってから (2026-11-26)。** `vd.rs` は今、urx-device の transport の crate の上で動く。
+1 つ目の制限はもう当たらない: transport は応答の期限が切れると接続を終える (N1) ので、その接続の後のコマンドが
+遅れた返信を採ることは無い。ライブ同期のセッションにとって何が変わるかは device-control.md の
+「A missed response deadline ends the session」にある。2 つ目の制限は覆す条件を満たした:
+transport がそのフレームで自ら接続を終え、外れたことを `LinkLoss::UnitLost` として記録し、`vd.rs` は
+`Connection::lost_link` でそれを読んで `device-lost` と書く。文字列を書いて読み戻すことはもう無い。
+
 ## Where the audit-derived tests live
 
 unit の pin である `*.audit.test.ts` のほかに、監査は 3 つの spec に E2E のケースを残した。

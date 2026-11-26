@@ -270,6 +270,13 @@ or the app carries a device loss as a typed error instead of a string — both t
 are the app's own (`synchronize_lost` writes it, `Health::guard` reads it), so this needs no change
 on the broker's side.
 
+**Since the shared transport (2026-11-26).** `vd.rs` now runs over urx-device's transport crate. The first
+limit no longer applies: the transport ends the connection on a missed response deadline (N1), so no later
+command on that connection can take the late reply; what that changes for a live session is in
+device-control.md "A missed response deadline ends the session". The second limit's reopen condition is met: the transport ends the connection on that frame
+itself and records the loss as `LinkLoss::UnitLost`, which `vd.rs` reads through `Connection::lost_link`
+to word `device-lost`; no string is written and read back.
+
 ## Where the audit-derived tests live
 
 Besides the `*.audit.test.ts` unit pins, the audits left E2E cases in three specs:

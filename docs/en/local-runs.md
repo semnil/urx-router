@@ -109,8 +109,10 @@ node <out>.mjs
 
 ## The first build in a new worktree
 
-`vendor/urx-lcd-sim` is a git submodule: a clone and a new worktree start with it empty, and
-`pnpm install` links it as it is, so `git submodule update --init` runs before `pnpm install`.
+`vendor/urx-lcd-sim` and `vendor/urx-device` are git submodules: a clone and a new worktree start with
+them empty. `pnpm install` links `vendor/urx-lcd-sim` as it is, and `src-tauri/Cargo.toml` takes the
+transport crate from `vendor/urx-device` by path, so `git submodule update --init` runs before
+`pnpm install` and before any cargo command.
 
 `src-tauri/tauri.conf.json` bundles `src-tauri/THIRD_PARTY_LICENSES.html` as a resource, and the
 file is ignored by git. A new worktree therefore has none, and its first build fails in the build script
@@ -261,7 +263,7 @@ worktree that carried it, with that rule's two exceptions). Here the worktree is
 something — `reuseExistingServer` plus the E2E ports mean a forgotten checkout can hand a later run
 the bundle it built, so the run passes against code that is not the code under test. Remove it as
 `git worktree remove <path>` followed by `git branch -d <branch>` — git refuses that for a worktree
-with `vendor/urx-lcd-sim` checked out, and `pnpm sync:merged` keeps such a worktree rather than
+with a submodule checked out, and `pnpm sync:merged` keeps such a worktree rather than
 delete the submodule's repository with it — `git worktree remove --force <path>` removes it, that
 repository included; deleting the directory instead leaves the worktree registered until someone
 remembers `git worktree prune`. **On Windows, unlink a linked `node_modules` first**
@@ -276,7 +278,7 @@ script comparing the design-system artifact against `src/style.css` sees a selec
 as absent rather than as different — and absent is the bucket its output calls a specimen-only
 class. `pnpm sync:merged` is the three steps under one command for that reason.
 
-It fast-forwards the default branch to origin (bringing `vendor/urx-lcd-sim` to the commit it
+It fast-forwards the default branch to origin (bringing each submodule to the commit it
 records, unless it was moved by hand), removes the worktree that carried the branch, and deletes the
 branch. Every refusal names what it refused and why; `AGENTS.md` "Conventions" has the rule, and
 `scripts/sync-merged.mjs` the guards.
