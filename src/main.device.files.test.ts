@@ -400,12 +400,14 @@ describe("importing a settings file", () => {
   describe("during a live session", () => {
     const RATE = PARAMS.SAMPLE_RATE.id;
     const FOLLOW = PARAMS.FOLLOW_USB.id;
-    const unit = (followUsb: boolean, rate = 48_000, playback = 0): Record<string, number> => ({
+    const COUNT = PARAMS.SD_REC_TRACK_COUNT.id;
+    const unit = (followUsb: boolean, rate = 48_000, playback = 0, tracks?: number): Record<string, number> => ({
       [`${FOLLOW}/0/0`]: followUsb ? 1 : 0,
       [`${RATE}/0/0`]: rate,
       [`${PARAMS.SD_PLAYBACK.id}/0/0`]: playback,
+      ...(tracks === undefined ? {} : { [`${COUNT}/0/0`]: tracks / 2 }),
     });
-    const file = (followUsb: boolean, rate: number): Uint8Array =>
+    const file = (followUsb: boolean, rate: number, tracks?: number): Uint8Array =>
       buildUrxf([
         {
           chunk: "CURRENT",
@@ -415,9 +417,24 @@ describe("importing a settings file", () => {
             ...CURRENT_FIELDS,
             { id: RATE, typecode: 2, elemSize: 4, values: [rate] },
             { id: FOLLOW, typecode: 1, elemSize: 1, values: [followUsb ? 1 : 0] },
+            ...(tracks === undefined
+              ? []
+              : [{ id: COUNT, typecode: 1, elemSize: 1, values: [tracks / 2] } satisfies Field]),
           ],
         },
       ]);
+    /** The recorder's Track Count and the rate the plan on screen holds, read back through a save. */
+    const savedRecorder = async (shell: TauriShell): Promise<{ tracks: number | undefined; rate: number }> => {
+      shell.answer("plugin:dialog|save", "/tmp/imported.json");
+      shell.answer("write_text_file", null);
+      const before = shell.count("write_text_file");
+      $("btn-save").click();
+      await vi.waitFor(() => expect(shell.count("write_text_file")).toBe(before + 1), { timeout: 10_000 });
+      const saved: Plan = JSON.parse(
+        (shell.args[shell.invokes.lastIndexOf("write_text_file")] as { contents: string }).contents,
+      );
+      return { tracks: saved.nodeParams["out.sdrec"]?.sdRecTrackCount, rate: saved.sampleRate };
+    };
     /** The unit `seed`, the import armed with `bytes`, a session up — under the Scene only device
      *  scope where `scene` — and every confirm answered by `answer`. The unit accepts and does not
      *  keep a write `ignoreWrite` names. */
@@ -602,6 +619,51 @@ describe("importing a settings file", () => {
       await vi.waitFor(() => expect(shell.invokes.slice(from), "the import's flush").toContain("vd_set"), {
         timeout: 15_000,
       });
+      expect(written(shell, RATE, from)).toEqual([]);
+    });
+
+    // The unit keeps its own Track Count through an import, since nothing writes it, so the plan
+    // keeps the one the session read: whatever the file's, at the rate the unit runs, and under a
+    // rate the import takes at what that rate leaves of it, as the unit does.
+    it.each([
+      ["the same rate, fewer tracks", 48_000, 8, 2, 8],
+      ["the same rate, more tracks", 48_000, 2, 8, 2],
+      ["another rate, agreed, that lowers the unit's", 96_000, 16, 4, 8],
+    ])("keeps the unit's Track Count for a file with %s", SLOW, async (_, fileRate, unitTracks, fileTracks, kept) => {
+      const shell = await liveImport(file(false, fileRate, fileTracks), unit(false, 48_000, 0, unitTracks));
+      const from = await importNow(shell);
+      await imported();
+      await importDone(shell);
+      if (fileRate !== 48_000)
+        await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(fileRate), { timeout: 15_000 });
+      expect(await savedRecorder(shell)).toEqual({ tracks: kept, rate: fileRate });
+      if (fileRate === 48_000) {
+        for (const [step, done] of [
+          [EDIT_UNDO_ID, t().status.undone],
+          [EDIT_REDO_ID, t().status.redone],
+        ] as const) {
+          await editMenu(shell, step);
+          expect(statusText()).toBe(done);
+          expect(await savedRecorder(shell), `after ${step}`).toEqual({ tracks: kept, rate: fileRate });
+        }
+      }
+      expect(written(shell, COUNT, from), "nothing writes the Track Count").toEqual([]);
+    });
+
+    // Under the Scene only device scope the rate is the unit's as well, so a file's rate that
+    // would lower the Track Count does not lower it, whatever the file says about the count.
+    it.each([
+      ["two tracks", 2],
+      ["no Track Count", undefined],
+      ["more tracks than its rate carries", 16],
+    ])("keeps the rate and the Track Count under Scene only for a file with %s", SLOW, async (_, fileTracks) => {
+      const shell = await liveImport(file(false, 192_000, fileTracks), unit(false, 48_000, 0, 16), () => "Ok", true);
+      const from = await importNow(shell);
+      await vi.waitFor(() => expect(statusText()).toContain(t().status.settingsRateKept(formatRate(48_000))), {
+        timeout: 15_000,
+      });
+      await importDone(shell);
+      expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 });
       expect(written(shell, RATE, from)).toEqual([]);
     });
 

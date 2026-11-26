@@ -4834,6 +4834,30 @@ async function confirmImportClock(
   return { followUsb, takeRate: true };
 }
 
+/**
+ * The file a settings import made during a session applies: what the session leaves to the unit is
+ * answered with the plan's own value before anything is applied, so the import cannot move it. The
+ * recorder's Track Count is the unit's, since nothing writes it, and so is the rate where the file's
+ * is not taken (the Scene only device scope). Answered with the plan's value at the moment it is
+ * read, after any rate the import takes has brought the count under that rate's ceiling, as the unit
+ * does. A plan holding no Track Count has none to answer with, and the read fails with that.
+ */
+function sessionImportSource(source: ParamSource, takeRate: boolean): ParamSource {
+  return {
+    ...source,
+    get: async (paramId, x, y) => {
+      const address = paramId + x;
+      if (address === PARAMS.SAMPLE_RATE.id && !takeRate) return plan.sampleRate;
+      if (address === PARAMS.SD_REC_TRACK_COUNT.id) {
+        const count = plan.nodeParams[SDREC_NODE_ID]?.sdRecTrackCount;
+        if (count === undefined) throw new Error("the plan holds no Track Count to keep for the unit");
+        return count / 2;
+      }
+      return source.get(paramId, x, y);
+    },
+  };
+}
+
 /** Take a rate chosen in the app: during Live sync once the operator has agreed to what it costs,
  *  and not at all while the link holds the rate. */
 function pickSampleRate(rate: number): void {
@@ -6747,6 +6771,7 @@ if (!DEMO) {
     const source = paramSourceOf(current);
     const clock = live ? await confirmImportClock(source) : { followUsb: undefined, takeRate: true };
     if (!clock) return;
+    const fileRate = await source.get(PARAMS.SAMPLE_RATE.id, 0, 0).catch(() => null);
     // Re-checked HERE, not only at the flow's entry. This is the one wholesale plan
     // replacement that does not go through `loadPlan` — it mutates the module plan in
     // place — so it has no share of that backstop, and the entry check is separated
@@ -6782,7 +6807,8 @@ if (!DEMO) {
       }
     }
     let result: ReadbackResult;
-    let rateKept = false;
+    // A rate outside the session stays the unit's, and the status line says so where the file's differs.
+    const rateKept = live && !clock.takeRate && fileRate !== null && fileRate !== plan.sampleRate;
     // During a session the import is one undo step of its own, so the edits before it close here.
     if (live) planHistory?.commit();
     // The plan as the import found it: what the import moved is measured against it.
@@ -6791,12 +6817,11 @@ if (!DEMO) {
       // A settings FILE, not the connected unit: its values are the same kind of thing a plan
       // document supplies, so they are recorded as such. Calling them the unit's would claim
       // the connected device holds them, which a file written by another unit does not.
-      result = await applySourceState(getModel(modelId), plan, source);
-      // A rate outside the session stays the unit's.
-      if (live && !clock.takeRate && plan.sampleRate !== beforeImport.sampleRate) {
-        setPlanSampleRate(plan, beforeImport.sampleRate);
-        rateKept = true;
-      }
+      result = await applySourceState(
+        getModel(modelId),
+        plan,
+        live ? sessionImportSource(source, clock.takeRate) : source,
+      );
       markSource(plan, patchContestNames(diffPlans(beforeImport, plan)), "load");
     } catch (err) {
       showError(t().status.settingsError(errorText(err)));
