@@ -16,7 +16,7 @@ import { defaultPlan } from "./models/initial-state";
 import type { Plan } from "./core/plan";
 import { CURRENT_FIELDS, buildUrxf, sampleUrxf } from "./core/control/urxf.test-util";
 import type { Field } from "./core/control/urxf.test-util";
-import { formatRate } from "./core/constraints";
+import { formatRate, trackCountCeiling } from "./core/constraints";
 import { EDIT_MENU_EVENT, EDIT_REDO_ID, EDIT_UNDO_ID } from "./core/platform";
 import { t } from "./i18n";
 import {
@@ -445,21 +445,28 @@ describe("importing a settings file", () => {
       answer: (message: string) => string | Promise<string> = () => "Ok",
       scene = false,
       ignoreWrite?: (a: Record<string, unknown>) => boolean,
+      alsoMoves?: (a: Record<string, unknown>, held: Map<string, number>) => void,
+      /** A write it names lands only once the promise it hands back settles. */
+      holdWrite?: (a: Record<string, unknown>) => Promise<void> | undefined,
     ): Promise<TauriShell> => {
+      const commands = deviceCommands(
+        {
+          experimental_enabled: true,
+          "plugin:dialog|open": PATH,
+          read_binary_file: () => bytes.buffer,
+          "plugin:dialog|save": null,
+          "plugin:dialog|message": (a: Record<string, unknown>) =>
+            a.buttons === "OkCancel" ? answer(String(a.message ?? "")) : "Ok",
+        },
+        seed,
+        ignoreWrite,
+        alsoMoves,
+      );
+      const set = commands.vd_set as (a: Record<string, unknown>) => unknown;
+      if (holdWrite) commands.vd_set = (a: Record<string, unknown>) => holdWrite(a)?.then(() => set(a)) ?? set(a);
       const shell = (await bootApp({
         ...(scene ? { seed: { "urx-settings": JSON.stringify({ deviceScope: "scene" }) } } : {}),
-        tauri: deviceCommands(
-          {
-            experimental_enabled: true,
-            "plugin:dialog|open": PATH,
-            read_binary_file: () => bytes.buffer,
-            "plugin:dialog|save": null,
-            "plugin:dialog|message": (a: Record<string, unknown>) =>
-              a.buttons === "OkCancel" ? answer(String(a.message ?? "")) : "Ok",
-          },
-          seed,
-          ignoreWrite,
-        ),
+        tauri: commands,
       }))!;
       await vi.waitFor(() => expect($("btn-open-settings").hidden).toBe(false), { timeout: 10_000 });
       $("btn-live").click();
@@ -671,30 +678,103 @@ describe("importing a settings file", () => {
     // The unit lowers its Track Count to a rate's ceiling and never raises it back, so undoing a
     // rate that lowered it during the session leaves the plan at the count the unit kept — the
     // rate an import took and the one the picker took alike — and redoing it keeps that too.
+    /** The unit's own rule: a rate it moves to lowers its Track Count to that rate's ceiling, and
+     *  nothing raises it back. */
+    const unitLowersTrackCount = (a: Record<string, unknown>, held: Map<string, number>): void => {
+      const at = `${COUNT}/0/0`;
+      const pairs = held.get(at);
+      if (a.paramId === RATE && pairs !== undefined)
+        held.set(at, Math.min(pairs, trackCountCeiling(a.value as number) / 2));
+    };
+    /** The Track Count reads the app made from invoke `from` on. */
+    const countReads = (shell: TauriShell, from: number): number =>
+      shell.invokes.filter(
+        (cmd, i) => i >= from && cmd === "vd_get" && (shell.args[i] as Record<string, number>).paramId === COUNT,
+      ).length;
+    /** Put the plan on `rate` through the picker during the session, and close the entry. */
+    const pickLive = async (shell: TauriShell, rate: number): Promise<void> => {
+      const from = shell.invokes.length;
+      chooseRate(rate);
+      await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(rate), { timeout: 15_000 });
+      selectNode("ch1"); // the press that ends the edit's entry
+    };
+    /** Undo or redo a rate during the session, then wait for the Track Count read that follows
+     *  it once the session's writes have settled, and for the plan to hold `expected`. */
+    const stepAndReread = async (
+      shell: TauriShell,
+      step: string,
+      expected: { tracks: number; rate: number },
+    ): Promise<void> => {
+      const at = await editMenu(shell, step);
+      await vi.waitFor(() => expect(countReads(shell, at)).toBeGreaterThan(0), { timeout: 15_000 });
+      await vi.waitFor(async () => expect(await savedRecorder(shell), `after ${step}`).toEqual(expected), {
+        timeout: 15_000,
+      });
+    };
+
+    // The unit lowers its Track Count to a rate's ceiling and never raises it back, so undoing a
+    // rate that lowered it during the session leaves the plan at the count the unit kept — the
+    // rate an import took and the one the picker took alike — and redoing it keeps that too.
     it.each([
       ["an import", true],
       ["the rate picker", false],
     ])("keeps the Track Count a rate lowered when %s's rate is undone and redone", SLOW, async (_, imports) => {
-      const shell = await liveImport(file(false, 96_000), unit(false, 48_000, 0, 16));
+      const shell = await liveImport(
+        file(false, 96_000),
+        unit(false, 48_000, 0, 16),
+        () => "Ok",
+        false,
+        undefined,
+        unitLowersTrackCount,
+      );
       if (imports) {
         const from = await importNow(shell);
         await importDone(shell);
         await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
-      } else {
-        const from = shell.invokes.length;
-        chooseRate(96_000);
-        await vi.waitFor(() => expect(written(shell, RATE, from)).toContain(96_000), { timeout: 15_000 });
-        selectNode("ch1"); // the press that ends the edit's entry
-      }
+      } else await pickLive(shell, 96_000);
       expect(await savedRecorder(shell)).toEqual({ tracks: 8, rate: 96_000 });
-      for (const [step, rate] of [
-        [EDIT_UNDO_ID, 48_000],
-        [EDIT_REDO_ID, 96_000],
-      ] as const) {
-        const at = await editMenu(shell, step);
-        await vi.waitFor(() => expect(written(shell, RATE, at)).toContain(rate), { timeout: 15_000 });
-        expect(await savedRecorder(shell), `after ${step}`).toEqual({ tracks: 8, rate });
-      }
+      await stepAndReread(shell, EDIT_UNDO_ID, { tracks: 8, rate: 48_000 });
+      await stepAndReread(shell, EDIT_REDO_ID, { tracks: 8, rate: 96_000 });
+    });
+
+    // What the plan holds after such an undo is read from the unit, not predicted. Undone before
+    // the session sent it — the flush ahead of it still holding the link — the rate never reached
+    // the unit, which still runs at 48 kHz with 16 tracks, and so the plan holds 16 again.
+    it("reads the unit's Track Count after undoing a rate the session had not sent", SLOW, async () => {
+      let release = (): void => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let holding = false;
+      const shell = await liveImport(
+        file(false, 48_000),
+        unit(false, 48_000, 0, 16),
+        () => "Ok",
+        false,
+        undefined,
+        unitLowersTrackCount,
+        (a) => (holding && a.paramId === OSC ? held : undefined),
+      );
+      holding = true;
+      const from = shell.invokes.length;
+      turnOscOn(); // its flush holds the link while the rate is chosen and undone
+      await vi.waitFor(() => expect(written(shell, OSC, from)).toEqual([1]), { timeout: 15_000 });
+      chooseRate(96_000);
+      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 15_000 });
+      selectNode("ch1"); // the press that ends the edit's entry
+      await editMenu(shell, EDIT_UNDO_ID);
+      await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), { timeout: 15_000 });
+      const released = shell.invokes.length;
+      release();
+      await vi.waitFor(() => expect(countReads(shell, released)).toBeGreaterThan(0), { timeout: 15_000 });
+      // The count is read on its own once the session's writes settle, not by the full
+      // reconcile follow runs after the link has been quiet a while, which reads it as well.
+      const reads = shell.invokes
+        .map((cmd, i) => (i >= released && cmd === "vd_get" ? (shell.args[i] as Record<string, number>).paramId : null))
+        .filter((id) => id !== null);
+      expect(reads.slice(0, reads.indexOf(COUNT)), "read before the Track Count").not.toContain(PARAMS.CH_FADER.id);
+      await vi.waitFor(async () => expect(await savedRecorder(shell)).toEqual({ tracks: 16, rate: 48_000 }), {
+        timeout: 15_000,
+      });
+      expect(written(shell, RATE, from), "the rate never went out").toEqual([]);
     });
 
     // What stays the unit's is still read from the file, so a value the file carries wrong or not

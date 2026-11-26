@@ -1241,6 +1241,40 @@ function rereadSendsTarget(): void {
     .catch((err: unknown) => stopLiveOnError(errorText(err)));
 }
 
+/**
+ * Read the recorder's Track Count back from the unit once the session's writes have settled, and
+ * take it. Asked after an undo or a redo that moved the rate during a session: the count the plan
+ * is left holding is a prediction — the unit lowers its count to a rate's ceiling and never raises
+ * it back, but whether it ever ran at the rate the entry moves away from depends on whether the
+ * flush had sent that rate yet — and while nothing writes the count, the unit's is the plan's.
+ */
+function rereadTrackCount(): void {
+  if (!liveSessionUp || !hasRecorder(modelId)) return;
+  cueWrites = cueWrites
+    .then(async () => {
+      // The undo's own flush is armed behind a debounce, so the session is waited out until it
+      // has nothing armed or running, not only past the flush running now.
+      while (live?.isWriting()) {
+        await live.idle();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (!liveSessionUp) return;
+      const merged = await followRead("track count after an undo moved the rate", (into, signal) =>
+        applyNodeState(getModel(modelId), into, new Set([SDREC_NODE_ID]), signal, undefined, true),
+      );
+      if (!merged) return;
+      noteMergeConflicts(merged);
+      // absorb, as the write's own Track Count read does: an edit started while the read ran
+      // keeps its entry.
+      planHistory?.absorb(merged.devicePatch);
+      graph.render();
+      refreshInspector();
+      planValuesChanged();
+      assertReadComplete(merged, "track count read issues:");
+    })
+    .catch((err: unknown) => showError(t().error.trackCountReread(errorText(err))));
+}
+
 /** A rate change the unit announced: above 96 kHz the unit may have moved the destination. */
 function onAnnouncedRate(hz: number): void {
   if (!experimentalOn || !(hz > 96000)) return;
@@ -4073,6 +4107,7 @@ function reflectHistory(touch: PatchTouch): void {
   // out. resync() must NOT be called — it would re-base the snapshot to the plan
   // and suppress the very write the undo needs.
   markChanged();
+  if (liveSessionUp && touch.fields.has("sampleRate")) rereadTrackCount();
 }
 
 // Repaint the views for a patch already applied to the plan in place: an undo / redo, or
