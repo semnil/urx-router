@@ -154,6 +154,11 @@ export interface DiffResult {
    *  self-test, deciding whether a guessed mapping round-tripped — cannot get there
    *  from a string. */
   unread: VdCommand[];
+  /** The lines of `errors` whose reading the setting at the address refused
+   *  (`RefusedReadingError`): the unit answered, with a value that setting does not have. A
+   *  caller that goes on to read the address again keeps these, since the next answer can be an
+   *  ordinary one and would otherwise be the only record. */
+  refused: string[];
 }
 
 /**
@@ -197,16 +202,29 @@ export interface DiffOptions {
   matched?: Set<number>;
 }
 
+/** A reading the setting at an address refuses (`ssmcsInternalReadRefusal`): the read reached
+ *  the unit, and the unit answered with a value that setting does not have. Its message is the
+ *  reason alone; the command it was read for names the setting. */
+export class RefusedReadingError extends RangeError {
+  constructor(
+    readonly value: number,
+    reason: string,
+  ) {
+    super(reason);
+    this.name = "RefusedReadingError";
+  }
+}
+
 /**
  * One read of a command's address, for a pass that compares the unit with what a plan sends or
  * keeps the unit's value to put back. A reading the setting at that address refuses (an SSMCS
- * internal value outside its set, `ssmcsInternalReadRefusal`) fails the read, as it does on the
+ * internal value outside its set) fails the read with a `RefusedReadingError`, as it does on the
  * way into the plan, so no difference, re-send or restore is built from it.
  */
 export async function readAddressOf(command: VdCommand): Promise<number> {
   const value = await vdGet(command.paramId, command.x, command.y);
   const refusal = ssmcsInternalReadRefusal(command.name, value);
-  if (refusal !== null) throw new RangeError(refusal);
+  if (refusal !== null) throw new RefusedReadingError(value, refusal);
   return value;
 }
 
@@ -216,6 +234,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
   const errors: string[] = [];
   const causes: string[] = [];
   const unread: VdCommand[] = [];
+  const refused: string[] = [];
   for (const command of planToCommands(model, plan, scope, emit)) {
     if (exclude?.has(cmdAddr(command))) continue;
     signal?.throwIfAborted();
@@ -227,13 +246,15 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
       } else matched?.add(cmdAddr(command));
     } catch (e) {
       const cause = e instanceof Error ? e.message : String(e);
-      errors.push(`${command.name}${unverifiedGuessNote(model, command.paramId, command.y)}: ${cause}`);
+      const line = `${command.name}${unverifiedGuessNote(model, command.paramId, command.y)}: ${cause}`;
+      errors.push(line);
       causes.push(cause);
       unread.push(command);
+      if (e instanceof RefusedReadingError) refused.push(line);
       if (stopOnError) break;
     }
   }
-  return { diffs, errors, causes, unread };
+  return { diffs, errors, causes, unread, refused };
 }
 
 /**

@@ -78,6 +78,7 @@ import {
   diffPlan,
   reachedAndFailed,
   readAddressOf,
+  RefusedReadingError,
   sendConverging,
   sendNames,
   sendPresetsAndReconverge,
@@ -946,6 +947,9 @@ export async function runSelfTest(
     // read before the sweep, written back after the restore.
     const held = await phaseStep(diffPlan(model, original, { signal, emit: RESTORE_EMIT }));
     if (!held) return report; // cancelled during the diff
+    // A reading the setting refused is kept here: the pre-sweep read of the same address can
+    // answer an ordinary value, and would leave nothing to say the unit gave another.
+    for (const line of held.refused) report.errors.push(`capture check ${line}`);
     const writeBack = new Map(unrestorable);
     for (const command of [...held.diffs.map((d) => d.command), ...held.unread]) {
       writeBack.set(cmdAddr(command), command);
@@ -959,6 +963,8 @@ export async function runSelfTest(
     const unused = await phaseStep(unusedSideCommands(model, captured, cap.unreadNodes, signal));
     if (!unused) return report; // cancelled during the read of the other side
     if (unused.unread.length) {
+      // What each of those reads failed on, the setting and the value it answered among them.
+      report.errors.push(...unused.errors.map((line) => `unused-side read ${line}`));
       report.errors.push(
         `refusing to sweep: the side ${unused.unread.join(", ")} ${unused.unread.length === 1 ? "is" : "are"} not using could not be read, so a pass could change it and nothing would put it back`,
       );
@@ -1415,7 +1421,7 @@ async function unusedSideCommands(
   captured: ReadonlyMap<number, unknown>,
   captureUnread: ReadonlySet<string>,
   signal: AbortSignal | undefined,
-): Promise<{ commands: VdCommand[]; unread: string[] }> {
+): Promise<{ commands: VdCommand[]; unread: string[]; errors: string[] }> {
   const otherSide: ParamSource = {
     get: async (paramId, x, y) => {
       const value = await vdGet(paramId, x, y);
@@ -1434,7 +1440,18 @@ async function unusedSideCommands(
       (c) => c.node !== undefined && strips.has(c.node) && !captured.has(cmdAddr(c)),
     ),
     unread: [...read.unreadNodes].filter((id) => strips.has(id) && !captureUnread.has(id)),
+    // The failures behind `unread`, as the read words them (`<node label>: <cause>`).
+    errors: read.errors.filter((line) =>
+      model.nodes.some((n) => strips.has(n.id) && !captureUnread.has(n.id) && line.startsWith(`${n.label}: `)),
+    ),
   };
+}
+
+/** A failed read as a report line words it: a reading the setting refused names that setting
+ *  beside its reason, since the line itself names only the address. */
+function readFailureText(c: VdCommand, e: unknown): string {
+  if (e instanceof RefusedReadingError) return `${c.name}: ${e.message}`;
+  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -1455,7 +1472,7 @@ async function readPreSweep(
     try {
       preSweep.set(addr, await readAddressOf(c));
     } catch (e) {
-      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${e instanceof Error ? e.message : String(e)}`);
+      report.errors.push(`pre-sweep read ${formatAddrKey(addr)}: ${readFailureText(c, e)}`);
     }
   }
   return preSweep;
@@ -1530,17 +1547,22 @@ async function restoreUnsent(
   // What still differs after a read past the settle window, as [address, command, what the
   // unit answered or the read's failure].
   type Left = { addr: number; c: VdCommand; want: number; got: number | null; error?: string };
+  // An address whose reading the setting refused, with that failure: it is not read or sent
+  // again, so a later ordinary answer cannot stand in for it, and it counts as not restored.
+  const refused = new Map<number, Left>();
   const stillDiffers = async (): Promise<Left[]> => {
     const left: Left[] = [];
     for (const [addr, c] of unrestorable) {
       const want = before.get(addr);
-      if (want === undefined) continue;
+      if (want === undefined || refused.has(addr)) continue;
       signal?.throwIfAborted();
       try {
         const got = await readAddressOf(c);
         if (got !== want) left.push({ addr, c, want, got });
       } catch (e) {
-        left.push({ addr, c, want, got: null, error: e instanceof Error ? e.message : String(e) });
+        const entry = { addr, c, want, got: null, error: readFailureText(c, e) };
+        if (e instanceof RefusedReadingError) refused.set(addr, entry);
+        else left.push(entry);
       }
     }
     return left;
@@ -1575,6 +1597,7 @@ async function restoreUnsent(
     }
   }
   left ??= await stillDiffers();
+  left = [...left, ...refused.values()];
   for (const { addr, c, want, got, error } of left) {
     if (error !== undefined) {
       report.errors.push(`restore verify ${formatAddrKey(addr)}: ${error}`);

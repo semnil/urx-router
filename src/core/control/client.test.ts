@@ -252,9 +252,17 @@ describe("the SSMCS internal settings' readings", () => {
     expect(diff.diffs).toEqual([]);
     expect(diff.errors).toEqual([`${name}: read ${value}, not an integer from 0 to 200`]);
     expect(diff.unread).toEqual([target]);
+    expect(diff.refused).toEqual(diff.errors);
     const compare = await comparePlan(planToCommands(model, plan));
     expect(compare.errors).toEqual([`${name}: read ${value}, not an integer from 0 to 200`]);
     expect(compare.entries.some((e) => e.command.name === name)).toBe(false);
+  });
+
+  it("leave an ordinary read failure out of the refused lines", async () => {
+    vi.mocked(vdGet).mockRejectedValue(new Error("timeout"));
+    const diff = await diffPlan(model, ssmcsPlan());
+    expect(diff.errors.length).toBeGreaterThan(0);
+    expect(diff.refused).toEqual([]);
   });
 
   it("compare the ends of the set as ordinary readings", async () => {
