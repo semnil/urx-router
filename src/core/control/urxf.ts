@@ -14,7 +14,7 @@
 // with fewer scene chunks may or may not erase the unit's scene memory, which is
 // untested on hardware).
 
-import { SAMPLE_RATES } from "../constraints";
+import { SAMPLE_RATES, trackCountCeiling } from "../constraints";
 import { PARAMS } from "./params";
 import type { ParamSource } from "./readback";
 
@@ -156,7 +156,9 @@ const KEPT_ON_LOAD = new Set<number>([PARAMS.STEREO_GEQ_LIMIT.id, PARAMS.OUT_GEQ
  * report the plan as imported while part of it still shows what was there before.
  * The one exception is what `keeps` names, a value the unit itself keeps through a
  * load of the file. A sample rate the unit does not run at throws too, so the plan's rate
- * and the rate written from it stay ones the unit runs at.
+ * and the rate written from it stay ones the unit runs at; and so does the recorder's Track
+ * Count unless it comes with such a rate and within that rate's ceiling, so the plan never
+ * holds more tracks than the rate it keeps carries.
  */
 export function paramSourceOf(chunk: UrxfChunk): ParamSource {
   const at = (paramId: number, x: number, y: number): number | string => {
@@ -179,6 +181,17 @@ export function paramSourceOf(chunk: UrxfChunk): ParamSource {
       if (typeof value !== "number") throw new Error(`parameter ${paramId + x} is a string`);
       if (paramId + x === PARAMS.SAMPLE_RATE.id && !SAMPLE_RATES.includes(value)) {
         throw new Error(`settings file's sample rate ${value} Hz is not a rate the unit runs at`);
+      }
+      if (paramId + x === PARAMS.SD_REC_TRACK_COUNT.id) {
+        const rate = chunk.params.get(PARAMS.SAMPLE_RATE.id)?.[0];
+        if (typeof rate !== "number" || !SAMPLE_RATES.includes(rate)) {
+          throw new Error("settings file's track count comes with no rate the unit runs at");
+        }
+        if (value * 2 > trackCountCeiling(rate)) {
+          throw new Error(
+            `settings file's track count ${value * 2} is above the ${trackCountCeiling(rate)} of its rate`,
+          );
+        }
       }
       return value;
     },

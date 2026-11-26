@@ -349,7 +349,7 @@ describe("paramSourceOf", () => {
 // A file's sample rate becomes the plan's, and from the plan it is written to the unit. Only a
 // rate the unit runs at is taken; any other is a read that failed, and the plan keeps its rate.
 describe("a file's sample rate", () => {
-  const sourceAt = (rate: number) =>
+  const sourceAt = (rate: number | null, tracks?: number) =>
     paramSourceOf(
       parseUrxf(
         buildUrxf([
@@ -357,7 +357,13 @@ describe("a file's sample rate", () => {
             chunk: "CURRENT",
             block: "CSF_BACKUP",
             label: "",
-            fields: [...CURRENT_FIELDS, { id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] }],
+            fields: [
+              ...CURRENT_FIELDS,
+              ...(rate === null ? [] : [{ id: PARAMS.SAMPLE_RATE.id, typecode: 1, elemSize: 4, values: [rate] }]),
+              ...(tracks === undefined
+                ? []
+                : [{ id: PARAMS.SD_REC_TRACK_COUNT.id, typecode: 1, elemSize: 1, values: [tracks / 2] }]),
+            ],
           },
         ]),
       ).chunks[0]!,
@@ -376,6 +382,40 @@ describe("a file's sample rate", () => {
     const result = await applySourceState(getModel("URX44V"), plan, sourceAt(rate));
     expect(plan.sampleRate).toBe(48_000);
     expect(result.errors.filter((e) => e.startsWith("sample rate:"))).toHaveLength(1);
+  });
+
+  // The file's Track Count is the recorder's at the file's rate. Taken with a rate the plan
+  // does not take — one the unit does not run at, or none — it could leave the plan holding
+  // more tracks than its rate carries, so it is refused with that rate; above the ceiling
+  // of the file's own rate it is refused too.
+  const tracksAfter = async (planRate: number, rate: number | null, tracks: number) => {
+    const plan = emptyPlan("URX44V");
+    plan.sampleRate = planRate;
+    const result = await applySourceState(getModel("URX44V"), plan, sourceAt(rate, tracks));
+    return {
+      rate: plan.sampleRate,
+      tracks: plan.nodeParams["out.sdrec"]?.sdRecTrackCount,
+      failed: result.errors.filter((e) => e.startsWith("SD Rec track count:")).length,
+    };
+  };
+
+  it.each([
+    ["32000 Hz", 32_000],
+    ["no rate", null],
+  ] as const)("refuses the Track Count of a file with %s", async (_, rate) => {
+    const after = await tracksAfter(96_000, rate, 16);
+    expect(after.rate).toBe(96_000);
+    expect(after.failed).toBe(1);
+    expect(after.tracks ?? 0).toBeLessThanOrEqual(8);
+  });
+
+  it("refuses a Track Count above the ceiling of the file's own rate", async () => {
+    expect(await tracksAfter(48_000, 192_000, 16)).toMatchObject({ rate: 192_000, failed: 1 });
+  });
+
+  it("takes the Track Count with the file's rate", async () => {
+    expect(await tracksAfter(192_000, 48_000, 16)).toEqual({ rate: 48_000, tracks: 16, failed: 0 });
+    expect(await tracksAfter(48_000, 96_000, 8)).toEqual({ rate: 96_000, tracks: 8, failed: 0 });
   });
 });
 

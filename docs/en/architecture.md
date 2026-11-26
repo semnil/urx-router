@@ -417,6 +417,7 @@ carries a one-line map of the same directories and points here.
       (`applySourceState`) instead of a second inverse — the source travels as a parameter, so a file import
       and a device follow reconcile cannot cross. A sample rate the unit does not run at is refused like a
       parameter the file does not carry: the plan keeps its rate, and a live import asks nothing about it.
+      The recorder's Track Count is taken only with a rate the unit runs at and within that rate's ceiling.
       During Live sync an import is an edit the session writes to the unit. **Read-only**
       (writing back is untested against the unit's scene memory) and gated behind `--experimental`
     - `device-setup.ts` the unit's SETUP > GENERAL settings (brightness / auto power off / date-time formats
