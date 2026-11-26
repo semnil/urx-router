@@ -1615,10 +1615,9 @@ mod imp {
         // patience where it was and stops it moving with a constant it does not own.
         //
         // Only a whole line counts against FRAMES, so a stream read in pieces is given the
-        // same frames as one read whole. A line still arriving is not silence either, but
-        // pieces alone do not keep the drain going: it ends once no line has completed
-        // for the floor's length.
-        let deadline = Instant::now() + DRAIN_QUIET;
+        // same frames as one read whole, and the floor runs from the last whole line (or
+        // the start): silence and pieces of a line alike end the drain once no line has
+        // completed for that long, so where a line is split does not move the end.
         let mut progress = Instant::now();
         let mut frames = 0;
         while frames < DRAIN_FRAMES {
@@ -1633,14 +1632,9 @@ mod imp {
                         return None; // the straggler is consumed; the socket is clean again
                     }
                 }
-                Ok(None) if link.still_arriving() => {
-                    if progress.elapsed() >= DRAIN_QUIET {
-                        return None;
-                    }
-                }
-                // A read timeout is silence, not the end: keep waiting until the floor.
+                // Silence, or a line still arriving: neither is the end before the floor.
                 Ok(None) => {
-                    if Instant::now() >= deadline {
+                    if progress.elapsed() >= DRAIN_QUIET {
                         return None;
                     }
                 }
@@ -1653,7 +1647,7 @@ mod imp {
     /// Frames drain_late_reply will look through for a straggler before giving up.
     const DRAIN_FRAMES: usize = 64;
 
-    /// How long drain_late_reply keeps waiting on a link that is saying nothing. Held
+    /// How long drain_late_reply keeps waiting with no whole line arriving. Held
     /// separately from READ_TIMEOUT so shortening that one cannot quietly shorten this.
     const DRAIN_QUIET: Duration = Duration::from_millis(200);
 
@@ -3081,6 +3075,54 @@ mod imp {
                 Ok(json!(22)),
                 "the straggler was drained"
             );
+        }
+
+        // Where the late drain ends does not depend on how the last line was read: the
+        // floor runs from the last whole line whether what follows it is silence or the
+        // first half of the straggler.
+        #[test]
+        fn the_late_drain_ends_alike_for_a_straggler_read_whole_or_in_halves() {
+            for split in [false, true] {
+                let (mut link, mut peer) = vdp_link();
+                let writer = std::thread::spawn(move || {
+                    for i in 0..13 {
+                        let notify = json!({ "vdp": {
+                            "method": "notify",
+                            "uri": format!("/vd/meters/{i}:0"),
+                            "data": { "current_value": -60 }
+                        }});
+                        peer.write_all(format!("{notify}\n").as_bytes()).unwrap();
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    let straggler = format!(
+                        "{}\n",
+                        json!({ "vdp": { "method": "get", "uri": ADDR, "data": { "current_value": 11 } } })
+                    );
+                    let (head, tail) = straggler.split_at(straggler.len() / 2);
+                    std::thread::sleep(Duration::from_millis(40));
+                    if split {
+                        peer.write_all(head.as_bytes()).unwrap();
+                    }
+                    std::thread::sleep(Duration::from_millis(30));
+                    peer.write_all(if split { tail } else { &straggler }.as_bytes())
+                        .unwrap();
+                    peer
+                });
+                assert_eq!(
+                    drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                    None
+                );
+                let mut peer = writer.join().unwrap();
+                send(
+                    &mut peer,
+                    json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
+                );
+                assert_eq!(
+                    do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                    Ok(json!(22)),
+                    "split {split}: the straggler was drained"
+                );
+            }
         }
 
         // Half a line and then silence at close: the close drain ends at the read that
