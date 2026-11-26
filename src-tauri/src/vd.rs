@@ -993,7 +993,8 @@ mod imp {
         // The shutdown ends this side's half; the drain below reads what the broker
         // still has queued until its EOF, so the socket is not dropped mid-stream.
         link.begin_close();
-        for _ in 0..CLOSE_FRAMES {
+        let mut frames = 0;
+        while frames < CLOSE_FRAMES {
             // `Ok(None)` is the socket's own read timeout (READ_TIMEOUT, 50 ms): the
             // peer has nothing queued, so its EOF is not coming and there is nothing
             // left to drain. Counting those against the budget would spend 64 × that on
@@ -1007,9 +1008,10 @@ mod imp {
             // right direction for it. Said out loud so the next change to READ_TIMEOUT
             // knows it is moving this too.
             match link.read_frame() {
-                Ok(Some(_)) => {}
-                // A line still arriving is read on to its end, within the same budget.
-                Ok(None) if link.mid_line() => {}
+                Ok(Some(_)) => frames += 1,
+                // A line still arriving is read on to its end; only a whole line counts
+                // against the budget, and a read timeout ends the drain mid-line too.
+                Ok(None) if link.still_arriving() => {}
                 _ => break, // a closed / dead socket, or nothing more to read
             }
         }
@@ -1226,6 +1228,8 @@ mod imp {
     struct LineReader {
         pending: Vec<u8>,
         chunk: Vec<u8>,
+        /// The last call read bytes and completed no line with them.
+        arrived: bool,
     }
 
     impl LineReader {
@@ -1233,6 +1237,7 @@ mod imp {
             LineReader {
                 pending: Vec::new(),
                 chunk: vec![0u8; 8192],
+                arrived: false,
             }
         }
 
@@ -1249,6 +1254,7 @@ mod imp {
         /// driven from a byte source a test owns. Neither of those is reachable
         /// through a socket without a peer that misbehaves on cue.
         fn read_json<R: Read>(&mut self, sock: &mut R) -> Result<Option<Value>, String> {
+            self.arrived = false;
             if let Some(line) = self.take_line() {
                 return Ok(line);
             }
@@ -1282,7 +1288,9 @@ mod imp {
                 }
                 Err(e) => return Err(format!("broker-io: {e}")),
             }
-            Ok(self.take_line().flatten())
+            let line = self.take_line();
+            self.arrived = line.is_none();
+            Ok(line.flatten())
         }
 
         /// The first complete line in `pending`, removed from it and parsed (`Some(None)`
@@ -1358,9 +1366,10 @@ mod imp {
             self.reader.read_json(&mut self.sock)
         }
 
-        /// Whether part of a line has arrived and its end has not.
-        fn mid_line(&self) -> bool {
-            !self.reader.pending.is_empty()
+        /// Whether the last read_frame read part of a line and not its end, as against
+        /// a read that timed out.
+        fn still_arriving(&self) -> bool {
+            self.reader.arrived
         }
     }
 
@@ -1594,10 +1603,19 @@ mod imp {
         // queue behind it), which would have quartered how long a straggler has to show
         // up — silently, since nothing here tests that. The floor keeps this reader's
         // patience where it was and stops it moving with a constant it does not own.
+        //
+        // Only a whole line counts against FRAMES, so a stream read in pieces is given the
+        // same frames as one read whole. A line still arriving is not silence either, but
+        // pieces alone do not keep the drain going: it ends once no line has completed
+        // for the floor's length.
         let deadline = Instant::now() + DRAIN_QUIET;
-        for _ in 0..DRAIN_FRAMES {
+        let mut progress = Instant::now();
+        let mut frames = 0;
+        while frames < DRAIN_FRAMES {
             match link.read_frame() {
                 Ok(Some(msg)) => {
+                    frames += 1;
+                    progress = Instant::now();
                     if let Some(err) = synchronize_lost(&msg) {
                         return Some(err);
                     }
@@ -1605,8 +1623,12 @@ mod imp {
                         return None; // the straggler is consumed; the socket is clean again
                     }
                 }
-                // A read timeout is silence, not the end, and a line still arriving is
-                // not a reply yet: keep waiting until the floor.
+                Ok(None) if link.still_arriving() => {
+                    if progress.elapsed() >= DRAIN_QUIET {
+                        return None;
+                    }
+                }
+                // A read timeout is silence, not the end: keep waiting until the floor.
                 Ok(None) => {
                     if Instant::now() >= deadline {
                         return None;
@@ -2979,20 +3001,100 @@ mod imp {
             assert!(err.starts_with("broker-rejected:"), "{err}");
         }
 
-        // The close drain reads on past `None` while a line is still arriving, and stops
-        // at `None` once nothing is pending: `mid_line` is what tells the two apart.
+        // The drains read on past `None` while a line is still arriving, and treat `None`
+        // from a read that timed out as silence even with half a line pending:
+        // `still_arriving` is what tells the two apart.
         #[test]
-        fn a_line_still_arriving_is_mid_line_until_its_end() {
+        fn a_line_still_arriving_is_told_from_a_read_that_timed_out() {
             let (mut link, mut peer) = vdp_link();
-            assert!(!link.mid_line());
+            assert!(!link.still_arriving());
             peer.write_all(b"{\"vdp\":").unwrap();
             assert_eq!(link.read_frame(), Ok(None));
-            assert!(link.mid_line(), "half a line has arrived");
+            assert!(link.still_arriving(), "half a line has arrived");
+            assert_eq!(link.read_frame(), Ok(None), "then the link falls quiet");
+            assert!(
+                !link.still_arriving(),
+                "a timeout, though half a line is pending"
+            );
             peer.write_all(b"{}}\n").unwrap();
             assert_eq!(link.read_frame(), Ok(Some(json!({ "vdp": {} }))));
-            assert!(!link.mid_line());
-            assert_eq!(link.read_frame(), Ok(None), "a quiet link");
-            assert!(!link.mid_line());
+            assert!(!link.still_arriving());
+        }
+
+        /// Sends each of `lines` in two writes, a pause after each, so the reader on the
+        /// other end meets every line in two reads.
+        fn send_split(
+            mut peer: TcpStream,
+            lines: Vec<Value>,
+        ) -> std::thread::JoinHandle<TcpStream> {
+            std::thread::spawn(move || {
+                for line in lines {
+                    let text = format!("{}\n", json!({ "vdp": line }));
+                    let (head, tail) = text.split_at(text.len() / 2);
+                    for part in [head, tail] {
+                        peer.write_all(part.as_bytes()).unwrap();
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+                peer
+            })
+        }
+
+        // The late drain's frame budget counts whole lines, so a stream that reaches it in
+        // pieces still leads it to the straggler: left on the socket, the straggler would
+        // be the next read's answer on the address.
+        #[test]
+        fn the_late_drain_counts_lines_not_reads() {
+            let (mut link, peer) = vdp_link();
+            let mut lines: Vec<Value> = (0..33)
+                .map(|i| {
+                    json!({
+                        "method": "notify",
+                        "uri": format!("/vd/meters/{i}:0"),
+                        "data": { "current_value": -60 }
+                    })
+                })
+                .collect();
+            lines.push(json!({ "method": "get", "uri": ADDR, "data": { "current_value": 11 } }));
+            let writer = send_split(peer, lines);
+            assert_eq!(
+                drain_late_reply(&mut link, &mut Subs::new(), ADDR, "get", None),
+                None
+            );
+            let mut peer = writer.join().unwrap();
+            send(
+                &mut peer,
+                json!({ "method": "get", "uri": ADDR, "data": { "current_value": 22 } }),
+            );
+            assert_eq!(
+                do_get_value(&mut link, &mut Subs::new(), 1, 0, 0),
+                Ok(json!(22)),
+                "the straggler was drained"
+            );
+        }
+
+        // Half a line and then silence at close: the close drain ends at the read that
+        // times out, as it does on a quiet link, rather than holding the shutdown.
+        #[test]
+        fn the_close_drain_ends_at_a_timeout_with_half_a_line_pending() {
+            let (link, mut peer) = vdp_link();
+            let (tx, rx) = mpsc::channel();
+            let worker =
+                std::thread::spawn(move || serve(link, rx, Arc::new(LinkCounters::default())));
+            peer.write_all(b"{\"vdp\":").unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            let (done, closed) = mpsc::channel();
+            let started = Instant::now();
+            tx.send(Cmd::Shutdown { done: Some(done) }).unwrap();
+            closed
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the session closes");
+            let took = started.elapsed();
+            assert!(
+                took < Duration::from_millis(500),
+                "the close drain held the shutdown: {took:?}"
+            );
+            worker.join().unwrap();
         }
 
         /// A device-list endpoint on a free port, answering the one request with `frames`
