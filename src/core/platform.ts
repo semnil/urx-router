@@ -303,10 +303,12 @@ export const DELIVERY_GAP_MS = 2_000;
 export const NOTIFICATION_GAP = "notification-gap";
 
 // The connection whose messages are being put in order: its epoch, so only its own disconnect
-// ends that, and its session number, which every one of its messages carries. A connect
-// whose reply names no session leaves the number null, and the newest session seen is taken.
+// ends that, and the session its messages carry. Null while no connection is followed — before
+// the first connect and after the followed one's disconnect — when every message is set aside,
+// so what a closed session still delivers changes nothing. A connect whose reply names no
+// session follows the newest session seen.
 let deliveryEpoch: number | null = null;
-let deliverySession: number | null = null;
+let following: { readonly session: number | null } | null = null;
 // The current session's link watch: a missing message ends the session through it, as the
 // shell's report of a link that ended does. Cleared with the connection.
 let linkDropped: ((reason: string) => void) | null = null;
@@ -328,7 +330,8 @@ class DeliveryOrder {
   #timer: ReturnType<typeof setTimeout> | null = null;
 
   take<T>(message: RawDelivery<T>, deliver: (updates: T[]) => void): void {
-    const current = deliverySession ?? Math.max(this.#session, message.session);
+    if (following === null) return;
+    const current = following.session ?? Math.max(this.#session, message.session);
     if (message.session !== current) return;
     if (message.session !== this.#session) this.#start(message.session);
     if (this.#broken || message.seq < this.#next) return;
@@ -395,7 +398,7 @@ function resetDeliveries(): void {
 function beginDeliveries(connection: Connection): void {
   resetDeliveries();
   deliveryEpoch = connection.epoch;
-  deliverySession = typeof connection.session === "number" ? connection.session : null;
+  following = { session: typeof connection.session === "number" ? connection.session : null };
 }
 
 /** The code a write refused by `holdDeviceWrites` rejects with. A prefix, as the shell's own
@@ -577,7 +580,7 @@ export function vdDisconnect(epoch: number): Promise<void> {
   if (epoch === deliveryEpoch) {
     resetDeliveries();
     deliveryEpoch = null;
-    deliverySession = null;
+    following = null;
   }
   return invoke<void>("vd_disconnect", { epoch });
 }

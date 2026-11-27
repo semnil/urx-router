@@ -191,7 +191,9 @@ describe("invoke resolution and file/dialog primitives", () => {
 
 describe("streaming channel adapters", () => {
   it("fans meter, parameter, link and MIDI batches back into frontend records", async () => {
-    const harness = installInternals();
+    // A connect first: the bridge sets aside the messages of a session it is not following.
+    const harness = installInternals({ vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 } });
+    await platform.vdConnect("URX44V");
     const meters: platform.MeterUpdate[] = [];
     const params: platform.ParamUpdate[] = [];
     const drops: string[] = [];
@@ -399,6 +401,31 @@ describe("notification order", () => {
     channel.onmessage(delivery(1, [param(20)], 3));
     expect(() => channel.onmessage(delivery(0, [param(10)], 3))).toThrow("handler");
     expect(seen).toEqual([20]);
+  });
+
+  it("sets aside what a session delivers after its disconnect, and takes the next connect's own", async () => {
+    const harness = await connected(3);
+    const seen: number[] = [];
+    await platform.vdMetersSubscribe([[101, 0]], (m) => seen.push(m.value));
+    const [channel] = channelsOf<Delivery<{ meter_id: number; x: number; value: number }>>(
+      harness,
+      "vd_meters_subscribe",
+    );
+    const meter = (value: number) => [{ meter_id: 101, x: 0, value }];
+    channel.onmessage(delivery(0, meter(-120), 3));
+    await platform.vdDisconnect(1);
+    // A late message of the closed session — even one that would start its count again.
+    channel.onmessage(delivery(1, meter(-120), 3));
+    channel.onmessage(delivery(0, meter(-120), 3));
+    expect(seen, "nothing of a closed session reaches a handler").toEqual([-120]);
+    harness.invoke.mockImplementation(async (cmd: string) =>
+      cmd === "vd_connect" ? { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 2, session: 4 } : undefined,
+    );
+    await platform.vdConnect("URX44V");
+    channel.onmessage(delivery(2, meter(-120), 3));
+    channel.onmessage(delivery(0, meter(-450), 4));
+    expect(seen, "the next connection's own messages only").toEqual([-120, -450]);
+    await platform.vdDisconnect(2);
   });
 
   it("forgets the connection it followed at that connection's disconnect, not an older one's", async () => {
