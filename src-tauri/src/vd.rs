@@ -2050,7 +2050,9 @@ mod imp {
             // ledger counts no unregistration for addresses that were never registered.
             let released = counters.read().unregist_frames;
             let (third, _) = capture::<Delivery<super::super::ParamUpdate>>();
-            params_subscribe(tx, vec![(1, 0, 0)], third).unwrap();
+            // `tx` is kept until the ledger is read: the last sender's drop ends the session, and the
+            // frame rows with its connection.
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], third).unwrap();
             assert_eq!(counters.read().unregist_frames, released);
         }
 
@@ -2462,7 +2464,8 @@ mod imp {
             let (meters, _) = capture::<Delivery<super::super::MeterUpdate>>();
             assert!(meters_subscribe(tx.clone(), vec![(115, 0)], meters).is_err());
             let (params, _) = capture::<Delivery<super::super::ParamUpdate>>();
-            assert!(params_subscribe(tx, vec![(1, 0, 0)], params).is_err());
+            // `tx` is kept until the ledger is read, so the frame rows are still the connection's.
+            assert!(params_subscribe(tx.clone(), vec![(1, 0, 0)], params).is_err());
             let after = counters.read();
             assert_eq!(
                 (after.gets, after.sets, after.regist_frames),
@@ -2566,8 +2569,9 @@ mod imp {
             }
             assert_eq!(frames(), (3, 1), "the watch still holds 2, so 1 alone goes");
             answer.send(()).unwrap();
+            // `tx` is kept until the ledger is read, so the frame rows are still the connection's.
             assert_eq!(
-                get(tx, 1, 0, 0),
+                get(tx.clone(), 1, 0, 0),
                 Ok(7),
                 "the session goes on once the unit answers"
             );
