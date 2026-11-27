@@ -633,7 +633,6 @@ mod imp {
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE,
         CONTROL_WORKER_GONE,
     };
-    use std::collections::HashSet;
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -642,7 +641,7 @@ mod imp {
     use tauri::ipc::Channel;
     use urx_device_transport::connection::{
         open_with, CloseOutcome, Connection, ConnectionOptions, LinkFailure, LinkLoss,
-        NotificationHandler, Subscription,
+        NotificationHandler, SentFrames, Subscription,
     };
     use urx_device_transport::delivery::NotificationBatch;
     use urx_device_transport::discovery::{discover, DiscoveryOptions, SystemFirmware};
@@ -943,15 +942,16 @@ mod imp {
         connection: Arc<Connection>,
         routes: Arc<Mutex<Routes>>,
         counters: Arc<LinkCounters>,
+        /// The connection's sent frames the ledger has counted so far.
+        frames: SentFrames,
         meters: Option<Held>,
         params: Option<Held>,
         probe: Option<Held>,
     }
 
-    /// A subscription in use, with the addresses its token holds.
+    /// A subscription in use.
     struct Held {
         subscription: Subscription,
-        addresses: HashSet<SubscriptionAddress>,
     }
 
     impl Session {
@@ -1029,21 +1029,6 @@ mod imp {
             self.run(req, &at, &counters.sets).map(|_| ())
         }
 
-        /// What the other two subscriptions hold: an address in it is registered already,
-        /// and stays registered when this one lets it go (the transport's address union, K8).
-        fn others(&self, which: Which) -> HashSet<SubscriptionAddress> {
-            [
-                (Which::Meters, &self.meters),
-                (Which::Params, &self.params),
-                (Which::Probe, &self.probe),
-            ]
-            .into_iter()
-            .filter(|(w, _)| *w != which)
-            .filter_map(|(_, held)| held.as_ref())
-            .flat_map(|held| held.addresses.iter().copied())
-            .collect()
-        }
-
         /// Replaces one subscription: a new token for `addresses`, switched to, then the
         /// old token released (K10). The token and its channel come into being in one
         /// step under the routes lock, which the delivery thread takes for every batch, so
@@ -1065,11 +1050,6 @@ mod imp {
             if let Some(ended) = self.connection.terminal() {
                 return Err(ended_text(&self.connection, ended));
             }
-            let wanted: HashSet<SubscriptionAddress> = addresses.iter().copied().collect();
-            let mut held = self.others(which);
-            if let Some(old) = self.slot(which).as_ref() {
-                held.extend(old.addresses.iter().copied());
-            }
             let operation = self.connection.create_operation().map_err(|failure| {
                 request_text(
                     &self.connection,
@@ -1087,10 +1067,6 @@ mod imp {
                 install(&mut routes, new.token());
                 new
             };
-            LinkCounters::add(
-                &self.counters.regist_frames,
-                wanted.difference(&held).count(),
-            );
             let (tx, rx) = mpsc::channel();
             new.activate(&operation, move |outcome| {
                 let _ = tx.send(outcome);
@@ -1100,18 +1076,9 @@ mod imp {
                 Ok(Err(failure)) => Err(self.lifecycle_failed(&failure)),
                 Err(_) => Err(CONTROL_WORKER_GONE.to_string()),
             };
-            let others = self.others(which);
-            let replaced = self.slot(which).replace(Held {
-                subscription: new,
-                addresses: wanted.clone(),
-            });
+            let replaced = self.slot(which).replace(Held { subscription: new });
             let mut released = Ok(());
             if let Some(old) = replaced {
-                let kept: HashSet<SubscriptionAddress> = others.union(&wanted).copied().collect();
-                LinkCounters::add(
-                    &self.counters.unregist_frames,
-                    old.addresses.difference(&kept).count(),
-                );
                 released = self.release(&old.subscription);
             }
             if activated.is_err() {
@@ -1120,6 +1087,7 @@ mod imp {
                     let _ = self.release(&failed.subscription);
                 }
             }
+            self.note_frames();
             activated.and(released)
         }
 
@@ -1127,14 +1095,29 @@ mod imp {
         /// link watch reports that end; the call itself has no reply to carry it.
         fn unsubscribe(&mut self, which: Which, clear: impl FnOnce(&mut Routes)) {
             clear(&mut self.routes.lock().unwrap_or_else(|p| p.into_inner()));
-            let others = self.others(which);
             if let Some(old) = self.slot(which).take() {
-                LinkCounters::add(
-                    &self.counters.unregist_frames,
-                    old.addresses.difference(&others).count(),
-                );
                 let _ = self.release(&old.subscription);
             }
+            self.note_frames();
+        }
+
+        /// Puts the registration and unregistration frames the connection sent since the
+        /// last look on the ledger: what reached the socket, whether the registration, the
+        /// release or the close that sent them succeeded or failed (R1-C-A).
+        fn note_frames(&mut self) {
+            let now = self.connection.sent_frames();
+            let more = |now: u64, before: u64| {
+                usize::try_from(now.saturating_sub(before)).unwrap_or(usize::MAX)
+            };
+            LinkCounters::add(
+                &self.counters.regist_frames,
+                more(now.registrations, self.frames.registrations),
+            );
+            LinkCounters::add(
+                &self.counters.unregist_frames,
+                more(now.unregistrations, self.frames.unregistrations),
+            );
+            self.frames = now;
         }
 
         /// Releases a token and waits for the outcome: what it was the last holder of is
@@ -1320,6 +1303,7 @@ mod imp {
             return;
         }
         let session = Session {
+            frames: connection.sent_frames(),
             connection,
             routes,
             counters,
@@ -1462,6 +1446,8 @@ mod imp {
             // finish is told here, since nothing after this reads the session.
             unfinished => eprintln!("vd: the session's close did not finish: {unfinished:?}"),
         }
+        // The close's own unregistrations, on the ledger with the rest.
+        session.note_frames();
         // Sent LAST, so the app-exit path is released by the close having happened and
         // not merely by the intent to close.
         if let Some((done, _)) = exit_done.take() {
@@ -1483,8 +1469,8 @@ mod imp {
         // waits for what the worker sends back, under a bound, so none depends on a
         // peer's timing.
         use super::super::{
-            get, get_str, meters_subscribe, params_subscribe, probe_subscribe, set, set_str,
-            watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
+            get, get_str, meters_subscribe, params_subscribe, params_unsubscribe, probe_subscribe,
+            set, set_str, watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
         };
         use super::{
             link_failure_text, request_text, worker_at, Route, BROKER_UNRESPONSIVE,
@@ -2104,6 +2090,38 @@ mod imp {
             }
         }
 
+        // The ledger's frame rows are what reached the unit, however the call that sent
+        // them ended (R1-C-A): a registration refused at the second address counts the two
+        // registrations sent and the cleanup's one unregistration, not the three planned.
+        #[test]
+        fn a_refused_registration_counts_the_frames_it_sent() {
+            let (tx, unit, counters) = connected(|request| {
+                if request["vdp"]["uri"] == "/vd/parameters/2:0:0?operation=regist" {
+                    return vec![post_reply("/vd/parameters/2:0:0", "regist", 400)];
+                }
+                plain(request)
+            });
+            let (channel, _) = capture::<Vec<super::super::ParamUpdate>>();
+            assert!(
+                params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0), (3, 0, 0)], channel)
+                    .is_err()
+            );
+            let posted = |operation: &str| {
+                unit.seen()
+                    .iter()
+                    .filter(|uri| uri.ends_with(&format!("operation={operation}")))
+                    .count() as u64
+            };
+            assert_eq!((posted("regist"), posted("unregist")), (2, 1));
+            let stats = counters.read();
+            assert_eq!((stats.regist_frames, stats.unregist_frames), (2, 1));
+            assert_eq!(
+                get(tx, 1, 0, 0),
+                Ok(7),
+                "an ordinary refusal keeps the session"
+            );
+        }
+
         #[test]
         fn the_unit_is_chosen_by_model_and_none_or_an_ambiguous_choice_is_refused() {
             let a = Unit::start("<device-id-a>", plain);
@@ -2339,6 +2357,41 @@ mod imp {
                 let at = format!("/vd/parameters/{param}:0:0?operation=unregist");
                 assert_eq!(count(&at), 1, "{at}");
             }
+        }
+
+        // The ledger's frame rows take in every step that sends frames, not a subscribe alone:
+        // an unsubscribe's unregistrations are on it once the call is done, and the close's
+        // once the close signals.
+        #[test]
+        fn an_unsubscribe_and_the_close_put_their_unregistrations_on_the_ledger() {
+            let (tx, unit, counters) = connected(plain);
+            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (probe, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], params).unwrap();
+            probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
+            params_unsubscribe(tx.clone()).unwrap();
+            // The worker takes its commands in order: once this read is answered, the
+            // unsubscribe before it is done.
+            assert_eq!(get(tx.clone(), 1, 0, 0), Ok(7));
+            let frames = || {
+                let stats = counters.read();
+                (stats.regist_frames, stats.unregist_frames)
+            };
+            assert_eq!(frames(), (3, 1), "the watch still holds 2, so 1 alone goes");
+            let (done, signalled) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + Duration::from_secs(2))),
+            })
+            .unwrap();
+            signalled.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(frames(), (3, 3), "the close lets go of 2 and 3");
+            let posted = |operation: &str| {
+                unit.seen()
+                    .iter()
+                    .filter(|uri| uri.ends_with(&format!("operation={operation}")))
+                    .count() as u64
+            };
+            assert_eq!((posted("regist"), posted("unregist")), frames());
         }
 
         // The app-exit teardown's caller stops waiting at its instant, and the close ends by
