@@ -115,7 +115,8 @@ describe("Console Lock during a live session", () => {
     pressOscOn();
     announceLock(shell, 1);
     await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedPutBack), { timeout: 25_000 });
-    expect(oscFace()).toBe("OFF");
+    // The status line is set as the read-back ends; the board repaints on the reflect it requests.
+    await vi.waitFor(() => expect(oscFace()).toBe("OFF"));
     await quiet(shell);
     expect(writesTo(shell, PARAMS.OSC_ON.id)).toEqual([]);
     expect(errors(shell)).toEqual([]);
