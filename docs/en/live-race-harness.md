@@ -498,10 +498,10 @@ existed was removed once its last caller moved to `pushNameNotify`, since an une
 claim about the device that nothing keeps true.
 
 Both subscriptions are installed **at the queue point**, like every other value the fake settles there,
-and for the same reason: `vd.rs` moves the channel to the new subscription's token as soon as the token
-exists, before its registrations run, and the token receives notifications from then on. A notify arriving
-while a registration is in flight is therefore judged by the NEW set and goes out through the NEW channel.
-Installing at the resolve instead would judge it by the old set and deliver it to the old channel — wrong in
+and for the same reason: `vd.rs` moves the kind's route to the new subscription's token and handler as soon
+as the token exists, before its registrations run, and the token receives notifications from then on. A notify
+arriving while a registration is in flight is therefore judged by the NEW set and goes to the NEW handler.
+Installing at the resolve instead would judge it by the old set and deliver it to the old handler — wrong in
 both directions, and reachable through a barrier on the subscribe or a scripted `subscribe` latency. The
 install also sits ahead of the refusal and device-lost branches. **Divergence kept**: after a refused
 subscribe, `vd.rs` leaves neither set subscribed (the transport releases a token whose activation failed),
@@ -517,7 +517,7 @@ worker is alive" — and the app's unsubscribe is fire-and-forget, so the two di
 The two address sets survive the teardown, for the reason (l) gives above.
 
 On (m): the same three shapes, one layer down. `vd_meters_subscribe` replaces the registered set
-wholesale and `vd_meters_unsubscribe` drops the channel (`meter_ch = None` on the Rust side), while
+wholesale and `vd_meters_unsubscribe` drops the channel (the Rust side clears the meter route), while
 `meterAddrs` is deliberately left standing for the same reason `paramAddrs` is. The helpers are
 `pushMeters` (per-frame verdicts), **`pushMetersDelivered`** (throws at the push naming the refused
 address — what a case whose subject is the READOUT must use, since a refused frame is

@@ -50,6 +50,7 @@
     "allow-vd-link-stats",
     "allow-vd-meters-subscribe",
     "allow-vd-meters-unsubscribe",
+    "allow-vd-notifications",
     "allow-vd-params-subscribe",
     "allow-vd-params-unsubscribe",
     "allow-vd-probe-subscribe",

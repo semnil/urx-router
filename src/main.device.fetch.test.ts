@@ -1044,6 +1044,7 @@ describe("a source replaced on the board while a device read was in flight", () 
         unit.moveTo(move);
         unit.arm();
         notifyChannel(shell).onmessage([{ param_id: PARAMS.STREAM_DELAY_TIME.id, x: 0, y: 0, value: 200 }]);
+        await shell.delivered();
         await unit.reached;
       },
       settle: async (shell) => await quiet(shell),
@@ -1119,6 +1120,7 @@ describe("a source replaced on the board while a device read was in flight", () 
     // The unit announces something of STREAMING's own, which sends a follow read over that
     // node: the source it reads back is the one the session just wrote.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.STREAM_DELAY_TIME.id, x: 0, y: 0, value: 200 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(streamingDrawn()).toEqual(["bus.mix2:out"]);
     await stopLive();
@@ -1769,6 +1771,7 @@ describe("a scoped read under the Scene only device scope", () => {
     // A send level moved on the unit's own panel, which the follow layer answers with a read of
     // FX 1.
     notifyChannel(shell).onmessage([{ param_id: send.paramId, x: send.x, y: send.y, value: -1000 }]);
+    await shell.delivered();
     await vi.waitFor(
       () => expect(readsOf(shell, PARAMS.OSC_ASSIGN_FX.id), "the premise: FX 1 was read").toBeGreaterThan(before),
       { timeout: 10_000 },

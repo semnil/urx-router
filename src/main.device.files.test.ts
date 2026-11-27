@@ -1053,6 +1053,7 @@ describe("importing a settings file", () => {
       await vi.waitFor(() => expect(written(shell, SOURCE, from)).toEqual([256]), { timeout: 15_000 });
       expect(written(shell, RATE, from), "the file's rate went to the unit").toContain(96_000);
       notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 48_000 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("48000"), { timeout: 20_000 });
 
       const sent = (at: number): Record<string, number[]> => ({
@@ -1127,8 +1128,10 @@ describe("importing a settings file", () => {
       const panel = table.vd_set as (a: Record<string, unknown>) => unknown;
       panel({ paramId: FOLLOW, x: 0, y: 0, value: 1 });
       notifyChannel(shell).onmessage([{ param_id: FOLLOW, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       panel({ paramId: RATE, x: 0, y: 0, value: 96_000 });
       notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 96_000 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 20_000 });
 
       at = await editMenu(shell, EDIT_REDO_ID);

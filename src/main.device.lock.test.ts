@@ -254,9 +254,9 @@ describe("Console Lock during a live session", () => {
       try {
         await wire;
         announceLock(shell, 1);
-        await Promise.resolve();
+        await shell.delivered();
         announceLock(shell, 0);
-        await Promise.resolve();
+        await shell.delivered();
       } finally {
         answer();
       }
@@ -298,6 +298,7 @@ describe("Console Lock during a live session", () => {
       announceLock(shell, 0);
     }
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(writesTo(shell, PARAMS.CLIP_SAFE.id)).toEqual(sent);
     expect(errors(shell)).toEqual([]);
@@ -314,6 +315,8 @@ describe("Console Lock during a live session", () => {
     pressOscOn();
     announceLock(shell, 1);
     announceLock(shell, 0);
+    // The edit below is made once the app has taken the unlock.
+    await shell.delivered();
     const level = (): HTMLInputElement =>
       paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
     level().value = "-10";
@@ -358,9 +361,9 @@ describe("Console Lock during a live session", () => {
     try {
       await wire;
       announceLock(shell, 1);
-      await Promise.resolve();
+      await shell.delivered();
       announceLock(shell, 0);
-      await Promise.resolve();
+      await shell.delivered();
       oscOn();
       const level = paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
       level.value = "-20";
@@ -379,22 +382,52 @@ describe("Console Lock during a live session", () => {
 
   // A cue pressed just before the lock arrived: it passed the refusal, and the write it queued met
   // the lock on its way out. That is the lock's stop rather than a failed write, so the session
-  // goes on and the cues are read back to show what the unit holds.
+  // goes on and the cues are read back to show what the unit holds. The write waits behind the
+  // read-back of an earlier press, held on the wire until the lock has arrived: a notification
+  // reaches the app on a later task, and a write queued behind nothing leaves before that.
   it("takes a cue the lock caught on its way out as not sent, and reads the cues back", SLOW, async () => {
-    const shell = await bootDevice();
+    const table = deviceCommands();
+    const get = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let hold: Promise<void> | null = null;
+    let release!: () => void;
+    let onWire!: () => void;
+    const wire = new Promise<void>((r) => (onWire = r));
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_get: async (a: Record<string, unknown>) => {
+          if (hold && a.paramId === PARAMS.CUE_MONO.id) {
+            onWire();
+            await hold;
+          }
+          return get(a);
+        },
+      },
+    }))!;
     await up();
     await quiet(shell);
     selectNode("ch1");
     const cueReads = (): number =>
       shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.CUE_MONO.id).length;
+    const press = (label: string): void =>
+      [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
+        .find((b) => b.textContent === label)!
+        .click();
+    hold = new Promise<void>((r) => (release = r));
+    try {
+      press(t().inspector.on);
+      await wire;
+      press(t().inspector.off);
+      announceLock(shell, 1);
+      await shell.delivered();
+    } finally {
+      hold = null;
+      release();
+    }
     const before = cueReads();
-    [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent === t().inspector.on)!
-      .click();
-    announceLock(shell, 1);
     await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent), { timeout: 10_000 });
     await quiet(shell);
-    expect(writesTo(shell, PARAMS.CUE_MONO.id)).toEqual([]);
+    expect(writesTo(shell, PARAMS.CUE_MONO.id), "the first press is sent, and the second is not").toEqual([1]);
     expect(cueReads(), "the cues are read back").toBeGreaterThan(before);
     expect(live().getAttribute("aria-checked")).toBe("true");
     expect(errors(shell)).toEqual([]);

@@ -64,10 +64,12 @@ describe("the displayed side and the unit's LCD selection", () => {
     expect(addrs, "the session registers the LCD selection").toContainEqual([PARAMS.LCD_SELECTION.id, 0, 0]);
     expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)"));
     // A selection of anything but a stereo channel names no side.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0000 }]);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0300 }]);
+    await shell.delivered();
     expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
     expect(lcdWrites(shell), "a side the unit chose is not written back").toEqual([]);
     await end(shell);
@@ -92,11 +94,14 @@ describe("the displayed side and the unit's LCD selection", () => {
       for (let i = 0; i < 1000 && lcdWrites(shell).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
       expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      await shell.delivered();
       expect(showing(), "the late answer to the first write").toBe("C H 5 slash 6, showing C H 5 (L)");
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0100 }]);
+      await shell.delivered();
       expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
       // The positive control: a selection made on the unit itself still shows.
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      await shell.delivered();
       expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
     } finally {
       vi.useRealTimers();
@@ -123,12 +128,24 @@ describe("the displayed side and the unit's LCD selection", () => {
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0100]);
     // The unit moving its own selection while a write is on the wire: the latest switch goes
-    // out even when it is the value that write sent, since the unit no longer holds it.
+    // out even when it is the value that write sent, since the unit no longer holds it. The
+    // write is held on the wire until the announcement has reached the app, which takes a
+    // task of its own.
+    let answerWrite: (() => void) | undefined;
+    let holding = true;
+    shell.answer("vd_set", (a: Record<string, unknown>) => {
+      if (a.paramId !== PARAMS.LCD_SELECTION.id || !holding) return undefined;
+      holding = false;
+      return new Promise<void>((resolve) => (answerWrite = resolve));
+    });
     nameArea().click();
+    await vi.waitFor(() => expect(answerWrite, "the premise: the write is on the wire").toBeDefined());
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0102 }]);
+    await shell.delivered();
     nameArea().click();
     nameArea().click();
     expect(showing()).toBe("C H 5 slash 6, showing C H 6 (R)");
+    answerWrite!();
     await drainShell(shell, () => false);
     expect(lcdWrites(shell)).toEqual([0x0101, 0x0100, 0x0101, 0x0101]);
     await end(shell);
@@ -217,6 +234,7 @@ describe("the displayed side and the unit's LCD selection", () => {
     nameArea().click();
     expect(showing()).toBe("C H 5 slash 6, showing C H 5 (L)");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0103 }]);
+    await shell.delivered();
     expect(strip("CH 7/8")!.querySelector(".con-side")!.getAttribute("aria-label")).toBe(
       "C H 7 slash 8, showing C H 8 (R)",
     );
@@ -233,6 +251,7 @@ describe("the displayed side and the unit's LCD selection", () => {
       nameArea().click();
       nameArea().click();
       notifyChannel(shell).onmessage([{ param_id: PARAMS.LCD_SELECTION.id, x: 0, y: 0, value: 0x0101 }]);
+      await shell.delivered();
     } finally {
       vi.useRealTimers();
     }
@@ -509,6 +528,7 @@ describe("the SIM view over a live session", () => {
       expect((await transport().snapshot()).get(path), "the move the session missed").toBe(10),
     );
     notifyChannel(shell).onmessage([{ param_id: id, x: 0, y: 0, value: 10 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect((await transport().snapshot()).get(path), "an announced move").toBe(11));
   });
 
@@ -531,6 +551,7 @@ describe("the SIM view over a live session", () => {
     await goLive();
     await vi.waitFor(() => expect(held.length, "a read again is under way").toBeGreaterThan(0));
     notifyChannel(shell).onmessage([{ param_id: id, x: 0, y: 0, value: 9 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect((await transport().snapshot()).get(path)).toBe(10));
     for (const done of held.splice(0)) done(8);
     await new Promise((done) => setTimeout(done, 50));
@@ -584,6 +605,7 @@ describe("the SIM view over a live session", () => {
       await goLive();
       await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.bank")).toBe(tab));
       notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 9 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect((await transport().snapshot()).get("scene.selected")).toBe(10));
       expect((await transport().snapshot()).get("scene.bank"), "10 is on that tab too").toBe(tab);
     },
@@ -619,9 +641,11 @@ describe("the SIM view over a live session", () => {
       await transport().write("scene.selected", 3);
       expect(await shown("scene.selected"), "a row picked on the glass").toBe(3);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.SCENE_CURSOR.id, x: 0, y: 0, value: 0x8001 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shown("scene.selected"), "the unit's cursor on P01").toBe(101));
       expect(await shown("scene.bank"), "on the tab that lists P01").toBe("Simple");
       notifyChannel(shell).onmessage([{ param_id: PARAMS.CURRENT_SCENE.id, x: 0, y: 0, value: 0x8002 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shown("scene.current"), "P02 current").toBe(102));
       $("btn-live").click();
       await invoked(shell, "vd_disconnect");
@@ -651,8 +675,10 @@ describe("the SIM view over a live session", () => {
         "the card is announced to the session",
       ).toBe(true);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await card(), "a card put in").toBe(true));
       notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await card(), "and taken out").toBe(false));
       $("btn-live").click();
       await invoked(shell, "vd_disconnect");
@@ -700,6 +726,7 @@ describe("the SIM view over a live session", () => {
     await goLive();
     await vi.waitFor(() => expect(held.length, "a read again is under way").toBeGreaterThan(0));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.SD_CARD.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect((await transport().snapshot()).get("sd.mounted")).toBe(false));
     for (const done of held.splice(0)) done(1);
     await new Promise((done) => setTimeout(done, 50));
@@ -797,9 +824,11 @@ describe("the SIM view over a live session", () => {
     if (levels?.kind !== "device") throw new Error("the glass reads no unit levels");
     expect(levels.clipSafe(1)).toBe(false);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     expect(levels.clipSafe(1), "connector 1 is jack 0").toBe(true);
     expect(levels.clipSafe(2)).toBe(false);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     expect(levels.clipSafe(1)).toBe(false);
   });
 
@@ -836,6 +865,7 @@ describe("the SIM view over a live session", () => {
     await expect(transport().write("setup.integration.fx1Send", "MIX 2")).rejects.toThrow("refused");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 2 }]);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.POST_FADER_SEND_FX2.id, x: 0, y: 0, value: 290 }]);
+    await shell.delivered();
     await vi.waitFor(async () =>
       expect((await transport().snapshot()).get("setup.integration.fx2Send"), "the unit's announced send").toBe(
         "MIX 2",
@@ -846,6 +876,7 @@ describe("the SIM view over a live session", () => {
       timeout: 10_000,
     });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await expect(transport().write("setup.integration.fx1Send", "MIX 1")).rejects.toThrow("refused");
     expect(setsOf(shell, PARAMS.POST_FADER_SEND_FX1.id), "nothing written once the DAW let go").toEqual([[0, 290]]);
   });
@@ -862,6 +893,7 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(async () => expect(await daw(), "none holds it").toBe(false));
     await vi.waitFor(() => expect(held(), "the glass takes it").toBe(true));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 2 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await daw(), "the unit's announcement").toBe(true));
     $("btn-live").click();
     await invoked(shell, "vd_disconnect");
@@ -884,8 +916,10 @@ describe("the SIM view over a live session", () => {
       const before = readsOf(shell, PARAMS.BRIGHTNESS.id);
       expect(before, "the premise: the session read SETUP once").toBeGreaterThan(0);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(readsOf(shell, PARAMS.BRIGHTNESS.id)).toBeGreaterThan(before), { timeout: 10_000 });
       notifyChannel(shell).onmessage([{ param_id: PARAMS.OPERATION_MODE.id, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect((await transport().snapshot()).get("setup.operationMode")).toBe("Simple"));
       $("btn-live").click();
       await invoked(shell, "vd_disconnect");
@@ -898,6 +932,7 @@ describe("the SIM view over a live session", () => {
     await goLive();
     shell.failOnce("vd_get", new Error("setup read lost"));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.BRIGHTNESS.id, x: 0, y: 0, value: 4 }]);
+    await shell.delivered();
     await invoked(shell, "vd_disconnect");
     expect(errors(shell).join(" "), "the failed re-read is what ended it").toContain("setup read lost");
   });
@@ -969,6 +1004,7 @@ describe("the SIM view over a live session", () => {
     await goLive();
     await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
     notifyChannel(shell).onmessage([{ param_id: DAW, x: 0, y: 0, value: 2 }]);
+    await shell.delivered();
     release();
     // A SETUP write queues behind the read, so its arrival says the read has been taken or dropped.
     await transport().write("setup.brightness", 3);
@@ -1029,6 +1065,7 @@ describe("the SIM view over a live session", () => {
       { [`${PARAMS.DAW_INTEGRATION.id}/0/0`]: 2, [`${FX2}/0/0`]: 290 },
     );
     notifyChannel(shell).onmessage([{ param_id: FX1, x: 0, y: 0, value: 290 }]);
+    await shell.delivered();
     await answer();
     expect(await shownSends(), "FX 1 as announced, FX 2 as read").toEqual(["MIX 2", "MIX 2"]);
     await expect(transport().write("setup.integration.fx2Send", "MIX 1"), "the DAW the read found").resolves.toBe(
@@ -1078,6 +1115,7 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(setsOf(shell, FX1)).toEqual([[0, 290]]), { timeout: 10_000 });
     await expect(transport().write("setup.integration.fx2Send", "MIX 2")).resolves.toBe("MIX 2");
     notifyChannel(shell).onmessage([{ param_id: PARAMS.DAW_INTEGRATION.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     release();
     // The queue has drained once the glass shows the send the unit still holds.
     await vi.waitFor(
@@ -1115,10 +1153,11 @@ describe("the SIM view over a live session", () => {
     const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
     let shell: TauriShell | null = null;
     const announce = (value: number): void => notifyChannel(shell!).onmessage([{ param_id: SENDS, x: 0, y: 0, value }]);
-    /** A choice on the unit's panel: held by the unit, and announced. */
-    const press = (value: number): void => {
+    /** A choice on the unit's panel: held by the unit, and announced; settles once the page has taken it. */
+    const press = async (value: number): Promise<void> => {
       set({ paramId: SENDS, x: 0, y: 0, value });
       announce(value);
+      await shell!.delivered();
     };
     const boot = async (): Promise<TauriShell> => {
       shell = (await bootApp({ tauri: cmds }))!;
@@ -1147,8 +1186,10 @@ describe("the SIM view over a live session", () => {
         expect(setsOf(shell, SENDS)).toEqual([[0, FX1]]);
         // MIX 2 chosen on the unit before the write lands, then the write's own answer.
         unit.announce(MIX2);
+        await shell.delivered();
         expect(await sendsShown(), "the glass keeps its choice").toBe("FX1");
         unit.announce(FX1);
+        await shell.delivered();
       } finally {
         vi.useRealTimers();
       }
@@ -1181,7 +1222,7 @@ describe("the SIM view over a live session", () => {
       await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
       await transport().write("ui.sendsTarget", "FX1");
       await transport().write("ui.sendsTarget", "FX2");
-      unit.press(MIX2);
+      await unit.press(MIX2);
       expect(await sendsShown(), "the glass keeps its latest choice").toBe("FX2");
       release();
       await transport().write("setup.brightness", 2);
@@ -1218,7 +1259,7 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
     // FX 1 chosen, MIX 2 on the unit (a read is queued behind FX 1's write), then FX 2 behind that read.
     await transport().write("ui.sendsTarget", "FX1");
-    unit.press(MIX2);
+    await unit.press(MIX2);
     await transport().write("ui.sendsTarget", "FX2");
     release();
     await transport().write("setup.brightness", 2);
@@ -1251,6 +1292,7 @@ describe("the SIM view over a live session", () => {
         { param_id: SENDS, x: 0, y: 0, value: FX1 },
         { param_id: SENDS, x: 0, y: 0, value: MIX2 },
       ]);
+      await shell.delivered();
     } finally {
       vi.useRealTimers();
     }
@@ -1269,10 +1311,11 @@ describe("the SIM view over a live session", () => {
       await transport().write("ui.sendsTarget", "FX1");
       await writes(shell, 1);
       // MIX 2 chosen on the unit before the write lands; the unit then lands the write and answers it.
-      unit.press(MIX2);
+      await unit.press(MIX2);
       await new Promise((r) => setTimeout(r, 100));
       unit.set({ paramId: SENDS, x: 0, y: 0, value: FX1 });
       unit.announce(FX1);
+      await shell.delivered();
     } finally {
       vi.useRealTimers();
     }
@@ -1295,7 +1338,7 @@ describe("the SIM view over a live session", () => {
     };
     const shell = await unit.boot();
     await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
-    unit.press(MIX2);
+    await unit.press(MIX2);
     await vi.waitFor(async () => expect(await sendsShown(), "the unit's choice").toBe("MIX2"));
     release();
     await transport().write("setup.brightness", 3);
@@ -1350,6 +1393,7 @@ describe("the SIM view over a live session", () => {
       await goLive();
       notifyChannel(shell).onmessage([{ param_id: SAFE, x: 0, y: 0, value: 1 }]);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await shell.delivered();
       await vi.waitFor(async () =>
         expect(await shownSafe("safe.ch1.on", "safe.ch1.chOn", "safe.ch1.name")).toEqual([true, true, false]),
       );
@@ -1374,11 +1418,14 @@ describe("the SIM view over a live session", () => {
           [0, 0x2],
         ]);
         notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100002 }]);
+        await shell.delivered();
         expect(await shownSafe("safe.ch1.name"), "the late answer to the first write").toEqual([false]);
         notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+        await shell.delivered();
         expect(await shownSafe("safe.ch1.name")).toEqual([false]);
         // The positive control: the same value pressed on the unit's panel once no write is waiting.
         notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100002 }]);
+        await shell.delivered();
         expect(await shownSafe("safe.ch1.name")).toEqual([true]);
       } finally {
         vi.useRealTimers();
@@ -1400,8 +1447,10 @@ describe("the SIM view over a live session", () => {
       expect(setsOf(shell, SELECT)).toEqual([[0, 0x100000]]);
       // CH ON pressed on the unit before the write lands, then the write's own answer.
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await shell.delivered();
       expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn")).toEqual([false, true]);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      await shell.delivered();
       expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "what the unit holds after both").toEqual([
         true,
         false,
@@ -1426,10 +1475,12 @@ describe("the SIM view over a live session", () => {
       // A second press while the first write waits for its answer, and CH ON pressed on the unit.
       await transport().write("safe.ch1.chLevel", true);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x2 }]);
+      await shell.delivered();
       await new Promise((r) => setTimeout(r, 50));
       expect(setsOf(shell, SELECT), "the second write waits for the first one's answer").toEqual([[0, 0x100000]]);
       // The first write's answer: the unit holds Name, over the CH ON it took before the write landed.
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      await shell.delivered();
       for (let i = 0; i < 1000 && setsOf(shell, SELECT).length < 2; i++) await new Promise((r) => setTimeout(r, 10));
       expect(setsOf(shell, SELECT)).toEqual([
         [0, 0x100000],
@@ -1457,9 +1508,9 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
     await transport().write("safe.ch1.name", true);
     expect(await shownSafe("safe.ch1.name")).toEqual([true]);
-    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await unit.press(PARAMS.CONSOLE_LOCK.id, 1);
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
-    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    await unit.press(PARAMS.CONSOLE_LOCK.id, 0);
     release();
     await transport().write("setup.brightness", 2);
     await vi.waitFor(
@@ -1485,7 +1536,7 @@ describe("the SIM view over a live session", () => {
       if (a.paramId !== SELECT) return unit.set(a);
       if (opts.pressFirst !== undefined && !pressed) {
         pressed = true;
-        unit.press(SELECT, opts.pressFirst);
+        void unit.press(SELECT, opts.pressFirst);
       }
       if (opts.take) unit.set(a);
       return undefined;
@@ -1542,12 +1593,13 @@ describe("the SIM view over a live session", () => {
       const unit = silentSelectUnit({ take: false });
       const shell = await unit.boot();
       // CH 1's row: [Safe] and Name, pressed on the unit.
-      unit.press(SAFE, 1);
-      unit.press(SELECT, 0x100000);
+      await unit.press(SAFE, 1);
+      await unit.press(SELECT, 0x100000);
       await vi.waitFor(async () => expect(await shownSafe("safe.ch1.on", "safe.ch1.name")).toEqual([true, true]));
       unit.set({ paramId: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 1 });
       unit.set({ paramId: PARAMS.SIGNAL_TYPE.id, x: 0, y: 1, value: 1 });
       notifyChannel(shell).onmessage([{ param_id: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
         timeout: 10_000,
       });
@@ -1601,7 +1653,7 @@ describe("the SIM view over a live session", () => {
     holdRead = true;
     await transport().write("safe.ch1.name", true);
     await vi.waitFor(() => expect(reading, "the premise: the read back is out").toBe(true), { timeout: 10_000 });
-    unit.press(SELECT, 0x2);
+    await unit.press(SELECT, 0x2);
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.chOn")).toEqual([true]));
     release();
     await new Promise((r) => setTimeout(r, 100));
@@ -1636,7 +1688,7 @@ describe("the SIM view over a live session", () => {
       for (let i = 0; i < 1000 && !reading; i++) await new Promise((r) => setTimeout(r, 10));
       expect(reading, "the premise: the read back is out").toBe(true);
       // The write lands and is answered; the read back then answers what it took before.
-      unit.press(SELECT, 0x100000);
+      await unit.press(SELECT, 0x100000);
       release();
       await new Promise((r) => setTimeout(r, 100));
       expect(await shownSafe("safe.ch1.name"), "the answer over the older read").toEqual([true]);
@@ -1670,9 +1722,9 @@ describe("the SIM view over a live session", () => {
     await transport().write("setup.brightness", 3);
     await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
     await transport().write("safe.ch1.name", true);
-    unit.press(PARAMS.CONSOLE_LOCK.id, 1);
+    await unit.press(PARAMS.CONSOLE_LOCK.id, 1);
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "put back at the lock").toEqual([false]));
-    unit.press(PARAMS.CONSOLE_LOCK.id, 0);
+    await unit.press(PARAMS.CONSOLE_LOCK.id, 0);
     await transport().write("setup.brightness", 2);
     await transport().write("safe.ch1.chLevel", true);
     release();
@@ -1729,6 +1781,7 @@ describe("the SIM view over a live session", () => {
     await openSim();
     await goLive();
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLocked));
     await expect(transport().write("safe.ch1.name", true)).rejects.toThrow("refused");
     expect(statusText(), "the status line says it was not sent").toBe(t().status.consoleLockedNotSent);
@@ -1757,6 +1810,7 @@ describe("the SIM view over a live session", () => {
     await goLive();
     await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+    await shell.delivered();
     release();
     // A SETUP write queues behind the read, so its arrival says the read has been taken.
     await transport().write("setup.brightness", 3);
@@ -1792,16 +1846,19 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 0, 1);
       await unitSet(LINK, 1, 1);
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await seconds()).toEqual([true, true, false, false]), { timeout: 10_000 });
       // CH 3/4 linked by a scene recall, which announces no link, only the bulk change.
       await unitSet(LINK, 2, 1);
       await unitSet(LINK, 3, 1);
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownLink("ch3")).toBe("STEREO"), { timeout: 10_000 });
       expect(await seconds(), "CH 4's row as it was").toEqual([true, true, false, false]);
       // The link the read found is the unit's: CH Level pressed on CH 3's row reaches CH 4's.
       await unitSet(SELECT, 2, 0x100001);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 2, value: 0x100001 }]);
+      await shell.delivered();
       await vi.waitFor(async () =>
         expect(await shownSafe("safe.ch4.name", "safe.ch4.chLevel"), "CH 3's row on CH 4's").toEqual([true, true]),
       );
@@ -1858,16 +1915,19 @@ describe("the SIM view over a live session", () => {
     // The scene the unit is on recalled again, and the read it starts held.
     reads.hold();
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
     // CH 1/2 linked on the unit's panel while the read is out: copied as the unit announces it.
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await seconds()).toEqual([true, true, false, false]), { timeout: 10_000 });
     // CH 3/4 linked by a recall, which announces no link, only the bulk change.
     await unitSet(LINK, 2, 1);
     await unitSet(LINK, 3, 1);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     reads.releaseAll();
     await vi.waitFor(async () => expect(await shownLink("ch3")).toBe("STEREO"), { timeout: 10_000 });
     await vi.waitFor(async () =>
@@ -1887,12 +1947,14 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 1, 1);
       reads.hold();
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
       reads.releaseAll();
       await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"), { timeout: 10_000 });
       // CH Level pressed on CH 2's row: the unit, linked, gives CH 1's row the same.
       await unitSet(SELECT, 1, 0x1);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+      await shell.delivered();
       await vi.waitFor(async () =>
         expect(
           await shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.chLevel"),
@@ -1913,11 +1975,13 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 1, 0);
       reads.hold();
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
       reads.releaseAll();
       await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("MONO x 2"), { timeout: 10_000 });
       await unitSet(SELECT, 1, 0x100000);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
       expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
     },
@@ -1930,6 +1994,7 @@ describe("the SIM view over a live session", () => {
     await unitSet(LINK, 1, 1);
     reads.hold();
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
     reads.releaseAll();
     await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"), { timeout: 10_000 });
@@ -1938,6 +2003,7 @@ describe("the SIM view over a live session", () => {
     await vi.waitFor(() => expect(setsOf(shell, SELECT).at(-1)).toEqual([1, 0x100000]), { timeout: 10_000 });
     // The unit answers CH 2's row and, linked, gives CH 1's the same.
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name"), "CH 2's row on CH 1's").toEqual([true]));
   });
 
@@ -1949,20 +2015,24 @@ describe("the SIM view over a live session", () => {
       onTestFinished(() => reads.releaseAll());
       reads.hold();
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
       // CH 1/2 linked on the panel, then a second recall unlinks the pair unannounced.
       await unitSet(LINK, 0, 1);
       await unitSet(LINK, 1, 1);
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await unitSet(LINK, 0, 0);
       await unitSet(LINK, 1, 0);
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       reads.releaseAll();
       await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("MONO x 2"), { timeout: 10_000 });
       await new Promise((r) => setTimeout(r, 500));
       // Name pressed on CH 2's row of the unlinked pair stays on it.
       await unitSet(SELECT, 1, 0x100000);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
       expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
     },
@@ -1976,10 +2046,12 @@ describe("the SIM view over a live session", () => {
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the first recall's read is out").toBe(1));
     await unitSet(LINK, 0, 0);
     await unitSet(LINK, 1, 0);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the second recall's read is out").toBe(2));
     // The second recall's read answers first, the first one's after it.
     reads.releaseLast();
@@ -1989,6 +2061,7 @@ describe("the SIM view over a live session", () => {
     // Name pressed on CH 2's row of the unlinked pair stays on it.
     await unitSet(SELECT, 1, 0x100000);
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
     expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
   });
@@ -2000,11 +2073,13 @@ describe("the SIM view over a live session", () => {
     reads.hold();
     // The scene the unit is on recalled again: its read of the links, then the whole-unit read, held.
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: both reads are out").toBe(2), { timeout: 10_000 });
     // A second recall unlinks the pair while they are out; its read of the links answers first.
     await unitSet(LINK, 0, 0);
     await unitSet(LINK, 1, 0);
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(reads.asked(), "the premise: the second recall's read is out").toBe(3));
     reads.releaseOne();
     reads.releaseLast();
@@ -2014,6 +2089,7 @@ describe("the SIM view over a live session", () => {
     // Name pressed on CH 2's row of the unlinked pair stays on it.
     await unitSet(SELECT, 1, 0x100000);
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.name")).toEqual([true]));
     expect(await shownSafe("safe.ch1.name"), "CH 1's row as it was").toEqual([false]);
     reads.releaseAll();
@@ -2039,6 +2115,7 @@ describe("the SIM view over a live session", () => {
       $("btn-live").click();
       await vi.waitFor(() => expect(holding, "the premise: the start is under way").toBe(true), { timeout: 25_000 });
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await new Promise((r) => setTimeout(r, 100));
       release();
       await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("true"), { timeout: 25_000 });
@@ -2060,6 +2137,7 @@ describe("the SIM view over a live session", () => {
       onTestFinished(() => reads.releaseAll());
       reads.hold();
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(reads.asked(), "the premise: CH 1/2's read is out").toBe(1));
       const disconnects = shell.count("vd_disconnect");
       $("btn-live").click();
@@ -2082,11 +2160,13 @@ describe("the SIM view over a live session", () => {
     onTestFinished(() => reads.releaseAll());
     reads.hold();
     notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+    await shell.delivered();
     // The recall's read of the links, then the whole-unit read, both out.
     await vi.waitFor(() => expect(reads.asked(), "the premise: both reads are out").toBe(2), { timeout: 10_000 });
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
       timeout: 10_000,
     });
@@ -2097,6 +2177,7 @@ describe("the SIM view over a live session", () => {
     // CH Level pressed on CH 1's row: the unit, still linked, gives CH 2's row the same.
     await unitSet(SELECT, 0, 0x1);
     notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x1 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.chLevel")).toEqual([true]));
     expect(await shownSafe("safe.ch2.chLevel", "safe.ch2.name"), "CH 1's row on CH 2's").toEqual([true, false]);
     reads.releaseAll();
@@ -2114,6 +2195,7 @@ describe("the SIM view over a live session", () => {
       await vi.waitFor(() => expect(setsOf(shell, SELECT)).toEqual([[1, 0x1]]), { timeout: 10_000 });
       // The unit answers CH 2's row alone and gives CH 1's the same.
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+      await shell.delivered();
       await vi.waitFor(
         async () => expect(await shownSafe("safe.ch1.chLevel"), "CH 2's row on CH 1's").toEqual([true]),
         {
@@ -2138,6 +2220,7 @@ describe("the SIM view over a live session", () => {
       { param_id: LINK, x: 0, y: 1, value: 1 },
       { param_id: SELECT, x: 0, y: 1, value: 0x100001 },
     ]);
+    await shell.delivered();
     const rows = () => shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.name", "safe.ch2.chLevel");
     await vi.waitFor(async () => expect(await rows()).toEqual([true, true, true, true]), { timeout: 10_000 });
     await vi.waitFor(async () => expect(await shownLink("ch1")).toBe("STEREO"), { timeout: 10_000 });
@@ -2157,6 +2240,7 @@ describe("the SIM view over a live session", () => {
       { param_id: LINK, x: 0, y: 1, value: 0 },
       { param_id: SELECT, x: 0, y: 0, value: 0x100000 },
     ]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name")).toEqual([true]), { timeout: 10_000 });
     expect(await shownSafe("safe.ch2.name"), "CH 2's row as it was").toEqual([false]);
   });
@@ -2187,10 +2271,12 @@ describe("the SIM view over a live session", () => {
       await vi.waitFor(() => expect(holding, "the premise: the second write is out").toBe(true), { timeout: 10_000 });
       // The unit answers the first write.
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       // Name pressed on CH 2's row, which the link gave CH 1's [Safe] and CH Level: the unit gives CH 1's
       // row the same and announces CH 2's alone.
       await unitSet(SELECT, 1, 0x100001);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100001 }]);
+      await shell.delivered();
       const rows = () =>
         shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.on", "safe.ch2.name", "safe.ch2.chLevel");
       await vi.waitFor(async () => expect(await rows()).toEqual([true, true, true, true, true]), { timeout: 10_000 });
@@ -2224,6 +2310,7 @@ describe("the SIM view over a live session", () => {
         { param_id: SELECT, x: 0, y: 0, value: 0x100000 },
         { param_id: SELECT, x: 0, y: 1, value: 0x100001 },
       ]);
+      await shell.delivered();
       const rows = () => shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.name", "safe.ch2.chLevel");
       await vi.waitFor(async () => expect(await rows()).toEqual([true, true, true, true]), { timeout: 10_000 });
       // The write has finished; the press is still on both rows, and in the next write.
@@ -2264,6 +2351,7 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 0, 1);
       await unitSet(LINK, 1, 1);
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.chLevel")).toEqual([true]), { timeout: 10_000 });
       const rowReads = (): number =>
         shell.invokes.filter((c, i) => c === "vd_get" && shell.args[i]?.paramId === SELECT && shell.args[i]?.y === 1)
@@ -2301,6 +2389,7 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 1, 0);
       reads.hold();
       notifyChannel(shell).onmessage([{ param_id: 0, x: -1, y: -1, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(reads.asked(), "the premise: the read is out").toBe(1), { timeout: 10_000 });
       // The panel links the pair again before that read answers.
       await unitSet(LINK, 0, 1);
@@ -2309,6 +2398,7 @@ describe("the SIM view over a live session", () => {
         { param_id: LINK, x: 0, y: 0, value: 1 },
         { param_id: LINK, x: 0, y: 1, value: 1 },
       ]);
+      await shell.delivered();
       // Taken once the read the recall started is in.
       reads.releaseAll();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
@@ -2352,6 +2442,7 @@ describe("the SIM view over a live session", () => {
       // CH ON pressed on CH 1's row of the unlinked pair, then CH Level chosen on CH 2's on the glass.
       await unitSet(SELECT, 0, 0x100002);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100002 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch1.chOn")).toEqual([true]));
       await transport().write("safe.ch2.chLevel", true);
       await vi.waitFor(() => expect(holding, "the premise: the write is out").toBe(true), { timeout: 10_000 });
@@ -2393,9 +2484,11 @@ describe("the SIM view over a live session", () => {
       // CH Level pressed on CH 1's row while the write is out, then CH 1/2 linked on the panel.
       set({ paramId: SELECT, x: 0, y: 0, value: 0x1 });
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x1 }]);
+      await shell.delivered();
       await unitSet(LINK, 0, 1);
       await unitSet(LINK, 1, 1);
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.chLevel")).toEqual([true]), { timeout: 10_000 });
       release();
       await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent), { timeout: 10_000 });
@@ -2437,11 +2530,13 @@ describe("the SIM view over a live session", () => {
       // gives CH 2's row CH 1's, and announces CH 1's.
       await unitSet(SELECT, 1, 0x1);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x1 }]);
+      await shell.delivered();
       release();
       await vi.waitFor(() => expect(setsOf(shell, SELECT).some(([y, v]) => y === 0 && v === 0x100000)).toBe(true), {
         timeout: 10_000,
       });
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 0, value: 0x100000 }]);
+      await shell.delivered();
       const rows = () => shownSafe("safe.ch1.name", "safe.ch1.chLevel", "safe.ch2.name", "safe.ch2.chLevel");
       await vi.waitFor(async () => expect(await rows()).toEqual([true, false, true, false]), { timeout: 10_000 });
       await transport().write("safe.ch2.chOn", true);
@@ -2459,6 +2554,7 @@ describe("the SIM view over a live session", () => {
     await unitSet(LINK, 0, 1);
     await unitSet(LINK, 1, 1);
     notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
       timeout: 10_000,
     });
@@ -2488,6 +2584,7 @@ describe("the SIM view over a live session", () => {
       await unitSet(LINK, 0, 1);
       await unitSet(LINK, 1, 1);
       notifyChannel(shell).onmessage([{ param_id: LINK, x: 0, y: 0, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
         timeout: 10_000,
       });
@@ -2529,6 +2626,7 @@ describe("the SIM view over a live session", () => {
       { param_id: LINK, x: 0, y: 0, value: 1 },
       { param_id: LINK, x: 0, y: 1, value: 1 },
     ]);
+    await shell.delivered();
     await vi.waitFor(async () => expect(await shownSafe("safe.ch2.on", "safe.ch2.name")).toEqual([true, true]), {
       timeout: 10_000,
     });
@@ -2546,6 +2644,7 @@ describe("the SIM view over a live session", () => {
       // read of CH 1's row still answering what that row held.
       await unitSet(SELECT, 1, 0x100000);
       notifyChannel(shell).onmessage([{ param_id: SELECT, x: 0, y: 1, value: 0x100000 }]);
+      await shell.delivered();
       await vi.waitFor(async () => expect(await shownSafe("safe.ch1.name", "safe.ch2.name")).toEqual([true, true]));
       // A selection Console Lock stops sends RECALL SAFE to be read again, and CH 1's row is kept.
       const rowReads = (): number =>
@@ -2569,9 +2668,12 @@ describe("the SIM view over a live session", () => {
     const set = cmds.vd_set as (a: Record<string, unknown>) => unknown;
     const get = cmds.vd_get as (a: Record<string, unknown>) => unknown;
     let shell: TauriShell | null = null;
-    const press = (paramId: number, value: number, announce = true): void => {
+    // Settles once the page has taken the announcement.
+    const press = async (paramId: number, value: number, announce = true): Promise<void> => {
       set({ paramId, x: 0, y: 0, value });
-      if (announce && shell) notifyChannel(shell).onmessage([{ param_id: paramId, x: 0, y: 0, value }]);
+      if (!announce || !shell) return;
+      notifyChannel(shell).onmessage([{ param_id: paramId, x: 0, y: 0, value }]);
+      await shell.delivered();
     };
     const boot = async (): Promise<TauriShell> => {
       shell = (await bootApp({ tauri: cmds }))!;
@@ -2601,7 +2703,7 @@ describe("the SIM view over a live session", () => {
       await transport().write("setup.brightness", 3);
       await vi.waitFor(() => expect(holding, "the premise: the SETUP write is out").toBe(true));
       await transport().write("safe.ch1.name", true);
-      unit.press(SELECT, 0x2);
+      await unit.press(SELECT, 0x2);
       await vi.waitFor(async () =>
         expect(await shownSafe("safe.ch1.name", "safe.ch1.chOn"), "the glass's choice over the unit's").toEqual([
           true,
@@ -2646,7 +2748,7 @@ describe("the SIM view over a live session", () => {
     unit.cmds.vd_params_subscribe = (a: Record<string, unknown>) => {
       if (!moved) {
         moved = true;
-        unit.press(SELECT, 0x2, false);
+        void unit.press(SELECT, 0x2, false);
       }
       return subscribe(a);
     };
@@ -2660,7 +2762,7 @@ describe("the SIM view over a live session", () => {
     };
     const shell = await unit.boot();
     await vi.waitFor(() => expect(reads, "the premise: the second read is out").toBe(2), { timeout: 10_000 });
-    unit.press(SAFE, 1);
+    await unit.press(SAFE, 1);
     release();
     // A SETUP write queues behind the read, so its arrival says the read has been taken.
     await transport().write("setup.brightness", 3);
@@ -2771,6 +2873,7 @@ describe("HOME's [Sends] destination", () => {
     const { addrs } = shell.args[shell.invokes.indexOf("vd_params_subscribe")] as { addrs: number[][] };
     expect(addrs).not.toContainEqual([PARAMS.SENDS_TARGET.id, 0, 0]);
     rateNotify(shell, 192000);
+    await shell.delivered();
     await drainShell(shell, () => false);
     expect(sendsReads(shell)).toBe(0);
     $("btn-live").click();
@@ -2816,6 +2919,7 @@ describe("HOME's [Sends] destination", () => {
       const before = sendsReads(shell);
       const sent = Date.now();
       rateNotify(shell, 192000);
+      await shell.delivered();
       for (let i = 0; i < 1000 && sendsReads(shell) === before; i++) await vi.advanceTimersToNextTimerAsync();
       expect(sendsReads(shell), "a read follows the high-rate notify").toBe(before + 1);
       const took = Date.now() - sent;
@@ -2823,6 +2927,7 @@ describe("HOME's [Sends] destination", () => {
       await drain();
       const after = sendsReads(shell);
       rateNotify(shell, 96000);
+      await shell.delivered();
       await vi.advanceTimersByTimeAsync(took * 3);
       await drain();
       expect(sendsReads(shell), "no read for a rate at 96 kHz").toBe(after);

@@ -51,12 +51,14 @@ describe("an engaged Clip Safe during Live sync", () => {
     expect(gainBox().querySelector(".lbl")?.textContent).toBe("A.GAIN");
 
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     expect(gainBox().classList.contains("clip-safe")).toBe(true);
     expect(gainBox().querySelector(".lbl")?.textContent).toBe(t().console.clipSafeLabel);
     expect(clipSafeOn()?.classList.contains("clip-safe"), "the Inspector's Clip Safe ON").toBe(true);
     expect(clipSafeOn()?.getAttribute("aria-description")).toBe(t().inspector.clipSafeEngaged);
 
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     expect(gainBox().classList.contains("clip-safe")).toBe(false);
     expect(gainBox().querySelector(".lbl")?.textContent).toBe("A.GAIN");
     expect(clipSafeOn()?.classList.contains("clip-safe")).toBe(false);
@@ -89,6 +91,7 @@ describe("an engaged Clip Safe during Live sync", () => {
     pressNode("ch1");
     $("btn-view-console").click();
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     expect(gainBox().classList.contains("clip-safe"), "the premise: shown during the session").toBe(true);
     live().click();
     await invoked(shell, "vd_disconnect");
@@ -115,6 +118,7 @@ describe("an engaged Clip Safe during Live sync", () => {
       "CH 3 reads jack 1",
     ).toEqual(["0", "1", "0"]);
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE_ENGAGED.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     expect([gain("CH 1"), gain("CH 2"), gain("CH 3")].map((g) => g.classList.contains("clip-safe"))).toEqual([
       true,
       false,
@@ -425,6 +429,7 @@ describe("+48V and Hi-Z on one channel", () => {
         hold.panel(PARAMS.HI_Z.id, 1);
         hold.arm();
         notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        await shell.delivered();
         await readHeld(hold);
 
         selectNode("ch3");
@@ -491,6 +496,7 @@ describe("+48V and Hi-Z on one channel", () => {
         hold.panel(PARAMS.HI_Z.id, 1);
         hold.arm();
         notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        await shell.delivered();
         await readHeld(hold);
         selectNode("ch3");
         pressFace(t().inspector.phantom, t().inspector.on);
@@ -522,6 +528,7 @@ describe("+48V and Hi-Z on one channel", () => {
       hold.arm();
       hold.panel(PARAMS.HI_Z.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       await readHeld(hold);
 
       selectNode("ch3");
@@ -624,6 +631,7 @@ describe("+48V and Hi-Z on one channel", () => {
         hold.panel(PARAMS.PHANTOM.id, 1);
         hold.arm();
         notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
+        await shell.delivered();
         await readHeld(hold);
 
         selectNode("ch3");
@@ -727,6 +735,7 @@ describe("+48V and Hi-Z on one channel", () => {
       selectNode("ch3");
       const announced = shell.invokes.length;
       notifyChannel(shell).onmessage([{ param_id: PARAMS.PHANTOM.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(switches()).toEqual({ phantom: "ON", hiZ: "OFF" }), {
         timeout: 25_000,
         interval: 50,
@@ -760,6 +769,7 @@ describe("+48V and Hi-Z on one channel", () => {
       // A later change at the unit's panel is a burst of its own, and its line says only what it did.
       hold.panel(PARAMS.CLIP_SAFE.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(litFace(t().inspector.clipSafe)).toBe("ON"), { timeout: 25_000, interval: 50 });
       await quiet(shell);
       expect(statusText().includes(t().status.hiZRefusedByRead("CH 3")), statusText()).toBe(false);
@@ -776,6 +786,7 @@ describe("+48V and Hi-Z on one channel", () => {
 
       hold.panel(PARAMS.HI_Z.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       selectNode("ch3");
       pressFace(t().inspector.phantom, t().inspector.on);
       await vi.waitFor(
@@ -814,6 +825,7 @@ describe("+48V and Hi-Z on one channel", () => {
       hold.panel(PARAMS.CLIP_SAFE.id, 1);
       hold.arm();
       notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       await readHeld(hold);
       expect(
         shell.invokes.some(
@@ -829,6 +841,7 @@ describe("+48V and Hi-Z on one channel", () => {
       // Behind the write, Hi-Z goes on at the unit's panel, and the unit takes both.
       hold.panel(PARAMS.HI_Z.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       // The read that announcement starts is held too, so what shows next is the first read's.
       hold.release();
       hold.arm();
@@ -863,6 +876,7 @@ describe("+48V and Hi-Z on one channel", () => {
 
         hold.panel(PARAMS.HI_Z.id, 1);
         notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+        await shell.delivered();
         selectNode("ch3");
         const type = paramRow(t().inspector.compEqType).querySelector<HTMLSelectElement>("select")!;
         type.value = String(COMP_EQ_SSMCS);
@@ -903,6 +917,7 @@ describe("+48V and Hi-Z on one channel", () => {
       const from = shell.invokes.length;
       hold.panel(PARAMS.HI_Z.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       selectNode("ch3");
       pressFace(t().inspector.phantom, t().inspector.on);
       expect(shell.invokes.slice(from).includes("vd_get"), "the premise: no read had been issued").toBe(false);
@@ -944,12 +959,14 @@ describe("+48V and Hi-Z on one channel", () => {
       hold.panel(PARAMS.CLIP_SAFE.id, 1);
       hold.arm();
       notifyChannel(shell).onmessage([{ param_id: PARAMS.CLIP_SAFE.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
       await readHeld(hold);
       selectNode("ch3");
       pressFace(t().inspector.phantom, t().inspector.on);
       await vi.waitFor(() => expect(writesAt(shell, PARAMS.PHANTOM.id)).toEqual([1]), { timeout: 10_000 });
       hold.panel(PARAMS.HI_Z.id, 1);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.HI_Z.id, x: 0, y: CH3_Y, value: 1 }]);
+      await shell.delivered();
 
       live().click();
       await vi.waitFor(() => expect(live().getAttribute("aria-checked")).toBe("false"), { timeout: 10_000 });

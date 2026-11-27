@@ -18,6 +18,8 @@ class FakeChannel<T> {
 interface Harness {
   invoke: ReturnType<typeof vi.fn<(cmd: string, args?: InvokeArgs, options?: InvokeOptions) => Promise<unknown>>>;
   callbacks: Array<(payload: unknown) => void>;
+  /** What each command answers: a value, or a function of the call's arguments. */
+  answers: Record<string, unknown>;
 }
 
 function setWindowProperty(name: string, value: unknown): void {
@@ -26,25 +28,100 @@ function setWindowProperty(name: string, value: unknown): void {
 
 function installInternals(responses: Record<string, unknown> = {}): Harness {
   const callbacks: Array<(payload: unknown) => void> = [];
-  const invoke = vi.fn(
-    async (cmd: string, _args?: InvokeArgs, _options?: InvokeOptions): Promise<unknown> => responses[cmd],
-  );
+  // A connection's notifications are over at the first fetch unless a test hands them out (`FakeOutbox`).
+  const answers: Record<string, unknown> = { vd_notifications: null, ...responses };
+  const invoke = vi.fn(async (cmd: string, args?: InvokeArgs, _options?: InvokeOptions): Promise<unknown> => {
+    const answer = answers[cmd];
+    return typeof answer === "function" ? (answer as (args?: InvokeArgs) => unknown)(args) : answer;
+  });
   const transformCallback = vi.fn((callback: (payload: unknown) => void): number => {
     callbacks.push(callback);
     return callbacks.length;
   });
   setWindowProperty("__TAURI_INTERNALS__", { invoke, Channel: FakeChannel, transformCallback });
-  return { invoke, callbacks };
+  return { invoke, callbacks, answers };
 }
 
-/** A notification channel's message as the shell numbers it (vd.rs `Delivery`). */
-interface Delivery<T> {
-  session: number;
-  seq: number;
+/** One run as the shell routes it (vd.rs `Run`): one subscription's updates. */
+interface Run<T = unknown> {
+  kind: "meters" | "params" | "probe";
+  handler: number;
   updates: T[];
 }
 
-const delivery = <T>(seq: number, updates: T[], session = 0): Delivery<T> => ({ session, seq, updates });
+/**
+ * The shell's side of `vd_notifications` (vd.rs `Outbox`): a fetch takes every run routed so far,
+ * or waits for the next; once the connection is over and nothing is left, it answers null.
+ */
+class FakeOutbox {
+  readonly fetches: InvokeArgs[] = [];
+  outstanding = 0;
+  mostOutstanding = 0;
+  private queued: Run[] = [];
+  private waiter: { resolve: (runs: Run[] | null) => void; reject: (error: Error) => void } | null = null;
+  private over = false;
+
+  readonly fetch = (args?: InvokeArgs): Promise<Run[] | null> => {
+    this.fetches.push(args ?? {});
+    this.outstanding += 1;
+    this.mostOutstanding = Math.max(this.mostOutstanding, this.outstanding);
+    return new Promise<Run[] | null>((resolve, reject) => {
+      this.waiter = { resolve, reject };
+      this.answer();
+    });
+  };
+
+  put(...runs: Run[]): void {
+    this.queued.push(...runs);
+    this.answer();
+  }
+
+  /** The shell's wait running out with nothing routed: an empty answer. */
+  idle(): void {
+    this.settle()?.resolve([]);
+  }
+
+  /** The connection is over. */
+  end(): void {
+    this.over = true;
+    this.answer();
+  }
+
+  /** The outstanding fetch fails, as an IPC call that does not come back does. */
+  fail(): void {
+    const waiter = this.settle();
+    expect(waiter, "a fetch is outstanding").not.toBeNull();
+    waiter?.reject(new Error("ipc"));
+  }
+
+  private answer(): void {
+    if (this.waiter === null) return;
+    if (this.queued.length > 0) {
+      const runs = this.queued;
+      this.queued = [];
+      this.settle()?.resolve(runs);
+    } else if (this.over) this.settle()?.resolve(null);
+  }
+
+  private settle(): { resolve: (runs: Run[] | null) => void; reject: (error: Error) => void } | null {
+    const waiter = this.waiter;
+    if (waiter !== null) {
+      this.waiter = null;
+      this.outstanding -= 1;
+    }
+    return waiter;
+  }
+}
+
+/** Lets the fetch loop take what was put and come round to its next fetch. */
+const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** The handler each call of a subscribe command named, in call order. */
+function handlersOf(harness: Harness, command: string): number[] {
+  return harness.invoke.mock.calls
+    .filter(([cmd]) => cmd === command)
+    .map(([, args]) => (args as { handler: number }).handler);
+}
 
 function channelFrom<T>(harness: Harness, command: string): FakeChannel<T> {
   const call = harness.invoke.mock.calls.find(([cmd]) => cmd === command);
@@ -191,46 +268,66 @@ describe("invoke resolution and file/dialog primitives", () => {
 
 describe("streaming channel adapters", () => {
   it("fans meter, parameter, link and MIDI batches back into frontend records", async () => {
-    // A connect first: the bridge sets aside the messages of a session it is not following.
-    const harness = installInternals({ vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 } });
+    // Notifications are fetched for the connection, so a connect comes first.
+    const outbox = new FakeOutbox();
+    const harness = installInternals({
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 },
+      vd_notifications: outbox.fetch,
+    });
     await platform.vdConnect("URX44V");
     const meters: platform.MeterUpdate[] = [];
     const params: platform.ParamUpdate[] = [];
+    const watched: platform.ParamUpdate[] = [];
     const drops: string[] = [];
     const midi: number[][] = [];
 
-    const stopMeters = await platform.vdMetersSubscribe(
-      [
-        [101, 0],
-        [101, 1],
-      ],
-      (update) => meters.push(update),
-    );
-    channelFrom<Delivery<{ meter_id: number; x: number; value: number }>>(harness, "vd_meters_subscribe").onmessage(
-      delivery(0, [
-        { meter_id: 101, x: 0, value: -120 },
-        { meter_id: 101, x: 1, value: -90 },
-      ]),
-    );
-
+    const meterAddrs: Array<[number, number]> = [
+      [101, 0],
+      [101, 1],
+    ];
+    const stopMeters = await platform.vdMetersSubscribe(meterAddrs, (update) => meters.push(update));
     const stopParams = await platform.vdParamsSubscribe([[12, 3, 4]], (update) => params.push(update));
-    channelFrom<Delivery<{ param_id: number; x: number; y: number; value: number; value_str?: string }>>(
-      harness,
-      "vd_params_subscribe",
-    ).onmessage(
-      delivery(0, [
-        { param_id: 12, x: 3, y: 4, value: 7 },
-        { param_id: 13, x: 5, y: 6, value: 0, value_str: "Vocal" },
-      ]),
-    );
-
-    const watched: platform.ParamUpdate[] = [];
     await platform.vdProbeSubscribe([[838, 0, 0]], (update) => watched.push(update));
-    channelFrom<Delivery<{ param_id: number; x: number; y: number; value: number }>>(
-      harness,
+    const [meterHandler] = handlersOf(harness, "vd_meters_subscribe");
+    const [paramHandler] = handlersOf(harness, "vd_params_subscribe");
+    const [probeHandler] = handlersOf(harness, "vd_probe_subscribe");
+    expect(harness.invoke).toHaveBeenCalledWith(
+      "vd_meters_subscribe",
+      { addrs: meterAddrs, handler: meterHandler },
+      undefined,
+    );
+    expect(harness.invoke).toHaveBeenCalledWith(
+      "vd_params_subscribe",
+      { addrs: [[12, 3, 4]], handler: paramHandler },
+      undefined,
+    );
+    expect(harness.invoke).toHaveBeenCalledWith(
       "vd_probe_subscribe",
-    ).onmessage(delivery(0, [{ param_id: 838, x: 0, y: 0, value: 2 }]));
-    expect(watched).toEqual([{ paramId: 838, x: 0, y: 0, value: 2, valueStr: undefined }]);
+      { addrs: [[838, 0, 0]], handler: probeHandler },
+      undefined,
+    );
+    expect(new Set([meterHandler, paramHandler, probeHandler]).size, "a handler per subscription").toBe(3);
+    outbox.put(
+      {
+        kind: "meters",
+        handler: meterHandler,
+        updates: [
+          { meter_id: 101, x: 0, value: -120 },
+          { meter_id: 101, x: 1, value: -90 },
+        ],
+      },
+      {
+        kind: "params",
+        handler: paramHandler,
+        updates: [
+          { param_id: 12, x: 3, y: 4, value: 7 },
+          { param_id: 13, x: 5, y: 6, value: 0, value_str: "Vocal" },
+        ],
+      },
+      { kind: "probe", handler: probeHandler, updates: [{ param_id: 838, x: 0, y: 0, value: 2 }] },
+    );
+    await settle();
+    expect(outbox.fetches[0]).toEqual({ epoch: 1 });
 
     await platform.vdWatchLink((reason) => drops.push(reason));
     channelFrom<{ reason: string }>(harness, "vd_watch_link").onmessage({ reason: "deadline" });
@@ -249,6 +346,7 @@ describe("streaming channel adapters", () => {
       { paramId: 12, x: 3, y: 4, value: 7, valueStr: undefined },
       { paramId: 13, x: 5, y: 6, value: 0, valueStr: "Vocal" },
     ]);
+    expect(watched).toEqual([{ paramId: 838, x: 0, y: 0, value: 2, valueStr: undefined }]);
     expect(drops).toEqual(["deadline"]);
     expect(midi).toEqual([
       [0x90, 60, 127],
@@ -262,6 +360,7 @@ describe("streaming channel adapters", () => {
     expect(harness.invoke.mock.calls.map(([cmd]) => cmd)).toEqual(
       expect.arrayContaining(["vd_meters_unsubscribe", "vd_params_unsubscribe", "midi_close_input"]),
     );
+    await platform.vdDisconnect(1);
   });
 
   it("relays MIDI-window channels and requires a Channel constructor", async () => {
@@ -291,155 +390,185 @@ describe("streaming channel adapters", () => {
   });
 });
 
-// The shell numbers a kind's messages across every channel the session gave it, and the
-// bridge hands them on in that order: Tauri orders one channel's messages and not two's.
-describe("notification order", () => {
+// The page fetches the connection's notifications one request at a time (vd.rs `Outbox`), so each
+// run reaches its handler in the order the shell received it, and a fetch that fails is seen.
+describe("notification fetch", () => {
   type RawParam = { param_id: number; x: number; y: number; value: number };
-  const param = (value: number): RawParam => ({ param_id: 1, x: 0, y: 0, value });
-  const channelsOf = <T>(harness: Harness, command: string): Array<FakeChannel<T>> =>
-    harness.invoke.mock.calls
-      .filter(([cmd]) => cmd === command)
-      .map(([, args]) => (args as { channel: FakeChannel<T> }).channel);
+  const params = (handler: number, ...values: number[]): Run<RawParam> => ({
+    kind: "params",
+    handler,
+    updates: values.map((value) => ({ param_id: 1, x: 0, y: 0, value })),
+  });
+  const meter = (handler: number, value: number): Run => ({
+    kind: "meters",
+    handler,
+    updates: [{ meter_id: 101, x: 0, value }],
+  });
 
-  async function connected(session: number): Promise<Harness> {
+  async function connected(): Promise<{ harness: Harness; outbox: FakeOutbox }> {
+    const outbox = new FakeOutbox();
     const harness = installInternals({
-      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1, session },
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 },
+      vd_notifications: outbox.fetch,
     });
     await platform.vdConnect("URX44V");
-    return harness;
+    return { harness, outbox };
   }
 
   afterEach(async () => {
     // The bridge's own state goes with the connection it followed.
     if (!Reflect.has(window, "__TAURI_INTERNALS__")) installInternals();
     await platform.vdDisconnect(1);
-    vi.useRealTimers();
   });
 
-  it("hands a kind's messages to their own channels' handlers in the shell's order", async () => {
-    const harness = await connected(3);
+  it("hands each run to its own subscription's handler in the order the shell received them", async () => {
+    const { harness, outbox } = await connected();
     const seen: string[] = [];
     await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`old ${p.value}`));
     await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`new ${p.value}`));
-    const [older, newer] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    newer.onmessage(delivery(1, [param(20)], 3));
-    expect(seen, "held until the message before it arrives").toEqual([]);
-    older.onmessage(delivery(0, [param(10)], 3));
-    expect(seen).toEqual(["old 10", "new 20"]);
-    older.onmessage(delivery(3, [param(40)], 3));
-    newer.onmessage(delivery(2, [param(30)], 3));
-    expect(seen).toEqual(["old 10", "new 20", "new 30", "old 40"]);
-    // The meters count on their own.
-    const meters: number[] = [];
-    await platform.vdMetersSubscribe([[101, 0]], (m) => meters.push(m.value));
-    channelsOf<Delivery<{ meter_id: number; x: number; value: number }>>(harness, "vd_meters_subscribe")[0].onmessage(
-      delivery(0, [{ meter_id: 101, x: 0, value: -120 }], 3),
-    );
-    expect(meters).toEqual([-120]);
+    await platform.vdMetersSubscribe([[101, 0]], (m) => seen.push(`meter ${m.value}`));
+    const [older, newer] = handlersOf(harness, "vd_params_subscribe");
+    const [meters] = handlersOf(harness, "vd_meters_subscribe");
+    outbox.put(params(newer, 20), params(older, 10), meter(meters, -120));
+    await settle();
+    outbox.put(params(older, 30), params(newer, 40, 41));
+    await settle();
+    expect(seen).toEqual(["new 20", "old 10", "meter -120", "old 30", "new 40", "new 41"]);
   });
 
-  it("sets aside a message of a session other than the one its connect named", async () => {
-    const harness = await connected(3);
-    const seen: number[] = [];
-    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
-    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    channel.onmessage(delivery(0, [param(1)], 2));
-    channel.onmessage(delivery(0, [param(2)], 3));
-    expect(seen).toEqual([2]);
+  it("keeps one fetch outstanding for the connection, and fetches again after each answer", async () => {
+    const { outbox } = await connected();
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await platform.vdMetersSubscribe([[101, 0]], vi.fn());
+    await platform.vdProbeSubscribe([[838, 0, 0]], vi.fn());
+    await settle();
+    expect(outbox.fetches, "the subscriptions share one fetch").toEqual([{ epoch: 1 }]);
+    outbox.idle();
+    await settle();
+    expect(outbox.fetches, "an empty answer is fetched past").toEqual([{ epoch: 1 }, { epoch: 1 }]);
+    expect(outbox.mostOutstanding).toBe(1);
   });
 
-  it("ends the session through the link watch when a message is still missing after the wait", async () => {
-    vi.useFakeTimers();
-    const harness = await connected(3);
+  it("ends the session through the link watch when a fetch fails, and fetches no more", async () => {
+    const { outbox } = await connected();
+    const drops: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await platform.vdWatchLink((reason) => drops.push(reason));
+    await settle();
+    outbox.fail();
+    await settle();
+    expect(drops).toEqual([platform.NOTIFICATIONS_LOST]);
+    expect(outbox.fetches).toHaveLength(1);
+  });
+
+  it("stops fetching without a report when the shell answers that the connection is over", async () => {
+    const { harness, outbox } = await connected();
     const seen: number[] = [];
     const drops: string[] = [];
     await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
     await platform.vdWatchLink((reason) => drops.push(reason));
-    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    channel.onmessage(delivery(1, [param(20)], 3));
-    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
-    expect(drops).toEqual([]);
-    vi.advanceTimersByTime(1);
-    expect(drops).toEqual([platform.NOTIFICATION_GAP]);
-    // Nothing of that session is put in order any more: what follows a gap has no order.
-    channel.onmessage(delivery(0, [param(10)], 3));
-    channel.onmessage(delivery(2, [param(30)], 3));
-    expect(seen).toEqual([]);
-    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS);
-    expect(drops, "reported once").toEqual([platform.NOTIFICATION_GAP]);
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
+    await settle();
+    outbox.put(params(handler, 1));
+    await settle();
+    outbox.end();
+    await settle();
+    expect(seen).toEqual([1]);
+    expect(outbox.fetches).toHaveLength(2);
+    expect(outbox.outstanding, "the answer null ends the loop").toBe(0);
+    expect(drops, "the link watch reports the end itself").toEqual([]);
   });
 
-  it("ends nothing when the missing message arrives within the wait, and times each gap from its own start", async () => {
-    vi.useFakeTimers();
-    const harness = await connected(3);
-    const seen: number[] = [];
-    const drops: string[] = [];
-    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
-    await platform.vdWatchLink((reason) => drops.push(reason));
-    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    channel.onmessage(delivery(1, [param(20)], 3));
-    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
-    channel.onmessage(delivery(0, [param(10)], 3));
-    expect(seen).toEqual([10, 20]);
-    channel.onmessage(delivery(3, [param(40)], 3));
-    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
-    expect(drops, "the second gap waits its own full time").toEqual([]);
-    channel.onmessage(delivery(2, [param(30)], 3));
-    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS);
-    expect(seen).toEqual([10, 20, 30, 40]);
-    expect(drops).toEqual([]);
-  });
-
-  it("hands on every ready message when an earlier one's handler throws, and passes the failure on", async () => {
-    const harness = await connected(3);
+  it("hands on the other runs when one handler throws, and goes on fetching", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { harness, outbox } = await connected();
     const seen: number[] = [];
     await platform.vdParamsSubscribe([[1, 0, 0]], (p) => {
       if (p.value === 10) throw new Error("handler");
       seen.push(p.value);
     });
-    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    channel.onmessage(delivery(1, [param(20)], 3));
-    expect(() => channel.onmessage(delivery(0, [param(10)], 3))).toThrow("handler");
-    expect(seen).toEqual([20]);
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
+    outbox.put(params(handler, 10), params(handler, 20));
+    await settle();
+    outbox.put(params(handler, 30));
+    await settle();
+    expect(seen).toEqual([20, 30]);
+    expect(error).toHaveBeenCalledWith(new Error("handler"));
   });
 
-  it("sets aside what a session delivers after its disconnect, and takes the next connect's own", async () => {
-    const harness = await connected(3);
-    const seen: number[] = [];
-    await platform.vdMetersSubscribe([[101, 0]], (m) => seen.push(m.value));
-    const [channel] = channelsOf<Delivery<{ meter_id: number; x: number; value: number }>>(
-      harness,
-      "vd_meters_subscribe",
-    );
-    const meter = (value: number) => [{ meter_id: 101, x: 0, value }];
-    channel.onmessage(delivery(0, meter(-120), 3));
+  it("forgets a kind's handlers at its unsubscribe, and keeps a replaced subscription's until then", async () => {
+    const { harness, outbox } = await connected();
+    const seen: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`old ${p.value}`));
+    const stop = await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`new ${p.value}`));
+    await platform.vdMetersSubscribe([[101, 0]], (m) => seen.push(`meter ${m.value}`));
+    const [older, newer] = handlersOf(harness, "vd_params_subscribe");
+    const [meters] = handlersOf(harness, "vd_meters_subscribe");
+    outbox.put(params(older, 1));
+    await settle();
+    stop();
+    outbox.put(params(older, 2), params(newer, 3), meter(meters, -120));
+    await settle();
+    expect(seen).toEqual(["old 1", "meter -120"]);
+  });
+
+  /** Closes the connection `connected` opened and opens epoch 2 on `next`, with a params subscription. */
+  async function reconnect(harness: Harness, next: FakeOutbox, onUpdate: (p: platform.ParamUpdate) => void) {
     await platform.vdDisconnect(1);
-    // A late message of the closed session — even one that would start its count again.
-    channel.onmessage(delivery(1, meter(-120), 3));
-    channel.onmessage(delivery(0, meter(-120), 3));
-    expect(seen, "nothing of a closed session reaches a handler").toEqual([-120]);
-    harness.invoke.mockImplementation(async (cmd: string) =>
-      cmd === "vd_connect" ? { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 2, session: 4 } : undefined,
-    );
+    harness.answers.vd_connect = { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 2 };
+    harness.answers.vd_notifications = next.fetch;
     await platform.vdConnect("URX44V");
-    channel.onmessage(delivery(2, meter(-120), 3));
-    channel.onmessage(delivery(0, meter(-450), 4));
-    expect(seen, "the next connection's own messages only").toEqual([-120, -450]);
+    await platform.vdParamsSubscribe([[1, 0, 0]], onUpdate);
+  }
+
+  it("sets aside what a fetch answers after its connection's disconnect, and fetches for the next one", async () => {
+    const { harness, outbox } = await connected();
+    const seen: number[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+    await settle();
+    const next = new FakeOutbox();
+    await reconnect(harness, next, (p) => seen.push(p.value));
+    const [closed, current] = handlersOf(harness, "vd_params_subscribe");
+    await settle();
+    outbox.put(params(closed, 1));
+    next.put(params(closed, 2), params(current, 3));
+    await settle();
+    expect(seen, "the next connection's own handlers only").toEqual([3]);
+    expect(outbox.fetches, "a closed connection is fetched no more").toHaveLength(1);
+    expect(next.fetches[0]).toEqual({ epoch: 2 });
     await platform.vdDisconnect(2);
   });
 
-  it("forgets the connection it followed at that connection's disconnect, not an older one's", async () => {
-    const harness = await connected(3);
+  it.each([
+    ["fails", (outbox: FakeOutbox) => outbox.fail()],
+    ["answers that its connection is over", (outbox: FakeOutbox) => outbox.end()],
+  ])("ends nothing and leaves the next connection fetching when a closed connection's fetch %s", async (_, answer) => {
+    const { harness, outbox } = await connected();
+    const drops: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await settle();
+    const next = new FakeOutbox();
+    await reconnect(harness, next, vi.fn());
+    await platform.vdWatchLink((reason) => drops.push(reason));
+    await settle();
+    answer(outbox);
+    await settle();
+    expect(drops).toEqual([]);
+    next.idle();
+    await settle();
+    expect(next.fetches, "the next connection goes on fetching").toHaveLength(2);
+    await platform.vdDisconnect(2);
+  });
+
+  it("leaves the followed connection alone at an older connection's disconnect", async () => {
+    const { harness, outbox } = await connected();
     const seen: number[] = [];
     await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
-    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
-    channel.onmessage(delivery(0, [param(1)], 3));
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
     await platform.vdDisconnect(0);
-    channel.onmessage(delivery(1, [param(2)], 3));
-    expect(seen, "a disconnect of an older epoch leaves the order alone").toEqual([1, 2]);
-    await platform.vdDisconnect(1);
-    channel.onmessage(delivery(2, [param(3)], 3));
-    expect(seen, "after its own disconnect the session is no longer followed").toEqual([1, 2]);
+    outbox.put(params(handler, 1));
+    await settle();
+    expect(seen).toEqual([1]);
   });
 });
 
@@ -447,7 +576,8 @@ describe("command wrappers", () => {
   it("preserves command names and camelCase argument keys", async () => {
     // A connect is answered with a connection, as the shell always answers one.
     const harness = installInternals({
-      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1, session: 0 },
+      // The epoch the case list disconnects, so no connection is left followed after it.
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 9 },
     });
     const cases: Array<{ run: () => Promise<unknown>; cmd: string; args: InvokeArgs }> = [
       { run: platform.experimentalEnabled, cmd: "experimental_enabled", args: {} },

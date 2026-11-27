@@ -883,6 +883,7 @@ describe("the sample rate during Live sync", () => {
     const note = t().status.geqOffAtRate(formatRate(88_200), "MIX 1");
     await vi.waitFor(() => expect(statusText()).toContain(note), { timeout: 10_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.OUT_EQ_ON.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(statusText()).toMatch(/← device \(\d+\)$/), { timeout: 10_000 });
     expect(statusText().startsWith(note), statusText()).toBe(true);
   });
@@ -968,6 +969,7 @@ describe("the sample rate during Live sync", () => {
     window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 9 }));
     await new Promise((r) => setTimeout(r, 0));
     notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(picker().disabled, "the premise: Follow USB on holds the rate").toBe(true), {
       timeout: 10_000,
     });
@@ -985,6 +987,7 @@ describe("the sample rate during Live sync", () => {
       expect(picker().disabled).toBe(true);
       expect(picker().parentElement!.title, "the field names Follow USB").toBe(t().sim.lockRateFollowUsb);
       notifyChannel(shell).onmessage([{ param_id: PARAMS.FOLLOW_USB.id, x: 0, y: 0, value: 0 }]);
+      await shell.delivered();
       await vi.waitFor(() => expect(picker().disabled).toBe(false), { timeout: 10_000 });
       expect(picker().parentElement!.hasAttribute("title"), "and no reason once it opens").toBe(false);
     },

@@ -705,15 +705,16 @@ async fn vd_connect(
     // — it finds nothing installed yet — so without the generation the session installed
     // under the same label afterwards, orphaned under the page that replaced it.
     let gen = state.page_gen(webview.label());
-    let (tx, device, counters) = tauri::async_runtime::spawn_blocking(move || vd::open(model))
-        .await
-        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
+    let (tx, device, counters, outbox) =
+        tauri::async_runtime::spawn_blocking(move || vd::open(model))
+            .await
+            .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     // The label identifies its OWNER, which is what decides whether a later page
     // load may tear it down (see the on_page_load hook in `run`).
     let epoch = state
-        .install_for_page(tx, counters, webview.label(), gen)
+        .install_for_page(tx, counters, outbox, webview.label(), gen)
         .ok_or_else(|| {
             "vd-page-gone: the page that asked for this connection reloaded".to_string()
         })?;
@@ -787,17 +788,19 @@ async fn vd_get_str(
 }
 
 // Subscribe to live level meters: the worker registers each (meter_id, x) with
-// the broker and streams readings through the channel. Replaces any prior
-// subscription. Registration is per-address, so this waits on the worker like
-// set/get do — the reply tells the caller whether the stream actually started.
+// the broker, and the readings go to the session's outbox as runs for `handler`,
+// the number the page gave the subscription; the page fetches them with
+// vd_notifications. Replaces any prior subscription. Registration is per-address,
+// so this waits on the worker like set/get do — the reply tells the caller whether
+// the stream actually started.
 #[tauri::command]
 async fn vd_meters_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64)>,
-    channel: tauri::ipc::Channel<vd::Delivery<vd::MeterUpdate>>,
+    handler: u64,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
-    tauri::async_runtime::spawn_blocking(move || vd::meters_subscribe(tx, addrs, channel))
+    tauri::async_runtime::spawn_blocking(move || vd::meters_subscribe(tx, addrs, handler))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
@@ -809,17 +812,17 @@ fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 }
 
 // Subscribe to device-side parameter changes: the worker registers each
-// (param_id, x, y) with the broker and streams `notify` frames through the
-// channel, so edits made on the device follow into the UI. Replaces any prior
-// subscription. Waits on the worker, like the meter subscription.
+// (param_id, x, y) with the broker, and the `notify` frames go to the session's
+// outbox as runs for `handler`, so edits made on the device follow into the UI.
+// Replaces any prior subscription. Waits on the worker, like the meter subscription.
 #[tauri::command]
 async fn vd_params_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: tauri::ipc::Channel<vd::Delivery<vd::ParamUpdate>>,
+    handler: u64,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
-    tauri::async_runtime::spawn_blocking(move || vd::params_subscribe(tx, addrs, channel))
+    tauri::async_runtime::spawn_blocking(move || vd::params_subscribe(tx, addrs, handler))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
@@ -838,15 +841,33 @@ fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 async fn vd_probe_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: tauri::ipc::Channel<vd::Delivery<vd::ParamUpdate>>,
+    handler: u64,
 ) -> Result<(), String> {
     if !dev_build() {
         return Err("not-available: the parameter watch is a dev build's diagnostic".into());
     }
     let tx = vd::sender(&state)?;
-    tauri::async_runtime::spawn_blocking(move || vd::probe_subscribe(tx, addrs, channel))
+    tauri::async_runtime::spawn_blocking(move || vd::probe_subscribe(tx, addrs, handler))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
+}
+
+// The notifications of the connection of generation `epoch` the page has not
+// fetched, in the order the shell received them: waits up to a second for one, and
+// answers an empty list when none came, or null once that connection is over. The
+// page keeps one fetch outstanding at a time, so the runs reach it in this order and
+// once each, and a fetch that fails is a rejection it sees.
+#[tauri::command]
+async fn vd_notifications(
+    state: State<'_, vd::VdState>,
+    epoch: u64,
+) -> Result<Option<Vec<vd::Run>>, String> {
+    let Some(outbox) = vd::outbox(&state, epoch) else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || outbox.take(std::time::Duration::from_secs(1)))
+        .await
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())
 }
 
 // Watch the held-open live connection: the worker pushes a single LinkEvent
@@ -1253,6 +1274,7 @@ pub fn run() {
             vd_params_subscribe,
             vd_params_unsubscribe,
             vd_probe_subscribe,
+            vd_notifications,
             vd_watch_link,
             vd_disconnect,
             prepare_for_exit,

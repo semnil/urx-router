@@ -174,8 +174,8 @@ describe("errorText", () => {
       "broker-rejected: 140:0:0 (response_code 500)",
       "broker-bad-response: no sync_status",
       "broker-io: connection reset",
-      // Raised by the platform bridge, not the shell: a notification message never arrived.
-      "notification-gap",
+      // Raised by the platform bridge, not the shell: the notifications could not be fetched.
+      "notifications-lost",
       "file-not-found",
       "file-denied",
       "file-io: No space left on device (os error 28)",

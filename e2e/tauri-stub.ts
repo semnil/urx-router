@@ -118,6 +118,9 @@ export async function stubTauriBoot(page: Page, commands: Record<string, unknown
  * turns Live sync on.
  */
 export const LIVE_COMMANDS = {
+  // A stub that routes no notifications answers that there are none to fetch: the page's fetch
+  // ends at once. `stubTauriDevice` answers it itself, from what a spec delivers.
+  vd_notifications: null,
   vd_params_subscribe: null,
   vd_params_unsubscribe: null,
   vd_watch_link: null,
@@ -251,7 +254,13 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
         __urxMeters: { addrs: Array<[number, number]>; channel: { onmessage: (batch: unknown) => void } } | null;
         __urxLink: { onmessage: (event: unknown) => void } | null;
-        __urxNumbered: (kind: string, updates: unknown[]) => unknown;
+        __urxNotifications: {
+          open: boolean;
+          failNext: boolean;
+          runs: unknown[];
+          waiter: { resolve: (runs: unknown[] | null) => void; reject: (error: Error) => void } | null;
+          answer: () => void;
+        };
         __urxRefuseReads: number[];
         __urxHoldReads: number[];
         __urxHeld: Array<{ id: number; go: () => void }>;
@@ -275,15 +284,37 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxNotify = null;
       w.__urxMeters = null;
       w.__urxLink = null;
-      // The shell numbers a kind's notification messages across the session's channels for it
-      // (vd.rs `Delivery`), from 0 at each connect, and the app hands them on in that order: a
-      // spec's delivery goes out numbered the same way.
-      let numbered = new Map<string, number>();
-      w.__urxNumbered = (kind, updates) => {
-        const seq = numbered.get(kind) ?? 0;
-        numbered.set(kind, seq + 1);
-        return { session: 0, seq, updates };
+      // The page fetches the connection's notifications (`vd_notifications`), and the shell answers
+      // with every run routed since the last fetch, or waits for one (vd.rs `Outbox`); null once the
+      // connection is closed. A spec's delivery is routed to the subscription's handler as the
+      // shell routes one, and the page's fetch takes it.
+      w.__urxNotifications = {
+        open: false,
+        failNext: false,
+        runs: [],
+        waiter: null,
+        answer() {
+          const waiter = this.waiter;
+          if (waiter === null || (!this.failNext && this.open && this.runs.length === 0)) return;
+          this.waiter = null;
+          if (this.failNext) {
+            this.failNext = false;
+            waiter.reject(new Error("stub: the notification fetch failed"));
+            return;
+          }
+          const runs = this.runs;
+          this.runs = [];
+          waiter.resolve(this.open ? runs : null);
+        },
       };
+      const outbox = w.__urxNotifications;
+      const routing = (kind: string, handler: unknown) => ({
+        onmessage: (updates: unknown) => {
+          if (!outbox.open) return;
+          outbox.runs.push({ kind, handler, updates });
+          outbox.answer();
+        },
+      });
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
       const instance: Record<string, number> = {};
@@ -300,8 +331,25 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             dialogs.push(String(args?.message ?? ""));
             return Promise.resolve(o.confirm ?? "Cancel");
           }
+          if (cmd === "vd_notifications") {
+            if (!outbox.open) return Promise.resolve(null);
+            // One fetch outstanding at a time, as the page keeps it; a second one is the page's defect.
+            if (outbox.waiter !== null)
+              return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
+            return new Promise<unknown[] | null>((resolve, reject) => {
+              outbox.waiter = { resolve, reject };
+              outbox.answer();
+            });
+          }
+          if (cmd === "vd_disconnect") {
+            outbox.open = false;
+            outbox.runs = [];
+            outbox.answer();
+          }
           if (cmd === "vd_connect") {
             const model = o.model ?? "URX44V";
+            outbox.open = true;
+            outbox.runs = [];
             return Promise.resolve({
               model,
               label: model,
@@ -367,20 +415,19 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             linkLog.push(String(args?.line ?? ""));
             return Promise.resolve(constants.append_link_log ?? "");
           }
-          // Keep the notify stream's own channel: a change made on the unit's own panel
-          // arrives through it, and it is the only way a spec can deliver one. Captured
-          // beside the constant answer rather than instead of it, so a spec that never
-          // registered the live commands still meets the same refusal it always did.
-          if (cmd === "vd_connect") numbered = new Map();
-          if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
+          // Keep the notify stream's route: a change made on the unit's own panel arrives
+          // through it, and it is the only way a spec can deliver one. Captured beside the
+          // constant answer rather than instead of it, so a spec that never registered the
+          // live commands still meets the same refusal it always did.
+          if (cmd === "vd_params_subscribe") w.__urxNotify = routing("params", args?.handler);
           // The link watch's channel, which is how the shell tells a session its link ended.
           if (cmd === "vd_watch_link") w.__urxLink = args?.channel as typeof w.__urxLink;
-          // The meter registration likewise: what it names, and the channel the unit's meter stream
+          // The meter registration likewise: what it names, and the route the unit's meter stream
           // would arrive through. A registration replaces the one before it, as the shell's does.
           if (cmd === "vd_meters_subscribe")
             w.__urxMeters = {
               addrs: args?.addrs as Array<[number, number]>,
-              channel: args?.channel as { onmessage: (batch: unknown) => void },
+              channel: routing("meters", args?.handler),
             };
           // Recorded beside the constant answer, so a spec that answers a save can read back
           // the document it wrote. Without an answer in `commands` the save is refused as before.
@@ -464,21 +511,13 @@ export const meterAddrsOf = (page: Page): Promise<Array<[number, number]>> =>
     () => (window as unknown as { __urxMeters: { addrs: Array<[number, number]> } | null }).__urxMeters?.addrs ?? [],
   );
 
-/** Deliver one batch of meter readings ([meterId, x, raw value]) through the channel the app
- *  registered last, the way the shell forwards the unit's meter stream. */
+/** Deliver one batch of meter readings ([meterId, x, raw value]) to the registration the app
+ *  made last, the way the shell forwards the unit's meter stream. */
 export const pushMeters = (page: Page, frames: ReadonlyArray<readonly [number, number, number]>): Promise<void> =>
   page.evaluate((list) => {
-    const w = window as unknown as {
-      __urxMeters: { channel: { onmessage: (batch: unknown) => void } } | null;
-      __urxNumbered: (kind: string, updates: unknown[]) => unknown;
-    };
+    const w = window as unknown as { __urxMeters: { channel: { onmessage: (batch: unknown) => void } } | null };
     if (!w.__urxMeters) throw new Error("pushMeters: nothing registered for meters");
-    w.__urxMeters.channel.onmessage(
-      w.__urxNumbered(
-        "meters",
-        list.map(([meter_id, x, value]) => ({ meter_id, x, value })),
-      ),
-    );
+    w.__urxMeters.channel.onmessage(list.map(([meter_id, x, value]) => ({ meter_id, x, value })));
   }, frames);
 
 /** Hold every write of these param ids from now on: the write is neither answered nor applied
@@ -594,28 +633,22 @@ export const notifyBurst = (
 ): Promise<void> =>
   page.evaluate(
     (list) => {
-      const w = window as unknown as {
-        __urxNotify: { onmessage: (batch: unknown) => void } | null;
-        __urxNumbered: (kind: string, updates: unknown[]) => unknown;
-      };
+      const w = window as unknown as { __urxNotify: { onmessage: (batch: unknown) => void } | null };
       if (!w.__urxNotify) throw new Error("notifyParam: nothing subscribed to the notify stream");
-      w.__urxNotify.onmessage(
-        w.__urxNumbered(
-          "params",
-          list.map((u) => ({ param_id: u.paramId, x: u.x ?? 0, y: u.y, value: u.value })),
-        ),
-      );
+      w.__urxNotify.onmessage(list.map((u) => ({ param_id: u.paramId, x: u.x ?? 0, y: u.y, value: u.value })));
     },
     updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
 
-/** Lose the notify stream's next message: its number is taken and nothing is delivered, as when a
- *  message the shell sent never reaches the page. The ones after it then wait on it, and the app
- *  ends the session once DELIVERY_GAP_MS has passed (`src/core/platform.ts`). */
-export const loseNotify = (page: Page): Promise<void> =>
+/** Fail the page's notification fetch — the one outstanding, or the next one the page sends — as an
+ *  IPC call that does not come back fails. The app then ends the session, since a change the unit
+ *  announced may not have reached it (`NOTIFICATIONS_LOST`, `src/core/platform.ts`). */
+export const failNotificationFetch = (page: Page): Promise<void> =>
   page.evaluate(() => {
-    const w = window as unknown as { __urxNumbered: (kind: string, updates: unknown[]) => unknown };
-    w.__urxNumbered("params", []);
+    const outbox = (window as unknown as { __urxNotifications: { failNext: boolean; answer: () => void } })
+      .__urxNotifications;
+    outbox.failNext = true;
+    outbox.answer();
   });
 
 /** End the session from the shell's side, as the link watch does when the link drops: `reason`

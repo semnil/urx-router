@@ -1161,8 +1161,8 @@ export const ja: Messages = {
       brokerRejected: (detail: string): string => `デバイスが書き込みを拒否しました (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center から想定外の応答が返りました (${detail})`,
       brokerIo: (detail: string): string => `Device Center との通信に失敗しました (${detail})`,
-      notificationGap:
-        "デバイスが知らせた変更が 1 つ届かなかったため、変更の順番が分からなくなりました。ライブ同期をもう一度始めてください。",
+      notificationsLost:
+        "デバイスが知らせた変更を取得できなかったため、変更を追えなくなりました。ライブ同期をもう一度始めてください。",
       fileNotFound: "そのパスにファイルがありません",
       fileDenied: "ファイルへのアクセスが拒否されました",
       fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,

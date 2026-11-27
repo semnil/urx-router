@@ -542,15 +542,28 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       let paramChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let meterChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let linkCb: ((e: { reason: string }) => void) | null = null;
-      // vd.rs numbers a kind's notification messages across the session's channels for it
-      // (`Delivery`), from 0 at each connect, and the bridge hands them on in that order: what
-      // the fake delivers goes out numbered the same way.
-      let numbered = new Map<string, number>();
-      const numbering = (kind: string, channel: { onmessage: (message: unknown) => void }) => ({
+      // vd.rs `Outbox`: the runs routed to the page since its last `vd_notifications`, which the page
+      // fetches one request at a time. What the fake delivers waits here for that fetch, routed to the
+      // subscription's handler as vd.rs routes it; nothing is routed once the worker is gone, and a
+      // fetch then answers null.
+      const outbox = {
+        open: false,
+        runs: [] as unknown[],
+        waiter: null as ((runs: unknown[] | null) => void) | null,
+        answer(): void {
+          const waiter = this.waiter;
+          if (waiter === null || (this.open && this.runs.length === 0)) return;
+          this.waiter = null;
+          const runs = this.runs;
+          this.runs = [];
+          waiter(this.open ? runs : null);
+        },
+      };
+      const routing = (kind: string, handler: unknown) => ({
         onmessage: (updates: unknown[]) => {
-          const seq = numbered.get(kind) ?? 0;
-          numbered.set(kind, seq + 1);
-          channel.onmessage({ session: 0, seq, updates });
+          if (!outbox.open) return;
+          outbox.runs.push({ kind, handler, updates });
+          outbox.answer();
         },
       });
 
@@ -558,18 +571,17 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
        *  handler makes to the new token before its registrations run. Called from the
        *  queue point. */
       const install = (cmd: string, args: Record<string, unknown>): void => {
-        const channel = args.channel as { onmessage: (message: unknown) => void };
         if (cmd === "vd_params_subscribe") {
           fake.counters.subscribes++;
           fake.paramAddrs = args.addrs as Array<[number, number, number]>;
           registered = new Set(fake.paramAddrs.map((a) => a.join(":")));
-          paramChannel = numbering("params", channel);
+          paramChannel = routing("params", args.handler);
           put("subscribe", { cmd, detail: String(fake.paramAddrs.length) });
         } else {
           fake.counters.meterSubs++;
           fake.meterAddrs = args.addrs as Array<[number, number]>;
           registeredMeters = new Set(fake.meterAddrs.map((a) => a.join(":")));
-          meterChannel = numbering("meters", channel);
+          meterChannel = routing("meters", args.handler);
         }
       };
 
@@ -584,7 +596,9 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       const teardown = (): void => {
         paramChannel = null;
         meterChannel = null;
-        numbered = new Map();
+        outbox.open = false;
+        outbox.runs = [];
+        outbox.answer();
         registered.clear();
         registeredMeters.clear();
         linkCb = null;
@@ -1125,6 +1139,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
             // one's channels and registrations.
             teardown();
             fake.counters.connects++;
+            outbox.open = true;
             done();
             return { model: config.model, label: "Fake URX", firmware: config.firmware, epoch: fake.counters.connects };
           case "vd_disconnect":
@@ -1210,6 +1225,26 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (cmd === "vd_watch_link") {
             const ch = args?.channel as { onmessage: (d: unknown) => void } | undefined;
             if (ch) linkCb = (e) => ch.onmessage(e);
+          }
+          // Outside `handle`, so outside the worker's queue and the trace: vd.rs answers the fetch from
+          // the outbox with no `Cmd`, and the page keeps one outstanding for as long as a session
+          // lasts, which a trace entry would make a link that is never quiet.
+          if (cmd === "vd_notifications") {
+            if (!outbox.open || Number(args?.epoch) !== fake.counters.connects)
+              return window.__urxAnswerLater(cmd, Promise.resolve(null));
+            // One fetch outstanding at a time, as the page keeps it; a second one is the page's defect.
+            if (outbox.waiter !== null)
+              return window.__urxAnswerLater(
+                cmd,
+                Promise.reject(new Error("fake: a notification fetch is already outstanding")),
+              );
+            return window.__urxAnswerLater(
+              cmd,
+              new Promise<unknown[] | null>((resolve) => {
+                outbox.waiter = resolve;
+                outbox.answer();
+              }),
+            );
           }
           return handle(cmd, args ?? {});
         },
