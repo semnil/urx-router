@@ -486,7 +486,10 @@ subscription's addresses: that field is the harness's
 driver helpers are `pushNotify` (returns one verdict per entry — `""` delivered, the reason refused),
 **`pushNotifyDelivered`** (pushes and throws naming any refused address — what a case whose subject is
 the app's RESPONSE must use), **`pushBulkChange`** (the sanctioned way to force one whole-device
-reconcile) and **`notifyDropsOf`** (for a case whose subject IS the refusal).
+reconcile) and **`notifyDropsOf`** (for a case whose subject IS the refusal). A delivered notify
+reaches the app when the page next fetches its notifications, a task after the push, as the shell's
+outbox answers it; **`delivered`** on the fake settles once the page has handed on everything pushed so
+far, which is what an in-page sequence awaits before acting on the notify's effect in the same task.
 
 **`pushNameNotify`** is the string-path member of that family — a rename made on the unit's own LCD,
 which carries its text in `value_str` and a numeric `value` of 0. It returns the same per-entry verdict,

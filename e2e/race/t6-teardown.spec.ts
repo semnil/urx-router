@@ -568,12 +568,14 @@ test.describe("T6 teardown", () => {
     await setLatency(page, { get: 8, set: 25 });
 
     const before = (await faderReadout(page, "CH 1").textContent())!;
-    // Both in one tick: the notify arms the reflect and the click tears the session
-    // down before the timer can fire. The mark is stamped after the click, so the
-    // synchronous part of the teardown (the two unsubscribes) stays outside it.
-    await page.evaluate(() => {
+    // One in-page task from the page taking the notify to the click: the notify arms the
+    // reflect as the page hands it on, and the click tears the session down before the
+    // timer can fire. The mark is stamped after the click, so the synchronous part of the
+    // teardown (the two unsubscribes) stays outside it.
+    await page.evaluate(async () => {
       const f = window.__urxFake;
       f.pushNotify([[139, 0, 0, 20]]);
+      await f.delivered();
       (document.getElementById("btn-live") as HTMLButtonElement).click();
       f.mark("deactivated");
     });

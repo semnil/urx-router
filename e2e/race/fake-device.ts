@@ -261,6 +261,11 @@ export interface FakeHandle {
   /** Push device-side param notifies through the bridge's filter. Returns one verdict
    *  per entry, in order: "" for a delivered one, the refusal reason for a dropped one. */
   pushNotify: (list: Array<[number, number, number, number]>, origin?: "device") => string[];
+  /** Settles once the page has handed on every notification delivered so far: at its next
+   *  `vd_notifications` with nothing left to take, since the page fetches again only after
+   *  handing on what the last one answered — or at once, and at the teardown, with no
+   *  connection to fetch from. */
+  delivered: () => Promise<void>;
   /** The address-free bulk-change sentinel — the one notify that bypasses the filter,
    *  and so the sanctioned way to force one whole-device reconcile. */
   /** A STRING notify — what a rename broadcasts. The bridge carries it in
@@ -396,6 +401,8 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         return [w];
       };
 
+      // Who waits for the page to have taken what was delivered (`delivered`).
+      const takenWaiters: Array<() => void> = [];
       const fake: FakeHandle = {
         cfg: config,
         t0,
@@ -459,6 +466,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         },
         setLatency: (patch) => Object.assign(config.latency, patch),
         mark: (detail) => void put("mark", { detail }),
+        delivered: () => (outbox.open ? new Promise<void>((resolve) => takenWaiters.push(resolve)) : Promise.resolve()),
         pushNotify: (list, origin) => {
           // The delivery filters ENTRIES, not frames: a batch carrying one registered and
           // one unregistered address delivers the first and drops the second.
@@ -599,6 +607,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
         outbox.open = false;
         outbox.runs = [];
         outbox.answer();
+        for (const taken of takenWaiters.splice(0)) taken();
         registered.clear();
         registeredMeters.clear();
         linkCb = null;
@@ -1232,6 +1241,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
           if (cmd === "vd_notifications") {
             if (!outbox.open || Number(args?.epoch) !== fake.counters.connects)
               return window.__urxAnswerLater(cmd, Promise.resolve(null));
+            if (outbox.runs.length === 0) for (const taken of takenWaiters.splice(0)) taken();
             // One fetch outstanding at a time, as the page keeps it; a second one is the page's defect.
             if (outbox.waiter !== null)
               return window.__urxAnswerLater(
