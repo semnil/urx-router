@@ -542,23 +542,34 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       let paramChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let meterChannel: { onmessage: (b: unknown[]) => void } | null = null;
       let linkCb: ((e: { reason: string }) => void) | null = null;
+      // vd.rs numbers a kind's notification messages across the session's channels for it
+      // (`Delivery`), from 0 at each connect, and the bridge hands them on in that order: what
+      // the fake delivers goes out numbered the same way.
+      let numbered = new Map<string, number>();
+      const numbering = (kind: string, channel: { onmessage: (message: unknown) => void }) => ({
+        onmessage: (updates: unknown[]) => {
+          const seq = numbered.get(kind) ?? 0;
+          numbered.set(kind, seq + 1);
+          channel.onmessage({ session: 0, seq, updates });
+        },
+      });
 
       /** Replace a subscription — the switch vd.rs's ParamsSubscribe / MetersSubscribe
        *  handler makes to the new token before its registrations run. Called from the
        *  queue point. */
       const install = (cmd: string, args: Record<string, unknown>): void => {
-        const channel = args.channel as { onmessage: (b: unknown[]) => void };
+        const channel = args.channel as { onmessage: (message: unknown) => void };
         if (cmd === "vd_params_subscribe") {
           fake.counters.subscribes++;
           fake.paramAddrs = args.addrs as Array<[number, number, number]>;
           registered = new Set(fake.paramAddrs.map((a) => a.join(":")));
-          paramChannel = channel;
+          paramChannel = numbering("params", channel);
           put("subscribe", { cmd, detail: String(fake.paramAddrs.length) });
         } else {
           fake.counters.meterSubs++;
           fake.meterAddrs = args.addrs as Array<[number, number]>;
           registeredMeters = new Set(fake.meterAddrs.map((a) => a.join(":")));
-          meterChannel = channel;
+          meterChannel = numbering("meters", channel);
         }
       };
 
@@ -573,6 +584,7 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       const teardown = (): void => {
         paramChannel = null;
         meterChannel = null;
+        numbered = new Map();
         registered.clear();
         registeredMeters.clear();
         linkCb = null;

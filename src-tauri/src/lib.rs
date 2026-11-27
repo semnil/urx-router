@@ -794,7 +794,7 @@ async fn vd_get_str(
 async fn vd_meters_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64)>,
-    channel: tauri::ipc::Channel<Vec<vd::MeterUpdate>>,
+    channel: tauri::ipc::Channel<vd::Delivery<vd::MeterUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::meters_subscribe(tx, addrs, channel))
@@ -816,7 +816,7 @@ fn vd_meters_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 async fn vd_params_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: tauri::ipc::Channel<Vec<vd::ParamUpdate>>,
+    channel: tauri::ipc::Channel<vd::Delivery<vd::ParamUpdate>>,
 ) -> Result<(), String> {
     let tx = vd::sender(&state)?;
     tauri::async_runtime::spawn_blocking(move || vd::params_subscribe(tx, addrs, channel))
@@ -838,7 +838,7 @@ fn vd_params_unsubscribe(state: State<vd::VdState>) -> Result<(), String> {
 async fn vd_probe_subscribe(
     state: State<'_, vd::VdState>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: tauri::ipc::Channel<Vec<vd::ParamUpdate>>,
+    channel: tauri::ipc::Channel<vd::Delivery<vd::ParamUpdate>>,
 ) -> Result<(), String> {
     if !dev_build() {
         return Err("not-available: the parameter watch is a dev build's diagnostic".into());

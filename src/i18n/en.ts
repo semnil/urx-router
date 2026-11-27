@@ -1496,6 +1496,9 @@ export const en = {
       brokerRejected: (detail: string): string => `the device refused the write (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center sent an unexpected response (${detail})`,
       brokerIo: (detail: string): string => `the connection to Device Center failed (${detail})`,
+      notificationGap: tr(
+        "a change the device announced did not arrive, so the order of its changes is no longer known. Start Live sync again.",
+      ),
       fileNotFound: tr("the file no longer exists at that path"),
       fileDenied: tr("access to the file was denied"),
       fileIo: (detail: string): string => `the file could not be read or written (${detail})`,

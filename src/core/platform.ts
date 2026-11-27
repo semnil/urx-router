@@ -271,6 +271,8 @@ export interface DeviceSummary {
  * earlier session can only close the exact connection it was opened for. */
 export interface Connection extends DeviceSummary {
   epoch: number;
+  /** The number the connection's notification messages carry (`RawDelivery.session`). */
+  session?: number;
 }
 
 /** Connect to the URX via the broker; resolves with the connected device + epoch.
@@ -278,7 +280,122 @@ export interface Connection extends DeviceSummary {
  *  the one to connect to, and a choice it cannot make rejects with
  *  `multiple-devices`. */
 export function vdConnect(model: string): Promise<Connection> {
-  return invoke<Connection>("vd_connect", { model });
+  return invoke<Connection>("vd_connect", { model }).then((connection) => {
+    beginDeliveries(connection);
+    return connection;
+  });
+}
+
+/** A notification channel's message as the shell sends it (vd.rs `Delivery`): one run of
+ *  updates, numbered per kind — parameters, meters, the dev build's watch — across every
+ *  channel the session gave that kind, in the order the shell sent them. */
+interface RawDelivery<T> {
+  session: number;
+  seq: number;
+  updates: T[];
+}
+
+/** How long a kind's later messages wait for a missing one before the session is ended. */
+export const DELIVERY_GAP_MS = 2_000;
+
+/** The code a session ends with when one of its notification messages never arrived: what
+ *  came after it can no longer be put in the order the unit announced it. */
+export const NOTIFICATION_GAP = "notification-gap";
+
+// The connection whose messages are being put in order: its epoch, so only its own disconnect
+// ends that, and its session number, which every one of its messages carries. A connect
+// whose reply names no session leaves the number null, and the newest session seen is taken.
+let deliveryEpoch: number | null = null;
+let deliverySession: number | null = null;
+// The current session's link watch: a missing message ends the session through it, as the
+// shell's report of a link that ended does. Cleared with the connection.
+let linkDropped: ((reason: string) => void) | null = null;
+
+/**
+ * Puts one kind's messages back in the order the shell sent them. Tauri keeps one channel's
+ * messages in order and not two channels' — a message of 8 KiB or more is fetched by the page
+ * after the fact — and a kind's notifications go out on the channel of each subscription that
+ * received them, so without this a lock the unit announced before a re-subscription could reach
+ * the follow layer after the unlock it announced next. Each message still goes to its own
+ * channel's handler, in number order. A message that waits on a missing one for DELIVERY_GAP_MS
+ * ends the session through the link watch, and the session's messages are dropped from then on.
+ */
+class DeliveryOrder {
+  #session = -1;
+  #next = 0;
+  #broken = false;
+  readonly #held = new Map<number, () => void>();
+  #timer: ReturnType<typeof setTimeout> | null = null;
+
+  take<T>(message: RawDelivery<T>, deliver: (updates: T[]) => void): void {
+    const current = deliverySession ?? Math.max(this.#session, message.session);
+    if (message.session !== current) return;
+    if (message.session !== this.#session) this.#start(message.session);
+    if (this.#broken || message.seq < this.#next) return;
+    this.#held.set(message.seq, () => deliver(message.updates));
+    const ready: Array<() => void> = [];
+    for (let run = this.#held.get(this.#next); run !== undefined; run = this.#held.get(this.#next)) {
+      this.#held.delete(this.#next);
+      this.#next += 1;
+      ready.push(run);
+    }
+    // Each wait is its own: the one a message starts runs from when it arrived behind a gap.
+    if (ready.length > 0) this.#stopWaiting();
+    if (this.#held.size > 0 && this.#timer === null) {
+      this.#timer = setTimeout(() => {
+        this.#timer = null;
+        this.#held.clear();
+        this.#broken = true;
+        linkDropped?.(NOTIFICATION_GAP);
+      }, DELIVERY_GAP_MS);
+    }
+    // Every message that is ready goes to its handler even when one before it throws; the
+    // first failure is passed on, as a channel's own handler would have thrown it.
+    let failure: { error: unknown } | null = null;
+    for (const run of ready) {
+      try {
+        run();
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+    if (failure) throw failure.error;
+  }
+
+  /** Forgets the session it was following: the next message starts anew. */
+  reset(): void {
+    this.#start(-1);
+  }
+
+  #start(session: number): void {
+    this.#session = session;
+    this.#next = 0;
+    this.#broken = false;
+    this.#held.clear();
+    this.#stopWaiting();
+  }
+
+  #stopWaiting(): void {
+    if (this.#timer !== null) clearTimeout(this.#timer);
+    this.#timer = null;
+  }
+}
+
+const meterOrder = new DeliveryOrder();
+const paramOrder = new DeliveryOrder();
+const probeOrder = new DeliveryOrder();
+
+function resetDeliveries(): void {
+  linkDropped = null;
+  meterOrder.reset();
+  paramOrder.reset();
+  probeOrder.reset();
+}
+
+function beginDeliveries(connection: Connection): void {
+  resetDeliveries();
+  deliveryEpoch = connection.epoch;
+  deliverySession = typeof connection.session === "number" ? connection.session : null;
 }
 
 /** The code a write refused by `holdDeviceWrites` rejects with. A prefix, as the shell's own
@@ -352,9 +469,11 @@ export async function vdMetersSubscribe(
   if (!isTauri()) return () => {};
   // Rust batches each pump cycle's readings into one channel message, so the IPC
   // boundary is crossed ~30×/s instead of per reading; fan the batch back out here.
-  const channel = newChannel<RawMeterUpdate[]>((batch) => {
-    for (const d of batch) onUpdate({ meterId: d.meter_id, x: d.x, value: d.value });
-  });
+  const channel = newChannel<RawDelivery<RawMeterUpdate>>((message) =>
+    meterOrder.take(message, (batch) => {
+      for (const d of batch) onUpdate({ meterId: d.meter_id, x: d.x, value: d.value });
+    }),
+  );
   // Awaited: bars stuck on the floor read as "no signal" and send the operator
   // chasing gain that was never the problem, so a failed registration is surfaced
   // rather than left to look like silence.
@@ -398,7 +517,7 @@ export async function vdParamsSubscribe(
   onUpdate: (p: ParamUpdate) => void,
 ): Promise<() => void> {
   if (!isTauri()) return () => {};
-  const channel = paramChannel(onUpdate);
+  const channel = paramChannel(paramOrder, onUpdate);
   // Awaited, not fire-and-forget: a failed registration leaves the app blind to
   // device-side edits, and the next converge would then write the plan's stale
   // values back over them. The caller stops rather than running half-deaf.
@@ -408,10 +527,12 @@ export async function vdParamsSubscribe(
 
 // Batched per pump cycle on the Rust side (a device-side sweep arrives as one
 // message), so fan the batch back out into per-notify callbacks here.
-function paramChannel(onUpdate: (p: ParamUpdate) => void) {
-  return newChannel<RawParamUpdate[]>((batch) => {
-    for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value, valueStr: d.value_str });
-  });
+function paramChannel(order: DeliveryOrder, onUpdate: (p: ParamUpdate) => void) {
+  return newChannel<RawDelivery<RawParamUpdate>>((message) =>
+    order.take(message, (batch) => {
+      for (const d of batch) onUpdate({ paramId: d.param_id, x: d.x, y: d.y, value: d.value, valueStr: d.value_str });
+    }),
+  );
 }
 
 /**
@@ -424,7 +545,7 @@ export async function vdProbeSubscribe(
   addrs: Array<[number, number, number]>,
   onUpdate: (p: ParamUpdate) => void,
 ): Promise<void> {
-  await invoke<void>("vd_probe_subscribe", { addrs, channel: paramChannel(onUpdate) });
+  await invoke<void>("vd_probe_subscribe", { addrs, channel: paramChannel(probeOrder, onUpdate) });
 }
 
 // The Rust side streams LinkEvent with snake_case fields (serde default).
@@ -441,6 +562,8 @@ interface RawLinkEvent {
 export async function vdWatchLink(onDrop: (reason: string) => void): Promise<void> {
   if (!isTauri()) return;
   const channel = newChannel<RawLinkEvent>((d) => onDrop(d.reason));
+  // A notification message that never arrives ends the session the same way.
+  linkDropped = onDrop;
   // Awaited: without this watch an idle link drop surfaces as a frozen session
   // (tally lit, meters stopped) instead of a teardown, so a failure here has to
   // stop the session rather than start one that cannot notice its own death.
@@ -450,6 +573,12 @@ export async function vdWatchLink(onDrop: (reason: string) => void): Promise<voi
 /** Close the connection opened with generation `epoch` (no-op if a newer connect
  * already replaced it, or none is connected). */
 export function vdDisconnect(epoch: number): Promise<void> {
+  // Only the connection being followed: a late disconnect of an older one leaves it alone.
+  if (epoch === deliveryEpoch) {
+    resetDeliveries();
+    deliveryEpoch = null;
+    deliverySession = null;
+  }
   return invoke<void>("vd_disconnect", { epoch });
 }
 

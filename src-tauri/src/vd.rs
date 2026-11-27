@@ -48,6 +48,9 @@ pub struct DeviceSummary {
     pub model: String,
     pub label: String,
     pub firmware: Option<String>,
+    /// The number this session's notification messages carry (`Delivery::session`), so
+    /// the frontend sets aside what a session that has ended still delivers.
+    pub session: u64,
 }
 
 /// A freshly opened connection handed to the frontend: the device plus the
@@ -148,6 +151,20 @@ pub struct LinkStats {
     pub stalled: u64,
 }
 
+/// One message on a notification channel: a run of updates, numbered per kind
+/// (parameters, meters, the dev build's watch) in the order the shell sent that
+/// kind's messages over all of the session's channels for it. Tauri keeps one
+/// channel's messages in order and not two channels' — a message of 8 KiB or more is
+/// fetched by the page after the fact — so the frontend restores this order across a
+/// kind's channels before any handler sees a message (`src/core/platform.ts`).
+/// `session` tells the messages of a session that has ended from the next one's.
+#[derive(Clone, Serialize)]
+pub struct Delivery<T> {
+    pub session: u64,
+    pub seq: u64,
+    pub updates: Vec<T>,
+}
+
 /// One live level-meter reading pushed to the frontend. `value` is the broker's
 /// raw meter value (deci-dBFS; 32767 = OVER), decoded on the JS side.
 #[derive(Clone, Serialize)]
@@ -234,27 +251,23 @@ pub enum Cmd {
         reply: Sender<Result<String, String>>,
     },
     /// Subscribe to a set of level meters (meter_id, x) and stream their readings
-    /// through `channel`. Replaces any prior meter subscription. The reply carries
-    /// the first registration *send* failure only (a socket transmit error): the
-    /// broker's registration reply is drained by the pump, never read, so a broker
-    /// refusal does not surface — only a failure to put the request on the wire.
-    /// Each `send` carries a whole pump cycle's readings (the broker streams ~250/s
-    /// across the set), so the IPC boundary is crossed ~30×/s instead of per reading.
+    /// through `channel`. Replaces any prior meter subscription. The reply is the
+    /// registration's outcome, each address's verdict checked (K9). A message carries
+    /// the readings of one delivered batch that went to this channel, numbered as
+    /// `Delivery` says.
     MetersSubscribe {
         addrs: Vec<(u32, i64)>,
-        channel: Channel<Vec<MeterUpdate>>,
+        channel: Channel<Delivery<MeterUpdate>>,
         reply: Sender<Result<(), String>>,
     },
     /// Drop the current meter subscription (unregisters each address).
     MetersUnsubscribe,
     /// Subscribe to a set of parameter addresses (param_id, x, y) and stream their
     /// `notify` frames through `channel`. Replaces any prior parameter subscription.
-    /// The reply carries the first registration *send* failure only (a socket
-    /// transmit error): the broker's registration reply is drained by the pump,
-    /// never read, so a broker refusal does not surface.
+    /// The reply is the registration's outcome, each address's verdict checked (K9).
     ParamsSubscribe {
         addrs: Vec<(u32, i64, i64)>,
-        channel: Channel<Vec<ParamUpdate>>,
+        channel: Channel<Delivery<ParamUpdate>>,
         reply: Sender<Result<(), String>>,
     },
     /// Drop the current parameter subscription (unregisters each address).
@@ -267,7 +280,7 @@ pub enum Cmd {
     /// refuses in a release binary (lib.rs `vd_probe_subscribe`).
     ProbeSubscribe {
         addrs: Vec<(u32, i64, i64)>,
-        channel: Channel<Vec<ParamUpdate>>,
+        channel: Channel<Delivery<ParamUpdate>>,
         reply: Sender<Result<(), String>>,
     },
     /// Register a channel to receive the link-lost event (see LinkEvent). Replaces
@@ -502,7 +515,7 @@ pub fn get_str(tx: Sender<Cmd>, param_id: u32, x: i64, y: i64) -> Result<String,
 pub fn meters_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64)>,
-    channel: Channel<Vec<MeterUpdate>>,
+    channel: Channel<Delivery<MeterUpdate>>,
 ) -> Result<(), String> {
     let (reply, rx) = mpsc::channel();
     tx.send(Cmd::MetersSubscribe {
@@ -527,7 +540,7 @@ pub fn meters_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 pub fn params_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: Channel<Vec<ParamUpdate>>,
+    channel: Channel<Delivery<ParamUpdate>>,
 ) -> Result<(), String> {
     let (reply, rx) = mpsc::channel();
     tx.send(Cmd::ParamsSubscribe {
@@ -551,7 +564,7 @@ pub fn params_unsubscribe(tx: Sender<Cmd>) -> Result<(), String> {
 pub fn probe_subscribe(
     tx: Sender<Cmd>,
     addrs: Vec<(u32, i64, i64)>,
-    channel: Channel<Vec<ParamUpdate>>,
+    channel: Channel<Delivery<ParamUpdate>>,
 ) -> Result<(), String> {
     let (reply, rx) = mpsc::channel();
     tx.send(Cmd::ProbeSubscribe {
@@ -642,8 +655,8 @@ mod imp {
     //! `Cmd` queue the Tauri commands feed, the error codes the frontend localizes, the
     //! Tauri channels a notification goes out on, the link-lost event and the ledger.
     use super::{
-        Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate, BULK_CHANGE,
-        CONTROL_WORKER_GONE,
+        Cmd, Delivery, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, ParamUpdate,
+        BULK_CHANGE, CONTROL_WORKER_GONE,
     };
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -699,83 +712,142 @@ mod imp {
     /// among its recipients: the transport hands over only what a token registered, so a
     /// notify meant for another client, or the unit's own clock, never reaches the
     /// follow layer.
-    #[derive(Default)]
     struct Routes {
+        /// The number every message of this session carries (`Delivery::session`).
+        session: u64,
         meters: Route<MeterUpdate>,
         params: Route<ParamUpdate>,
         probe: Route<ParamUpdate>,
     }
 
-    /// One kind's channel and the one it replaced. A replacement switches to the new
-    /// token while the old one still has notifications queued for it, received before
-    /// the switch; those still go out, on the old token's own channel. A notification
-    /// both tokens received goes out once, on the new one.
+    /// The sessions' numbers, one per opened session of the process, never reused.
+    static SESSIONS: AtomicU64 = AtomicU64::new(0);
+
+    impl Routes {
+        fn new() -> Self {
+            Routes {
+                session: SESSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                meters: Route::default(),
+                params: Route::default(),
+                probe: Route::default(),
+            }
+        }
+    }
+
+    /// One kind's channels: the current token's, and every one it replaced in this
+    /// session. A replacement switches to the new token while the old one can still have
+    /// notifications queued for it, received before the switch; those still go out, on
+    /// the old token's own channel, however many switches later they are delivered. A
+    /// notification several of the tokens received goes out once, on the newest one's.
+    /// The replaced channels are kept until the kind is unsubscribed or the session ends,
+    /// one per replacement: the transport says nothing of when a token's queued
+    /// notifications have all been delivered.
     struct Route<T, Id = TokenId> {
-        current: Option<(Id, Channel<Vec<T>>)>,
-        previous: Option<(Id, Channel<Vec<T>>)>,
+        current: Option<(Id, Channel<Delivery<T>>)>,
+        /// Oldest first.
+        replaced: Vec<(Id, Channel<Delivery<T>>)>,
+        /// The number the kind's next message carries.
+        next: u64,
     }
 
     impl<T, Id> Default for Route<T, Id> {
         fn default() -> Self {
             Route {
                 current: None,
-                previous: None,
+                replaced: Vec::new(),
+                next: 0,
             }
         }
     }
 
+    /// Which of a kind's channels a notification goes out on.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Slot {
+        Current,
+        /// An index into `Route::replaced`.
+        Replaced(usize),
+    }
+
     impl<T: serde::Serialize + Clone, Id: PartialEq> Route<T, Id> {
-        fn switch(&mut self, token: Id, channel: Channel<Vec<T>>) {
-            self.previous = self.current.take();
+        fn switch(&mut self, token: Id, channel: Channel<Delivery<T>>) {
+            self.replaced.extend(self.current.take());
             self.current = Some((token, channel));
         }
 
         fn clear(&mut self) {
             self.current = None;
-            self.previous = None;
+            self.replaced.clear();
         }
 
         /// The channel a notification goes out on: the current token's when it is a
-        /// recipient, else the previous token's, else none.
-        fn pick(&self, recipients: &[Id]) -> Option<usize> {
-            [&self.current, &self.previous].iter().position(|route| {
-                route
-                    .as_ref()
-                    .is_some_and(|(token, _)| recipients.contains(token))
-            })
+        /// recipient, else the newest replaced token's that is, else none.
+        fn pick(&self, recipients: &[Id]) -> Option<Slot> {
+            let holds = |(token, _): &(Id, Channel<Delivery<T>>)| recipients.contains(token);
+            if self.current.as_ref().is_some_and(holds) {
+                return Some(Slot::Current);
+            }
+            self.replaced.iter().rposition(holds).map(Slot::Replaced)
         }
 
-        /// Sends the updates `pick` sorted, one IPC message per channel that has any.
-        fn send(&self, sorted: [Vec<T>; 2]) {
-            for (route, updates) in [&self.current, &self.previous].into_iter().zip(sorted) {
-                if let (Some((_, channel)), false) = (route, updates.is_empty()) {
-                    let _ = channel.send(updates);
+        fn channel(&self, slot: Slot) -> Option<&Channel<Delivery<T>>> {
+            match slot {
+                Slot::Current => self.current.as_ref(),
+                Slot::Replaced(at) => self.replaced.get(at),
+            }
+            .map(|(_, channel)| channel)
+        }
+
+        /// Sends what `pick` placed, in receive order: one message per run of updates for
+        /// the same channel, each with the kind's next number. A message its channel
+        /// refuses takes no number, so the numbers the page receives have no gap of ours.
+        fn send(&mut self, session: u64, picked: Vec<(Slot, T)>) {
+            let mut picked = picked.into_iter().peekable();
+            while let Some((slot, first)) = picked.next() {
+                let mut updates = vec![first];
+                while let Some((_, update)) = picked.next_if(|(next, _)| *next == slot) {
+                    updates.push(update);
+                }
+                let sent = self.channel(slot).is_some_and(|channel| {
+                    channel
+                        .send(Delivery {
+                            session,
+                            seq: self.next,
+                            updates,
+                        })
+                        .is_ok()
+                });
+                if sent {
+                    self.next += 1;
                 }
             }
         }
     }
 
-    /// One batch the transport delivered, sent on as one IPC message per channel, then
-    /// acknowledged so the next batch can form.
+    /// One batch the transport delivered, sent on as one numbered IPC message per run of
+    /// one channel's updates, in receive order, then acknowledged so the next batch can
+    /// form.
     fn forward(
         routes: &Mutex<Routes>,
         connection: &OnceLock<Arc<Connection>>,
         batch: NotificationBatch,
     ) {
-        let mut meters: [Vec<MeterUpdate>; 2] = Default::default();
-        let mut params: [Vec<ParamUpdate>; 2] = Default::default();
-        let mut probe: [Vec<ParamUpdate>; 2] = Default::default();
+        let mut meters: Vec<(Slot, MeterUpdate)> = Vec::new();
+        let mut params: Vec<(Slot, ParamUpdate)> = Vec::new();
+        let mut probe: Vec<(Slot, ParamUpdate)> = Vec::new();
         {
-            let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
+            let mut routes = routes.lock().unwrap_or_else(|p| p.into_inner());
             for record in &batch.records {
                 match &record.payload {
                     Notification::Meter { address, value } => {
-                        if let Some(at) = routes.meters.pick(&record.recipients) {
-                            meters[at].push(MeterUpdate {
-                                meter_id: address.meter_id,
-                                x: address.x,
-                                value: *value,
-                            });
+                        if let Some(slot) = routes.meters.pick(&record.recipients) {
+                            meters.push((
+                                slot,
+                                MeterUpdate {
+                                    meter_id: address.meter_id,
+                                    x: address.x,
+                                    value: *value,
+                                },
+                            ));
                         }
                     }
                     payload => {
@@ -797,18 +869,19 @@ mod imp {
                             Notification::BulkChange => BULK_CHANGE,
                             Notification::Meter { .. } => unreachable!("matched above"),
                         };
-                        if let Some(at) = routes.params.pick(&record.recipients) {
-                            params[at].push(update.clone());
+                        if let Some(slot) = routes.params.pick(&record.recipients) {
+                            params.push((slot, update.clone()));
                         }
-                        if let Some(at) = routes.probe.pick(&record.recipients) {
-                            probe[at].push(update);
+                        if let Some(slot) = routes.probe.pick(&record.recipients) {
+                            probe.push((slot, update));
                         }
                     }
                 }
             }
-            routes.meters.send(meters);
-            routes.params.send(params);
-            routes.probe.send(probe);
+            let session = routes.session;
+            routes.meters.send(session, meters);
+            routes.params.send(session, params);
+            routes.probe.send(session, probe);
         }
         if let Some(connection) = connection.get() {
             connection.adopt_notifications(batch.ticket);
@@ -1261,7 +1334,7 @@ mod imp {
                 return;
             }
         };
-        let routes = Arc::new(Mutex::new(Routes::default()));
+        let routes = Arc::new(Mutex::new(Routes::new()));
         let slot: Arc<OnceLock<Arc<Connection>>> = Arc::new(OnceLock::new());
         let handler: NotificationHandler = {
             let routes = Arc::clone(&routes);
@@ -1286,6 +1359,7 @@ mod imp {
         };
         let _ = slot.set(Arc::clone(&connection));
         let summary = DeviceSummary {
+            session: routes.lock().unwrap_or_else(|p| p.into_inner()).session,
             // The device list carries no label, and a unit's label and model name are the
             // same, so the model stands in for it.
             label: model.clone(),
@@ -1477,10 +1551,10 @@ mod imp {
         // peer's timing.
         use super::super::{
             get, get_str, meters_subscribe, params_subscribe, params_unsubscribe, probe_subscribe,
-            set, set_str, watch_link, Cmd, DeviceSummary, LinkCounters, BULK_CHANGE,
+            set, set_str, watch_link, Cmd, Delivery, DeviceSummary, LinkCounters, BULK_CHANGE,
         };
         use super::{
-            link_failure_text, request_text, worker_at, Route, BROKER_UNRESPONSIVE,
+            link_failure_text, request_text, worker_at, Route, Slot, BROKER_UNRESPONSIVE,
             CONNECT_DEADLINE, DEVICE_LOST_PREFIX,
         };
         use serde_json::{json, Value};
@@ -1736,6 +1810,11 @@ mod imp {
             rx.recv_timeout(Duration::from_secs(5)).expect("a send")
         }
 
+        /// The updates of a notification channel's next message.
+        fn updates(rx: &mpsc::Receiver<Value>) -> Value {
+            next(rx)["updates"].clone()
+        }
+
         #[test]
         fn reads_and_writes_reach_the_unit_and_the_summary_names_it() {
             let unit = Unit::start("<device-id-a>", plain);
@@ -1861,27 +1940,27 @@ mod imp {
             unit.push(json!({ "method": "notify", "uri": "/vd/meters/115:1", "data": { "current_value": -300 } }));
             unit.push(json!({ "method": "notify", "uri": "/vd/meters/115:0", "data": { "current_value": -200 } }));
             assert_eq!(
-                next(&params_seen),
+                updates(&params_seen),
                 json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
             );
             assert_eq!(
-                next(&probe_seen),
+                updates(&probe_seen),
                 json!([{ "param_id": 3, "x": 0, "y": 0, "value": 6 }])
             );
             assert_eq!(
-                next(&meters_seen),
+                updates(&meters_seen),
                 json!([{ "meter_id": 115, "x": 0, "value": -200 }])
             );
             unit.push(json!({ "method": "notify", "uri": "/vd/parameters", "data": {} }));
             let bulk = serde_json::to_value(vec![BULK_CHANGE]).unwrap();
-            assert_eq!(next(&params_seen), bulk);
-            assert_eq!(next(&probe_seen), bulk);
+            assert_eq!(updates(&params_seen), bulk);
+            assert_eq!(updates(&probe_seen), bulk);
         }
 
         #[test]
         fn replacing_a_subscription_registers_the_new_addresses_and_releases_the_old() {
             let (tx, unit, counters) = connected(plain);
-            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
             let (second, seen) = capture();
             params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], first).unwrap();
             params_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], second).unwrap();
@@ -1910,7 +1989,7 @@ mod imp {
             );
             unit.push(json!({ "method": "notify", "uri": "/vd/parameters/3:0:0", "data": { "current_value": 1 } }));
             assert_eq!(
-                next(&seen),
+                updates(&seen),
                 json!([{ "param_id": 3, "x": 0, "y": 0, "value": 1 }])
             );
         }
@@ -1929,12 +2008,12 @@ mod imp {
                 }
                 plain(request)
             });
-            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
             let (second, seen) = capture();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
             params_subscribe(tx, vec![(3, 0, 0)], second).unwrap();
             assert_eq!(
-                next(&seen),
+                updates(&seen),
                 json!([{ "param_id": 3, "x": 0, "y": 0, "value": 9 }])
             );
         }
@@ -1952,8 +2031,8 @@ mod imp {
                 }
                 plain(request)
             });
-            let (first, first_seen) = capture::<Vec<super::super::ParamUpdate>>();
-            let (second, second_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, first_seen) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (second, second_seen) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
             let err = params_subscribe(tx.clone(), vec![(3, 0, 0)], second).unwrap_err();
             assert!(err.starts_with("broker-rejected"), "{err}");
@@ -1970,17 +2049,18 @@ mod imp {
             // Nothing of the refused set is held: the next subscribe lets go of no set, so the
             // ledger counts no unregistration for addresses that were never registered.
             let released = counters.read().unregist_frames;
-            let (third, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (third, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx, vec![(1, 0, 0)], third).unwrap();
             assert_eq!(counters.read().unregist_frames, released);
         }
 
         // A replacement switches to the new token while the old one can still have
         // notifications queued, received before the switch: those go out on the old token's
-        // channel, one both tokens received goes out once on the new one, and nothing older
-        // than the channel before the current one is kept.
+        // channel however many switches later they are delivered, one several tokens
+        // received goes out once on the newest one's, and the runs go out in receive order,
+        // each numbered with the kind's next number across all of its channels.
         #[test]
-        fn a_route_keeps_the_channel_before_a_switch_for_what_its_token_received() {
+        fn a_route_keeps_every_replaced_channel_and_numbers_its_runs_in_receive_order() {
             let update = |value| super::super::ParamUpdate {
                 param_id: 1,
                 x: 0,
@@ -1988,44 +2068,60 @@ mod imp {
                 value,
                 value_str: None,
             };
-            let (old, old_seen) = capture::<Vec<super::super::ParamUpdate>>();
-            let (new, new_seen) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, first_seen) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (second, second_seen) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (third, third_seen) = capture::<Delivery<super::super::ParamUpdate>>();
             let mut route: Route<super::super::ParamUpdate, u64> = Route::default();
             assert_eq!(route.pick(&[1]), None);
-            route.switch(1, old);
-            route.switch(2, new);
+            route.switch(1, first);
+            route.switch(2, second);
+            route.switch(3, third);
             assert_eq!(
-                route.pick(&[1, 2]),
-                Some(0),
-                "both tokens: once, on the new channel"
+                route.pick(&[1, 2, 3]),
+                Some(Slot::Current),
+                "once, on the newest"
             );
-            assert_eq!(route.pick(&[2]), Some(0));
+            assert_eq!(route.pick(&[1, 2]), Some(Slot::Replaced(1)));
             assert_eq!(
                 route.pick(&[1]),
-                Some(1),
-                "the old token's: the old channel"
+                Some(Slot::Replaced(0)),
+                "two switches back is still the first token's channel"
             );
-            assert_eq!(route.pick(&[3]), None);
-            route.send([vec![update(5)], vec![update(6)]]);
-            assert_eq!(
-                next(&new_seen),
-                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
+            assert_eq!(route.pick(&[4]), None);
+            let message = |seq: u64, values: &[i64]| {
+                json!({
+                    "session": 7,
+                    "seq": seq,
+                    "updates": values.iter().map(|&v| json!({ "param_id": 1, "x": 0, "y": 0, "value": v })).collect::<Vec<_>>(),
+                })
+            };
+            route.send(
+                7,
+                vec![
+                    (Slot::Replaced(0), update(10)),
+                    (Slot::Current, update(20)),
+                    (Slot::Current, update(30)),
+                    (Slot::Replaced(1), update(40)),
+                    (Slot::Replaced(0), update(50)),
+                ],
             );
-            assert_eq!(
-                next(&old_seen),
-                json!([{ "param_id": 1, "x": 0, "y": 0, "value": 6 }])
-            );
-            route.send([Vec::new(), Vec::new()]);
+            assert_eq!(next(&first_seen), message(0, &[10]));
+            assert_eq!(next(&third_seen), message(1, &[20, 30]));
+            assert_eq!(next(&second_seen), message(2, &[40]));
+            assert_eq!(next(&first_seen), message(3, &[50]));
+            route.send(7, Vec::new());
             assert!(
-                new_seen.recv_timeout(Duration::from_millis(50)).is_err(),
-                "an empty batch is not sent"
+                third_seen.recv_timeout(Duration::from_millis(50)).is_err(),
+                "nothing picked, nothing sent"
             );
-            let (third, _) = capture::<Vec<super::super::ParamUpdate>>();
-            route.switch(3, third);
-            assert_eq!(route.pick(&[1]), None, "two switches back is not kept");
-            assert_eq!(route.pick(&[2]), Some(1));
             route.clear();
-            assert_eq!(route.pick(&[2, 3]), None);
+            assert_eq!(route.pick(&[1, 2, 3]), None);
+            // The numbers go on across an unsubscribe: they count the kind's messages over
+            // the whole session.
+            let (fourth, fourth_seen) = capture::<Delivery<super::super::ParamUpdate>>();
+            route.switch(4, fourth);
+            route.send(7, vec![(Slot::Current, update(60))]);
+            assert_eq!(next(&fourth_seen), message(4, &[60]));
         }
 
         // The unit's own refusal settles the request it answers: an end of the link that
@@ -2076,8 +2172,8 @@ mod imp {
                 }
                 plain(request)
             });
-            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
-            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
             assert!(params_subscribe(tx.clone(), vec![(2, 0, 0)], second).is_err());
             assert!(
@@ -2100,8 +2196,8 @@ mod imp {
                     }
                     plain(request)
                 });
-                let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
-                let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+                let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
+                let (second, _) = capture::<Delivery<super::super::ParamUpdate>>();
                 let replaced = params_subscribe(tx.clone(), vec![(1, 0, 0)], first)
                     .and_then(|()| params_subscribe(tx.clone(), vec![(2, 0, 0)], second));
                 // The caller is told of its own deadline, and the commands after it of the
@@ -2144,15 +2240,15 @@ mod imp {
                 plain(request)
             });
             let (tx, _unit, _) = refused_then_late;
-            let (channel, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (channel, _) = capture::<Delivery<super::super::ParamUpdate>>();
             assert_eq!(
                 params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], channel),
                 Err("broker-rejected: Subscription".to_string())
             );
             assert_eq!(get(tx, 1, 0, 0), Err(BROKER_UNRESPONSIVE.to_string()));
             let (tx, _unit, _) = release_refused;
-            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
-            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
             assert_eq!(
                 params_subscribe(tx.clone(), vec![(2, 0, 0)], second),
@@ -2178,7 +2274,7 @@ mod imp {
                 }
                 plain(request)
             });
-            let (channel, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (channel, _) = capture::<Delivery<super::super::ParamUpdate>>();
             assert!(
                 params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0), (3, 0, 0)], channel)
                     .is_err()
@@ -2363,9 +2459,9 @@ mod imp {
             assert!(get_str(tx.clone(), 18, 0, 0).is_err());
             assert!(set(tx.clone(), 1, 0, 0, 0).is_err());
             assert!(set_str(tx.clone(), 18, 0, 0, "ch 1".to_string()).is_err());
-            let (meters, _) = capture::<Vec<super::super::MeterUpdate>>();
+            let (meters, _) = capture::<Delivery<super::super::MeterUpdate>>();
             assert!(meters_subscribe(tx.clone(), vec![(115, 0)], meters).is_err());
-            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (params, _) = capture::<Delivery<super::super::ParamUpdate>>();
             assert!(params_subscribe(tx, vec![(1, 0, 0)], params).is_err());
             let after = counters.read();
             assert_eq!(
@@ -2396,11 +2492,11 @@ mod imp {
                 );
             }
             assert_eq!(
-                next(&params_seen),
+                updates(&params_seen),
                 json!([{ "param_id": 1, "x": 0, "y": 0, "value": 5 }])
             );
             assert_eq!(
-                next(&meters_seen),
+                updates(&meters_seen),
                 json!([{ "meter_id": 115, "x": 0, "value": -200 }])
             );
         }
@@ -2412,9 +2508,9 @@ mod imp {
         #[test]
         fn the_parameter_watch_and_live_sync_register_a_shared_address_once() {
             let (tx, unit, _) = connected(plain);
-            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
-            let (probe, _) = capture::<Vec<super::super::ParamUpdate>>();
-            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (first, _) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (probe, _) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], first).unwrap();
             probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
             params_subscribe(tx.clone(), vec![(2, 0, 0), (4, 0, 0)], second).unwrap();
@@ -2453,8 +2549,8 @@ mod imp {
             let list = device_list(&[(&unit, "URX44V")]);
             let (tx, summary, counters) = start_within(list, "URX44V", Duration::from_secs(5));
             summary.expect("the unit opens");
-            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
-            let (probe, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (params, _) = capture::<Delivery<super::super::ParamUpdate>>();
+            let (probe, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], params).unwrap();
             probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
             params_unsubscribe(tx.clone()).unwrap();
@@ -2497,7 +2593,7 @@ mod imp {
                     plain(request)
                 }
             });
-            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (params, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
             let latest = Arc::clone(&unit.latest);
             thread::spawn(move || {
@@ -2712,7 +2808,7 @@ mod imp {
         #[test]
         fn shutdown_unregisters_what_the_session_registered_before_it_signals() {
             let (tx, unit, _) = connected(plain);
-            let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (params, _) = capture::<Delivery<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0)], params).unwrap();
             let (done, signalled) = mpsc::channel();
             tx.send(Cmd::Shutdown {

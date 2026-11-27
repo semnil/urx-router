@@ -98,6 +98,7 @@ export const SHELL_CODES: Record<string, keyof Messages["error"]["shell"]> = {
   "broker-rejected": "brokerRejected",
   "broker-bad-response": "brokerBadResponse",
   "broker-io": "brokerIo",
+  "notification-gap": "notificationGap",
   "file-not-found": "fileNotFound",
   "file-denied": "fileDenied",
   "file-io": "fileIo",

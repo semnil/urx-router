@@ -285,6 +285,13 @@ const DEVICE_TRAFFIC = [
   "vd_probe_subscribe",
 ];
 
+/** The subscriptions whose channel messages the shell numbers, and the kind each counts in. */
+const NUMBERED = new Map([
+  ["vd_params_subscribe", "params"],
+  ["vd_meters_subscribe", "meters"],
+  ["vd_probe_subscribe", "probe"],
+]);
+
 /** Where a device table keeps its connection guard for the shell it is installed in. */
 const GUARD = Symbol("device traffic guard");
 
@@ -315,6 +322,18 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   const invokes: string[] = [];
   const args: Array<Record<string, unknown> | undefined> = [];
   const channels: TauriShell["channels"] = [];
+  // The shell numbers each notification message per kind, across every channel the session
+  // gave that kind (vd.rs `Delivery`), and the app hands a kind's messages on in that order. A
+  // case delivers a plain batch through the channel a subscription recorded, and this numbers
+  // it as the shell would: per kind, from 0 at each connect.
+  const numbered = new Map<string, number>();
+  const numbering = (kind: string, channel: { onmessage: (data: unknown) => void }) => ({
+    onmessage: (updates: unknown) => {
+      const seq = numbered.get(kind) ?? 0;
+      numbered.set(kind, seq + 1);
+      channel.onmessage({ session: 0, seq, updates });
+    },
+  });
 
   class Channel {
     onmessage: (data: unknown) => void = () => {};
@@ -349,7 +368,9 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     },
     invoke: (cmd: string, a?: Record<string, unknown>) => {
       invokes.push(cmd);
-      args.push(a);
+      if (cmd === "vd_connect") numbered.clear();
+      const channel = a?.channel as { onmessage: (data: unknown) => void } | undefined;
+      args.push(channel && NUMBERED.has(cmd) ? { ...a, channel: numbering(NUMBERED.get(cmd) as string, channel) } : a);
       if (once.has(cmd)) {
         const err = once.get(cmd);
         once.delete(cmd);

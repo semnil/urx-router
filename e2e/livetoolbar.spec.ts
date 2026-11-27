@@ -1,5 +1,5 @@
 import { test, expect, textContrast } from "./fixtures";
-import { LIVE_COMMANDS, dialogsOf, dropLink, stubTauriDevice, writesOf } from "./tauri-stub";
+import { LIVE_COMMANDS, dialogsOf, dropLink, loseNotify, notifyParam, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 import { PARAMS } from "../src/core/control/params";
 
@@ -99,3 +99,22 @@ for (const [reason, said] of [
       .toEqual([`Live sync stopped: ${said}`]);
   });
 }
+
+// A change the unit announced that never reached the page leaves the follow layer unable to put
+// what came after it in the unit's order, so the session stops and says so, once the later
+// announcement has waited for it for DELIVERY_GAP_MS.
+test("a live session whose device announcement goes missing stops naming that cause", async ({ page }) => {
+  await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+  await page.goto("/");
+  await page.click("#btn-device");
+  await page.click("#btn-live");
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
+  await loseNotify(page);
+  await notifyParam(page, PARAMS.HPF_ON.id, 0, 1);
+  await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false", { timeout: 10_000 });
+  await expect
+    .poll(async () => (await dialogsOf(page)).filter((d) => d.startsWith("Live sync stopped:")))
+    .toEqual([
+      "Live sync stopped: a change the device announced did not arrive, so the order of its changes is no longer known. Start Live sync again.",
+    ]);
+});

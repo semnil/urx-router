@@ -1385,6 +1385,7 @@ Japanese there is the expected reading and not a defect. Both sides of the shell
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
 | `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
 | `core/control/live.ts` (converge) | `converge-failed`                                                                                                                                                                    |
+| `core/platform.ts` (notification order) | `notification-gap`                                                                                                                                                             |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
@@ -1828,8 +1829,8 @@ drag lands on the nearest.
   (`MetersSubscribe`/`MetersUnsubscribe`) through the shared transport, `urx-device-transport` from the
   `vendor/urx-device` submodule. The subscription is a token whose addresses the transport registers one at a time,
   each verdict checked before the next, and whose notifications it hands over in bounded batches on a delivery thread
-  of its own. `vd.rs` sends each batch on as one `Vec<MeterUpdate>` per channel and then acknowledges it, which lets
-  the next batch form: the broker streams ~250 readings/s, and one IPC crossing per batch rather than per reading is
+  of its own. `vd.rs` sends each batch on — one numbered message per run of one channel's readings, in receive
+  order (`Delivery`) — and then acknowledges it, which lets the next batch form: the broker streams ~250 readings/s, and one IPC crossing per batch rather than per reading is
   what keeps the boundary quiet. Delivery runs beside the worker that sends commands, not inside its read loop, so a
   meter stream neither holds up a live write nor waits behind a long command sequence (a device-follow readback,
   say).
@@ -1847,6 +1848,16 @@ drag lands on the nearest.
   broker client's registrations ride in, and so does the unit's own clock — one push every 10 s, which resolves to
   no node and escalates to a full readback every 10 s for the whole session. The address-less bulk-change sentinel
   below is the one exemption: the transport hands it to every token that holds a parameter address.
+  A subscription that is replaced can still have notifications queued for its token, received before the switch;
+  they go out on its own channel, which `vd.rs` keeps until the kind is unsubscribed or the session ends, and one
+  that several of a kind's tokens received goes out once, on the newest one's. Every message is numbered per kind
+  (parameters, meters, the dev build's watch) in the order `vd.rs` sends it, across all of that kind's channels,
+  and `src/core/platform.ts` hands a kind's messages to their handlers in that order. Tauri keeps one channel's
+  messages in order and not two channels' — a message of 8 KiB or more is fetched by the page after the fact — and
+  the follow layer takes the old and the new channel with one handler, so without the numbers a Console Lock the
+  unit announced before a re-subscription could reach it after the unlock that followed. A message still waiting
+  on a missing one after 2 s ends the session with `notification-gap`, since what follows a gap can no longer be
+  put in the unit's order.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan

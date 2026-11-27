@@ -251,6 +251,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
         __urxMeters: { addrs: Array<[number, number]>; channel: { onmessage: (batch: unknown) => void } } | null;
         __urxLink: { onmessage: (event: unknown) => void } | null;
+        __urxNumbered: (kind: string, updates: unknown[]) => unknown;
         __urxRefuseReads: number[];
         __urxHoldReads: number[];
         __urxHeld: Array<{ id: number; go: () => void }>;
@@ -274,6 +275,15 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxNotify = null;
       w.__urxMeters = null;
       w.__urxLink = null;
+      // The shell numbers a kind's notification messages across the session's channels for it
+      // (vd.rs `Delivery`), from 0 at each connect, and the app hands them on in that order: a
+      // spec's delivery goes out numbered the same way.
+      let numbered = new Map<string, number>();
+      w.__urxNumbered = (kind, updates) => {
+        const seq = numbered.get(kind) ?? 0;
+        numbered.set(kind, seq + 1);
+        return { session: 0, seq, updates };
+      };
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
       const instance: Record<string, number> = {};
@@ -361,6 +371,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // arrives through it, and it is the only way a spec can deliver one. Captured
           // beside the constant answer rather than instead of it, so a spec that never
           // registered the live commands still meets the same refusal it always did.
+          if (cmd === "vd_connect") numbered = new Map();
           if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
           // The link watch's channel, which is how the shell tells a session its link ended.
           if (cmd === "vd_watch_link") w.__urxLink = args?.channel as typeof w.__urxLink;
@@ -457,10 +468,17 @@ export const meterAddrsOf = (page: Page): Promise<Array<[number, number]>> =>
  *  registered last, the way the shell forwards the unit's meter stream. */
 export const pushMeters = (page: Page, frames: ReadonlyArray<readonly [number, number, number]>): Promise<void> =>
   page.evaluate((list) => {
-    const m = (window as unknown as { __urxMeters: { channel: { onmessage: (batch: unknown) => void } } | null })
-      .__urxMeters;
-    if (!m) throw new Error("pushMeters: nothing registered for meters");
-    m.channel.onmessage(list.map(([meter_id, x, value]) => ({ meter_id, x, value })));
+    const w = window as unknown as {
+      __urxMeters: { channel: { onmessage: (batch: unknown) => void } } | null;
+      __urxNumbered: (kind: string, updates: unknown[]) => unknown;
+    };
+    if (!w.__urxMeters) throw new Error("pushMeters: nothing registered for meters");
+    w.__urxMeters.channel.onmessage(
+      w.__urxNumbered(
+        "meters",
+        list.map(([meter_id, x, value]) => ({ meter_id, x, value })),
+      ),
+    );
   }, frames);
 
 /** Hold every write of these param ids from now on: the write is neither answered nor applied
@@ -576,12 +594,29 @@ export const notifyBurst = (
 ): Promise<void> =>
   page.evaluate(
     (list) => {
-      const w = window as unknown as { __urxNotify: { onmessage: (batch: unknown) => void } | null };
+      const w = window as unknown as {
+        __urxNotify: { onmessage: (batch: unknown) => void } | null;
+        __urxNumbered: (kind: string, updates: unknown[]) => unknown;
+      };
       if (!w.__urxNotify) throw new Error("notifyParam: nothing subscribed to the notify stream");
-      w.__urxNotify.onmessage(list.map((u) => ({ param_id: u.paramId, x: u.x ?? 0, y: u.y, value: u.value })));
+      w.__urxNotify.onmessage(
+        w.__urxNumbered(
+          "params",
+          list.map((u) => ({ param_id: u.paramId, x: u.x ?? 0, y: u.y, value: u.value })),
+        ),
+      );
     },
     updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
+
+/** Lose the notify stream's next message: its number is taken and nothing is delivered, as when a
+ *  message the shell sent never reaches the page. The ones after it then wait on it, and the app
+ *  ends the session once DELIVERY_GAP_MS has passed (`src/core/platform.ts`). */
+export const loseNotify = (page: Page): Promise<void> =>
+  page.evaluate(() => {
+    const w = window as unknown as { __urxNumbered: (kind: string, updates: unknown[]) => unknown };
+    w.__urxNumbered("params", []);
+  });
 
 /** End the session from the shell's side, as the link watch does when the link drops: `reason`
  *  is the shell's code (`device-lost: …`, `broker-unresponsive`, …). Throws when no session

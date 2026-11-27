@@ -121,6 +121,18 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem("urx-theme", "dark");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
+    // The shell numbers a kind's notification messages across the session's channels for it
+    // (vd.rs `Delivery`), from 0 at each connect, and the app hands them on in that order: a
+    // case's delivery goes out numbered the same way.
+    type Numbered = { onmessage: (message: unknown) => void };
+    let numbered = new Map<string, number>();
+    const numbering = (kind: string, channel: Numbered) => ({
+      onmessage: (updates: unknown[]) => {
+        const seq = numbered.get(kind) ?? 0;
+        numbered.set(kind, seq + 1);
+        channel.onmessage({ session: 0, seq, updates });
+      },
+    });
     const state: Window["__dynTest"] = {
       meterChannel: null,
       paramChannel: null,
@@ -169,6 +181,7 @@ test.beforeEach(async ({ page }) => {
           case "plugin:updater|check":
             return Promise.resolve(null);
           case "vd_connect":
+            numbered = new Map();
             return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
           case "vd_disconnect":
             return Promise.resolve();
@@ -188,7 +201,7 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           // Live sync needs exactly these two beyond the reads.
           case "vd_params_subscribe":
-            state.paramChannel = args.channel as Window["__dynTest"]["paramChannel"];
+            state.paramChannel = numbering("params", args.channel as Numbered);
             return Promise.resolve();
           case "vd_params_unsubscribe":
             return Promise.resolve();
@@ -198,7 +211,7 @@ test.beforeEach(async ({ page }) => {
           case "vd_meters_subscribe":
             state.subscribes++;
             state.meterAddrs = args.addrs as Array<[number, number]>;
-            state.meterChannel = args.channel as Window["__dynTest"]["meterChannel"];
+            state.meterChannel = numbering("meters", args.channel as Numbered);
             return Promise.resolve();
           case "vd_meters_unsubscribe":
             state.unsubscribes++;

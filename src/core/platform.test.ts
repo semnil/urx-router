@@ -37,6 +37,15 @@ function installInternals(responses: Record<string, unknown> = {}): Harness {
   return { invoke, callbacks };
 }
 
+/** A notification channel's message as the shell numbers it (vd.rs `Delivery`). */
+interface Delivery<T> {
+  session: number;
+  seq: number;
+  updates: T[];
+}
+
+const delivery = <T>(seq: number, updates: T[], session = 0): Delivery<T> => ({ session, seq, updates });
+
 function channelFrom<T>(harness: Harness, command: string): FakeChannel<T> {
   const call = harness.invoke.mock.calls.find(([cmd]) => cmd === command);
   expect(call, `missing ${command} IPC call`).toBeDefined();
@@ -195,26 +204,30 @@ describe("streaming channel adapters", () => {
       ],
       (update) => meters.push(update),
     );
-    channelFrom<Array<{ meter_id: number; x: number; value: number }>>(harness, "vd_meters_subscribe").onmessage([
-      { meter_id: 101, x: 0, value: -120 },
-      { meter_id: 101, x: 1, value: -90 },
-    ]);
+    channelFrom<Delivery<{ meter_id: number; x: number; value: number }>>(harness, "vd_meters_subscribe").onmessage(
+      delivery(0, [
+        { meter_id: 101, x: 0, value: -120 },
+        { meter_id: 101, x: 1, value: -90 },
+      ]),
+    );
 
     const stopParams = await platform.vdParamsSubscribe([[12, 3, 4]], (update) => params.push(update));
-    channelFrom<Array<{ param_id: number; x: number; y: number; value: number; value_str?: string }>>(
+    channelFrom<Delivery<{ param_id: number; x: number; y: number; value: number; value_str?: string }>>(
       harness,
       "vd_params_subscribe",
-    ).onmessage([
-      { param_id: 12, x: 3, y: 4, value: 7 },
-      { param_id: 13, x: 5, y: 6, value: 0, value_str: "Vocal" },
-    ]);
+    ).onmessage(
+      delivery(0, [
+        { param_id: 12, x: 3, y: 4, value: 7 },
+        { param_id: 13, x: 5, y: 6, value: 0, value_str: "Vocal" },
+      ]),
+    );
 
     const watched: platform.ParamUpdate[] = [];
     await platform.vdProbeSubscribe([[838, 0, 0]], (update) => watched.push(update));
-    channelFrom<Array<{ param_id: number; x: number; y: number; value: number }>>(
+    channelFrom<Delivery<{ param_id: number; x: number; y: number; value: number }>>(
       harness,
       "vd_probe_subscribe",
-    ).onmessage([{ param_id: 838, x: 0, y: 0, value: 2 }]);
+    ).onmessage(delivery(0, [{ param_id: 838, x: 0, y: 0, value: 2 }]));
     expect(watched).toEqual([{ paramId: 838, x: 0, y: 0, value: 2, valueStr: undefined }]);
 
     await platform.vdWatchLink((reason) => drops.push(reason));
@@ -276,9 +289,139 @@ describe("streaming channel adapters", () => {
   });
 });
 
+// The shell numbers a kind's messages across every channel the session gave it, and the
+// bridge hands them on in that order: Tauri orders one channel's messages and not two's.
+describe("notification order", () => {
+  type RawParam = { param_id: number; x: number; y: number; value: number };
+  const param = (value: number): RawParam => ({ param_id: 1, x: 0, y: 0, value });
+  const channelsOf = <T>(harness: Harness, command: string): Array<FakeChannel<T>> =>
+    harness.invoke.mock.calls
+      .filter(([cmd]) => cmd === command)
+      .map(([, args]) => (args as { channel: FakeChannel<T> }).channel);
+
+  async function connected(session: number): Promise<Harness> {
+    const harness = installInternals({
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1, session },
+    });
+    await platform.vdConnect("URX44V");
+    return harness;
+  }
+
+  afterEach(async () => {
+    // The bridge's own state goes with the connection it followed.
+    if (!Reflect.has(window, "__TAURI_INTERNALS__")) installInternals();
+    await platform.vdDisconnect(1);
+    vi.useRealTimers();
+  });
+
+  it("hands a kind's messages to their own channels' handlers in the shell's order", async () => {
+    const harness = await connected(3);
+    const seen: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`old ${p.value}`));
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(`new ${p.value}`));
+    const [older, newer] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    newer.onmessage(delivery(1, [param(20)], 3));
+    expect(seen, "held until the message before it arrives").toEqual([]);
+    older.onmessage(delivery(0, [param(10)], 3));
+    expect(seen).toEqual(["old 10", "new 20"]);
+    older.onmessage(delivery(3, [param(40)], 3));
+    newer.onmessage(delivery(2, [param(30)], 3));
+    expect(seen).toEqual(["old 10", "new 20", "new 30", "old 40"]);
+    // The meters count on their own.
+    const meters: number[] = [];
+    await platform.vdMetersSubscribe([[101, 0]], (m) => meters.push(m.value));
+    channelsOf<Delivery<{ meter_id: number; x: number; value: number }>>(harness, "vd_meters_subscribe")[0].onmessage(
+      delivery(0, [{ meter_id: 101, x: 0, value: -120 }], 3),
+    );
+    expect(meters).toEqual([-120]);
+  });
+
+  it("sets aside a message of a session other than the one its connect named", async () => {
+    const harness = await connected(3);
+    const seen: number[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    channel.onmessage(delivery(0, [param(1)], 2));
+    channel.onmessage(delivery(0, [param(2)], 3));
+    expect(seen).toEqual([2]);
+  });
+
+  it("ends the session through the link watch when a message is still missing after the wait", async () => {
+    vi.useFakeTimers();
+    const harness = await connected(3);
+    const seen: number[] = [];
+    const drops: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+    await platform.vdWatchLink((reason) => drops.push(reason));
+    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    channel.onmessage(delivery(1, [param(20)], 3));
+    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
+    expect(drops).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(drops).toEqual([platform.NOTIFICATION_GAP]);
+    // Nothing of that session is put in order any more: what follows a gap has no order.
+    channel.onmessage(delivery(0, [param(10)], 3));
+    channel.onmessage(delivery(2, [param(30)], 3));
+    expect(seen).toEqual([]);
+    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS);
+    expect(drops, "reported once").toEqual([platform.NOTIFICATION_GAP]);
+  });
+
+  it("ends nothing when the missing message arrives within the wait, and times each gap from its own start", async () => {
+    vi.useFakeTimers();
+    const harness = await connected(3);
+    const seen: number[] = [];
+    const drops: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+    await platform.vdWatchLink((reason) => drops.push(reason));
+    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    channel.onmessage(delivery(1, [param(20)], 3));
+    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
+    channel.onmessage(delivery(0, [param(10)], 3));
+    expect(seen).toEqual([10, 20]);
+    channel.onmessage(delivery(3, [param(40)], 3));
+    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS - 1);
+    expect(drops, "the second gap waits its own full time").toEqual([]);
+    channel.onmessage(delivery(2, [param(30)], 3));
+    vi.advanceTimersByTime(platform.DELIVERY_GAP_MS);
+    expect(seen).toEqual([10, 20, 30, 40]);
+    expect(drops).toEqual([]);
+  });
+
+  it("hands on every ready message when an earlier one's handler throws, and passes the failure on", async () => {
+    const harness = await connected(3);
+    const seen: number[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => {
+      if (p.value === 10) throw new Error("handler");
+      seen.push(p.value);
+    });
+    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    channel.onmessage(delivery(1, [param(20)], 3));
+    expect(() => channel.onmessage(delivery(0, [param(10)], 3))).toThrow("handler");
+    expect(seen).toEqual([20]);
+  });
+
+  it("forgets the connection it followed at that connection's disconnect, not an older one's", async () => {
+    const harness = await connected(3);
+    const seen: number[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+    const [channel] = channelsOf<Delivery<RawParam>>(harness, "vd_params_subscribe");
+    channel.onmessage(delivery(0, [param(1)], 3));
+    await platform.vdDisconnect(0);
+    channel.onmessage(delivery(1, [param(2)], 3));
+    expect(seen, "a disconnect of an older epoch leaves the order alone").toEqual([1, 2]);
+    await platform.vdDisconnect(1);
+    channel.onmessage(delivery(2, [param(3)], 3));
+    expect(seen, "after its own disconnect the session is no longer followed").toEqual([1, 2]);
+  });
+});
+
 describe("command wrappers", () => {
   it("preserves command names and camelCase argument keys", async () => {
-    const harness = installInternals();
+    // A connect is answered with a connection, as the shell always answers one.
+    const harness = installInternals({
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1, session: 0 },
+    });
     const cases: Array<{ run: () => Promise<unknown>; cmd: string; args: InvokeArgs }> = [
       { run: platform.experimentalEnabled, cmd: "experimental_enabled", args: {} },
       { run: platform.selfTestRequested, cmd: "self_test_requested", args: {} },
