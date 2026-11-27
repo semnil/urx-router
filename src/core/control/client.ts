@@ -5,7 +5,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
+import { refusedBeforeSending, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
 import {
@@ -338,14 +338,15 @@ export class ClipSafeHold {
 export async function sendCommands(
   commands: VdCommand[],
   signal?: AbortSignal,
-  /** Told about each send that RESOLVED, accepted or not, before this call returns. The
-   *  returned array is not a substitute: an abort is detected at the top of the next
-   *  iteration and THROWS, so every outcome collected so far is lost and a caller that only
-   *  reads the return value cannot know which commands the unit actually took. A caller
-   *  acting on one send in particular — the sample rate, whose arrival is what makes the
-   *  recorder's Track Count worth re-reading — has to be told here, and so does one deciding
-   *  what a write it cannot vouch for leaves standing. The commands after the stop are not
-   *  reported here: nothing was sent for them. */
+  /** Told about each send that RESOLVED, accepted or not, before this call returns — the one
+   *  a stop interrupted included, unless the page or the shell refused it before sending
+   *  (`refusedBeforeSending`). The returned array is not a substitute: an abort THROWS, so
+   *  every outcome collected so far is lost and a caller that only reads the return value
+   *  cannot know which commands the unit actually took. A caller acting on one send in
+   *  particular — the sample rate, whose arrival is what makes the recorder's Track Count
+   *  worth re-reading — has to be told here, and so does one deciding what a write it cannot
+   *  vouch for leaves standing. The commands after the stop are not reported here: nothing
+   *  was sent for them. */
   onSent?: (outcome: SendOutcome) => void,
   /** Told about each command immediately before it goes on the wire — the moment its
    *  announcement can start to arrive, which can be ahead of its ack. */
@@ -370,11 +371,16 @@ export async function sendCommands(
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
       outcome = outcomeOf(command, "accepted");
     } catch (e) {
-      // A write a stop held — a Console Lock, a loss of the connection's notifications, which
-      // abort the signal before the refusal reaches here — stops the loop rather than failing.
-      signal?.throwIfAborted();
       const error = e instanceof Error ? e.message : String(e);
       outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error);
+      // A stop — a Console Lock, a loss of the connection's notifications, which abort the signal
+      // before the refusal reaches here — ends the loop rather than failing the send. A send the
+      // page or the shell refused for it never left the app; any other is told first, since it
+      // may have reached the unit.
+      if (signal?.aborted) {
+        if (!refusedBeforeSending(error)) onSent?.(outcome);
+        signal.throwIfAborted();
+      }
     }
     outcomes.push(outcome);
     onSent?.(outcome);
@@ -485,7 +491,8 @@ export async function diffNames(
  * idempotent, so no converge loop is needed. The caller must have connected.
  * `signal` stops it between two names, and a write a stop held (a Console Lock, a loss of
  * the connection's notifications) throws the stop rather than failing; `onSent` is told
- * each name's outcome as it resolves, which a stop's throw would otherwise take with it.
+ * each name's outcome as it resolves, which a stop's throw would otherwise take with it — the
+ * name a stop interrupted included, unless it was refused before sending (`refusedBeforeSending`).
  */
 export async function sendNames(
   writes: NameWrite[],
@@ -500,8 +507,12 @@ export async function sendNames(
       await vdSetStr(write.param, 0, write.y, write.value);
       outcome = { write, ok: true };
     } catch (e) {
-      signal?.throwIfAborted();
       outcome = { write, ok: false, error: e instanceof Error ? e.message : String(e) };
+      // As in sendCommands: a name a stop held was never sent, and any other is told first.
+      if (signal?.aborted) {
+        if (!refusedBeforeSending(outcome.error)) onSent?.(outcome);
+        signal.throwIfAborted();
+      }
     }
     outcomes.push(outcome);
     onSent?.(outcome);

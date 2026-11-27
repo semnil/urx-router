@@ -54,7 +54,15 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan, PHANTOM_KEYS } from "../plan";
 import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
-import { stoppedByNotificationsLost, vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
+import {
+  refusedBeforeSending,
+  stoppedByNotificationsLost,
+  vdConnect,
+  vdDisconnect,
+  vdGet,
+  vdGetStr,
+  vdSet,
+} from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   COMP_EQ_COMP_FIRST,
@@ -1047,18 +1055,20 @@ export async function runSelfTest(
       // throw takes with it, and not `outcomes.length`, which also counts the commands
       // `sendCommands` marked skipped after the first refusal. Those never left the app,
       // and counting them had the same report saying "N commands written" and "M
-      // command(s) never sent" about the same run.
+      // command(s) never sent" about the same run. Whether the unit may hold a write of the run
+      // is read off the same results: an accepted one, or one whose fate is unknown; neither one
+      // the unit declined, which moved nothing, nor one the page or the shell held, which a stop
+      // ends the loop on without it being told.
       const result = await phaseStep(
         sendConverging(model, plan, {
           settleMs,
           signal,
           trace: true,
           stopOnError: false,
-          onSending: () => {
-            mayHaveWritten = true;
-          },
-          onSent: () => {
+          onSent: (o) => {
+            if (o.error !== undefined && refusedBeforeSending(o.error)) return;
             report.written++;
+            if (o.result !== "refused") mayHaveWritten = true;
           },
         }),
       );

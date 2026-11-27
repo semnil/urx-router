@@ -5,7 +5,14 @@ import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } 
 // client.ts drives the device through platform.vdGet / vdSet (numbers) and
 // vdGetStr / vdSetStr (the CH SETTING names), so mock those four: the rest of
 // platform.ts (file IO, dialogs) is untouched here.
-vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn(), vdGetStr: vi.fn(), vdSetStr: vi.fn() }));
+vi.mock("../platform", async (importOriginal) => ({
+  vdGet: vi.fn(),
+  vdSet: vi.fn(),
+  vdGetStr: vi.fn(),
+  vdSetStr: vi.fn(),
+  // A write the page or the shell refused before sending it, as the bridge says it.
+  refusedBeforeSending: (await importOriginal<typeof import("../platform")>()).refusedBeforeSending,
+}));
 
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import {
@@ -323,6 +330,26 @@ describe("sendCommands", () => {
     expect(outcomes.slice(1).every((o) => !o.ok && o.skipped === true)).toBe(true);
     // Only the failing command reached the transport.
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+  });
+
+  // A stop ends the loop on the send it interrupted. One the page or the shell refused for it
+  // (a Console Lock, the connection's lost notifications) never left the app; one that failed
+  // otherwise may have reached the unit, and whoever decides what a write leaves standing is told.
+  it.each([
+    ["writes-held: the unit announced Console Lock (fetch 3)", false],
+    ["notifications-lost: a change the unit announced may not have reached the app, so nothing is written", false],
+    ["broker-io: ConnectionReset", true],
+  ] as const)("on a stop, tells the send it interrupted only when it may have gone out (%s)", async (error, told) => {
+    const commands = planToCommands(model, basePlan());
+    const stop = new AbortController();
+    vi.mocked(vdSet).mockImplementation(async () => {
+      stop.abort(new Error("stopped"));
+      throw new Error(error);
+    });
+    const seen: SendOutcome[] = [];
+    await expect(sendCommands(commands, stop.signal, (o) => seen.push(o))).rejects.toThrow("stopped");
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(seen.map((o) => [o.result, o.error])).toEqual(told ? [["unknown", error]] : []);
   });
 });
 
@@ -1166,6 +1193,16 @@ describe("sendNames", () => {
     const heldTold: boolean[] = [];
     await expect(sendNames(writes, held.signal, (o) => heldTold.push(o.ok))).rejects.toThrow("locked");
     expect(heldTold, "a held name is no failure").toEqual([]);
+
+    // A name that failed otherwise under the stop may have reached the unit: it is told.
+    const lost = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      lost.abort(new Error("lost"));
+      throw new Error("broker-io: ConnectionReset");
+    });
+    const lostTold: Array<string | undefined> = [];
+    await expect(sendNames(writes, lost.signal, (o) => lostTold.push(o.error))).rejects.toThrow("lost");
+    expect(lostTold).toEqual(["broker-io: ConnectionReset"]);
   });
 
   it("writes every name through the string transport", async () => {

@@ -410,6 +410,14 @@ export function stoppedByNotificationsLost(cause: unknown): boolean {
   return message.startsWith(`${NOTIFICATIONS_LOST}:`);
 }
 
+/** Whether `cause` — a write's error or its message — is a refusal the page or the shell gave the
+ *  write before sending it: the unit's Console Lock (`WRITES_HELD`), or the connection's lost
+ *  notifications (`NOTIFICATIONS_LOST`). Such a write did not reach the unit. */
+export function refusedBeforeSending(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  return message.startsWith(`${WRITES_HELD}:`) || message.startsWith(`${NOTIFICATIONS_LOST}:`);
+}
+
 /** Rejects with `NOTIFICATIONS_LOST` once `NOTIFICATION_FETCH_DEADLINE_MS` has passed. */
 function fetchDeadline(): { readonly passed: Promise<never>; clear(): void } {
   let timer: ReturnType<typeof setTimeout> | undefined;
