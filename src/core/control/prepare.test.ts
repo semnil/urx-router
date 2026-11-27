@@ -407,7 +407,20 @@ describe("runPrepareModified", () => {
     expect(report).toMatchObject({ aborted: true, lost: true });
     expect(report.locked).toBeUndefined();
     expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
+    expect(report.written, "every write that landed is counted").toBe(3);
     expect(report.errors, "the writes it did not send are no failures").toEqual([]);
+  });
+
+  it("reports a loss that arrived with its last write as the run's stop", async () => {
+    captureOk();
+    const total = prepareBatches(model, buildModifiedPlan(captured())).flat().length;
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === total) mocks.lost.lose?.();
+    });
+    const report = await runPrepareModified(model);
+    expect(sent, "the premise: every write was sent").toBe(total);
+    expect(report).toMatchObject({ aborted: true, lost: true, written: total });
   });
 
   it("does not disconnect a link it never opened", async () => {

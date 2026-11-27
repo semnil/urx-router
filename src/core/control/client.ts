@@ -370,6 +370,9 @@ export async function sendCommands(
       await vdSet(command.paramId, command.x, command.y, command.vdValue);
       outcome = outcomeOf(command, "accepted");
     } catch (e) {
+      // A write a stop held — a Console Lock, a loss of the connection's notifications, which
+      // abort the signal before the refusal reaches here — stops the loop rather than failing.
+      signal?.throwIfAborted();
       const error = e instanceof Error ? e.message : String(e);
       outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error);
     }
@@ -454,10 +457,16 @@ export interface NameOutcome {
  * not re-sent. A read failure is reported and the write left out, matching
  * diffPlan: the caller aborts rather than writing over a name it could not read.
  */
-export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ writes: NameWrite[]; errors: string[] }> {
+export async function diffNames(
+  model: DeviceModel,
+  plan: Plan,
+  /** Stops the reads between two names, as the numeric diff's does. */
+  signal?: AbortSignal,
+): Promise<{ writes: NameWrite[]; errors: string[] }> {
   const writes: NameWrite[] = [];
   const errors: string[] = [];
   for (const write of planToNameWrites(model, plan)) {
+    signal?.throwIfAborted();
     try {
       const current = (await vdGetStr(write.param, 0, write.y)).trimEnd();
       if (current !== write.value) writes.push(write);
@@ -465,6 +474,8 @@ export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ write
       errors.push(`name ${write.param}:${write.y}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+  // A stop that came during the last read stops here too, before the caller acts on the diff.
+  signal?.throwIfAborted();
   return { writes, errors };
 }
 
@@ -472,16 +483,28 @@ export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ write
  * Send CH SETTING name writes (string params, via the string IPC). Separate from
  * sendCommands because names are strings outside the numeric VdCommand path;
  * idempotent, so no converge loop is needed. The caller must have connected.
+ * `signal` stops it between two names, and a write a stop held (a Console Lock, a loss of
+ * the connection's notifications) throws the stop rather than failing; `onSent` is told
+ * each name's outcome as it resolves, which a stop's throw would otherwise take with it.
  */
-export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
+export async function sendNames(
+  writes: NameWrite[],
+  signal?: AbortSignal,
+  onSent?: (outcome: NameOutcome) => void,
+): Promise<NameOutcome[]> {
   const outcomes: NameOutcome[] = [];
   for (const write of writes) {
+    signal?.throwIfAborted();
+    let outcome: NameOutcome;
     try {
       await vdSetStr(write.param, 0, write.y, write.value);
-      outcomes.push({ write, ok: true });
+      outcome = { write, ok: true };
     } catch (e) {
-      outcomes.push({ write, ok: false, error: e instanceof Error ? e.message : String(e) });
+      signal?.throwIfAborted();
+      outcome = { write, ok: false, error: e instanceof Error ? e.message : String(e) };
     }
+    outcomes.push(outcome);
+    onSent?.(outcome);
   }
   return outcomes;
 }
@@ -557,7 +580,7 @@ export async function sendPresetsAndReconverge(
   readErrors: string[];
   result: ConvergeResult | null;
 }> {
-  const names = await diffNames(model, plan);
+  const names = await diffNames(model, plan, opts.signal);
   if (names.errors.length)
     return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();

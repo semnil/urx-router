@@ -1038,6 +1038,22 @@ describe("planToNameWrites bounds what reaches the wire", () => {
 });
 
 describe("diffNames", () => {
+  // A stop between two names, or one that came during the last read, ends the diff with it.
+  it("stops on a stop that came while it read, the last read included", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    for (const at of [1, writes.length]) {
+      const controller = new AbortController();
+      let reads = 0;
+      vi.mocked(vdGetStr).mockImplementation(async () => {
+        if (++reads === at) controller.abort(new Error("stopped"));
+        return "";
+      });
+      await expect(diffNames(model, plan, controller.signal)).rejects.toThrow("stopped");
+      expect(reads, `stopped at read ${at}`).toBe(at);
+    }
+  });
+
   it("keeps only the names the device does not already have", async () => {
     const plan = namedPlan();
     const writes = planToNameWrites(model, plan);
@@ -1130,6 +1146,28 @@ describe("diffNames", () => {
 });
 
 describe("sendNames", () => {
+  // Each name's outcome is told as it lands, so a stop thrown between two names still says what
+  // went out; a name a stop held throws the stop rather than failing.
+  it("tells each outcome as it lands and stops between two names, or on a name a stop held", async () => {
+    const writes = planToNameWrites(model, namedPlan());
+    const controller = new AbortController();
+    const told: boolean[] = [];
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      if (told.length === 1) controller.abort(new Error("stopped"));
+    });
+    await expect(sendNames(writes, controller.signal, (o) => told.push(o.ok))).rejects.toThrow("stopped");
+    expect(told, "the two that landed").toEqual([true, true]);
+
+    const held = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      held.abort(new Error("locked"));
+      throw new Error("writes-held: the unit is under Console Lock");
+    });
+    const heldTold: boolean[] = [];
+    await expect(sendNames(writes, held.signal, (o) => heldTold.push(o.ok))).rejects.toThrow("locked");
+    expect(heldTold, "a held name is no failure").toEqual([]);
+  });
+
   it("writes every name through the string transport", async () => {
     vi.mocked(vdSetStr).mockResolvedValue(undefined);
     const writes = planToNameWrites(model, namedPlan());

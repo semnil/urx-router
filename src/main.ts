@@ -5976,7 +5976,7 @@ if (!DEMO) {
             // CH SETTING names are string params outside the numeric diff; diff them
             // separately so a name-only change still counts and writes.
             signal.throwIfAborted();
-            const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan);
+            const { writes: nameWrites, errors: nameErrors } = await diffNames(getModel(modelId), plan, signal);
             if (nameErrors.length) {
               readFailed(nameErrors);
               return null;
@@ -6117,7 +6117,19 @@ if (!DEMO) {
                 setStatus(stoppedLine(sentSoFar + outcomes.filter((o) => o.ok).length + presetsSent) + note);
                 return null;
               }
-              const nameOutcomes = await sendNames(nameWrites.filter((w) => w.name === undefined));
+              // Counted as each lands, so a stop thrown between two names still says what went out.
+              const nameOutcomes = await sendNames(
+                nameWrites.filter((w) => w.name === undefined),
+                signal,
+                (o) => {
+                  if (o.ok) sentNow++;
+                },
+              );
+              // A stop that arrived with the last name: what went out, and why it stopped.
+              if (signal.aborted) {
+                setStatus(stoppedLine(sentSoFar + sentNow + presetsSent) + note);
+                return null;
+              }
               // Normalize the two outcome shapes (numeric command vs string name write)
               // to {name, error} so the count and the saved report share one list.
               failed.push(
@@ -6184,14 +6196,18 @@ if (!DEMO) {
           try {
             let stop = await attemptWrite(true);
             wroteOutcome = true;
-            while (
-              stop &&
-              (await confirmDialog(
+            while (stop) {
+              // A stop that has arrived offers no retry on this connection; it says what went out.
+              if (signal.aborted) {
+                setStatus(stoppedLine(sentSoFar) + adoptedNote());
+                break;
+              }
+              const retry = await confirmDialog(
                 stop.unread
                   ? t().confirm.writeRetryUnread(stop.sent, stop.unread)
                   : t().confirm.writeRetry(stop.sent, stop.notSent),
-              ))
-            ) {
+              );
+              if (!retry) break;
               stop = await attemptWrite(false);
             }
           } catch (err) {

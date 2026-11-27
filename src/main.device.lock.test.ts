@@ -619,6 +619,92 @@ describe("Console Lock and a write outside a session", () => {
     expect(errors(shell)).toEqual([]);
   });
 
+  // Lost while the write reads the names: it stops there, before it asks to write anything.
+  it("asks nothing once the notifications are lost while Write to device reads the names", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let names = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_get_str: () => {
+        if (++names === 3) box.shell!.loseNotifications();
+        return "";
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(names, "the premise: the names were being read").toBeGreaterThanOrEqual(3);
+    expect(confirms(shell), "no write is offered").toEqual([]);
+    expect(statusText()).toBe(t().status.writeLost(0, 0));
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+  });
+
+  // The shell holds a write once the unit has announced Console Lock, before the page has taken
+  // it; the refusal is passed on once the page has, so the write stops on the lock, with no retry.
+  it("stops Write to device on the lock, with no retry, when the shell holds a write for it", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let sent = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_set: () => {
+        sent++;
+        if (sent !== 3) return null;
+        announceLock(box.shell!, 1);
+        throw new Error("writes-held: the unit announced Console Lock");
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
+    expect(statusText()).toBe(t().status.writeLocked(2, total));
+    expect(confirms(shell), "no retry is offered").toHaveLength(1);
+    expect(sent, "nothing after the held write").toBe(3);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // Lost while the names go out: the write stops at the next name, saying how much went out and why.
+  // The unit answers every name empty here, so each node's name goes out.
+  it.each(["the first", "the second", "the last"] as const)(
+    "stops Write to device on a loss at %s name, saying what went out",
+    SLOW,
+    async (which) => {
+      const box: { shell: TauriShell | null; names: number; at: number } = { shell: null, names: 0, at: 0 };
+      const shell = await bootDevice({
+        "plugin:dialog|message": "Ok",
+        vd_set_str: () => {
+          if (++box.names === box.at) box.shell!.loseNotifications();
+          return null;
+        },
+      });
+      box.shell = shell;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      // The unit keeps no name here, so the next write sends as many as this one did.
+      const names = box.names;
+      expect(names, "the premise: more than two names go out").toBeGreaterThan(2);
+      const at = which === "the first" ? 1 : which === "the second" ? 2 : names;
+      for (const [node, name] of [
+        ["ch2", "Kick"],
+        ["ch3", "Snare"],
+      ]) {
+        selectNode(node);
+        const field = paramRow(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+        field.value = name;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      box.names = 0;
+      box.at = at;
+      const setsBefore = shell.count("vd_set");
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(shell.count("vd_set"), "the premise: only the names differ").toBe(setsBefore);
+      expect(box.names, "nothing after the loss").toBe(at);
+      expect(statusText()).toBe(t().status.writeLost(at, names));
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
   it("refuses the Follow USB switch on a locked unit", SLOW, async () => {
     const shell = await bootDevice({
       vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.CONSOLE_LOCK.id ? 1 : clockReads(true, 48_000)(a)),

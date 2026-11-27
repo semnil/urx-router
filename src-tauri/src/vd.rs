@@ -227,11 +227,13 @@ const OUTBOX_UPDATES: usize = 8192;
 impl Outbox {
     /// Adds a delivered batch's runs, waiting while the page has more than
     /// `OUTBOX_UPDATES` unfetched; nothing is added once the session has ended. `lock` is
-    /// the batch's last announcement of Console Lock: on, or off.
+    /// the batch's last announcement of Console Lock: on, or off. A batch that carries one
+    /// does not wait: its lock state has to hold the very next write, and the next fetch
+    /// has to be the one that hands it to the page, whatever is waiting.
     fn put(&self, runs: Vec<Run>, lock: Option<bool>) {
         let count: usize = runs.iter().map(Run::len).sum();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        while !state.ended && state.records > OUTBOX_UPDATES {
+        while lock.is_none() && !state.ended && state.records > OUTBOX_UPDATES {
             state = self
                 .changed
                 .wait_timeout(state, Duration::from_millis(100))
@@ -2495,6 +2497,56 @@ mod imp {
                 Some(3),
                 "locked again, in the next fetch"
             );
+        }
+
+        // Past the cap of unfetched updates a batch waits for the page, but one that carries
+        // a Console Lock announcement does not: the lock holds the next write at once, and the
+        // next fetch hands it to the page.
+        #[test]
+        fn a_lock_announcement_is_not_held_back_by_the_cap() {
+            let outbox = Arc::new(Outbox::default());
+            let flood = super::super::Run::Meters {
+                handler: 1,
+                updates: (0..=super::super::OUTBOX_UPDATES as i64)
+                    .map(|value| super::super::MeterUpdate {
+                        meter_id: 1,
+                        x: 0,
+                        value,
+                    })
+                    .collect(),
+            };
+            outbox.put(vec![flood], None);
+            let lock = {
+                let outbox = Arc::clone(&outbox);
+                thread::spawn(move || outbox.put(vec![meter_run(1, -10)], Some(true)))
+            };
+            let until = Instant::now() + Duration::from_secs(2);
+            while !lock.is_finished() {
+                assert!(
+                    Instant::now() < until,
+                    "a lock announcement waits past the cap"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(
+                outbox.lock_fetch(),
+                Some(0),
+                "held at once, in the next fetch"
+            );
+            let held = {
+                let outbox = Arc::clone(&outbox);
+                thread::spawn(move || outbox.put(vec![meter_run(1, -20)], None))
+            };
+            thread::sleep(Duration::from_millis(50));
+            assert!(
+                !held.is_finished(),
+                "a batch with no lock waits past the cap"
+            );
+            let runs = outbox.take(0, Duration::ZERO).unwrap().unwrap();
+            assert_eq!(runs.len(), 2, "the flood and the lock, in order");
+            held.join().unwrap();
+            outbox.put(vec![meter_run(1, -30)], Some(false));
+            assert_eq!(outbox.lock_fetch(), None);
         }
 
         // The shell refuses a write from the unit's announcement of Console Lock to its

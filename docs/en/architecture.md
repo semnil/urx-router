@@ -1874,7 +1874,8 @@ drag lands on the nearest.
   the writes in the shell from that announcement to the announcement of the lock off: `vd.rs` keeps the last lock
   state the unit announced and refuses a write meanwhile with `writes-held` and the number of the fetch that
   carries the announcement, so a write the page handed over before it knew of the lock does not reach the locked
-  unit; the page passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock
+  unit — a batch that carries a lock announcement does not wait on the cap of unfetched updates, so its state
+  holds the next write however many wait; the page passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock
   already taken.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
@@ -3835,7 +3836,9 @@ the status line says how far a Write to device got (`status.writeLocked`), and w
 unlocked compares the unit with the plan again and sends what differs then. The self-test and `--prepare-modified` connect on their own and take the same watch through
 `watchRun`, after the model check — so a unit of another model is still neither read nor written.
 
-**A self-test the lock stops** once it has written leaves the unit changed. What its restore needs — the captured
+**A self-test the lock stops** — or a loss of the connection's notifications, under which a lock would go unheard —
+once a write of it may have reached the unit (one has gone on the wire, counted as it goes) leaves the unit changed;
+one stopped before that keeps nothing to restore. What its restore needs — the captured
 plan and the addresses read before the sweep — is kept on the report as `pendingRestore`, the app holds it in
 memory, and the Device menu shows **Restore after self-test** while it does. That runs the restore alone
 (`restoreSelfTest`): it refuses a unit still locked or of another model, keeps `pendingRestore` for another try

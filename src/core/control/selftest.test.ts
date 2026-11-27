@@ -2242,6 +2242,84 @@ describe("runSelfTest and Console Lock", () => {
     expect(formatSelfTestReport(report)).toContain("the unit is under Console Lock");
   });
 
+  it("keeps no restore when the notifications are lost before the run has written anything", async () => {
+    // A run with no loss, to find the read the first write follows: the sweep's own read of the
+    // unit, in its write phase, with nothing written yet.
+    installMockDevice(populatedPlan());
+    lockStream();
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let reads = 0;
+    let lastReadBeforeWrite = -1;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      reads++;
+      return realGet(id, x, y);
+    });
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (lastReadBeforeWrite < 0) lastReadBeforeWrite = reads;
+      return realSet(id, x, y, v);
+    });
+    await runSelfTest(model, 0);
+    expect(lastReadBeforeWrite, "the premise: the run read before it wrote").toBeGreaterThan(0);
+    vi.mocked(vdSet).mockClear().mockImplementation(realSet);
+
+    const table = installMockDevice(populatedPlan());
+    lockStream();
+    const before = new Map(table);
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const get = vi.mocked(vdGet).getMockImplementation()!;
+    reads = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (++reads === lastReadBeforeWrite) lose?.();
+      return get(id, x, y);
+    });
+    const report = await runSelfTest(model, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    expect(report.lost, "the premise: the loss stopped it").toBe(true);
+    expect(report.phase, "the premise: in the write phase").toBe("write");
+    expect(vi.mocked(vdSet), "the premise: nothing was written").not.toHaveBeenCalled();
+    expect(report.written).toBe(0);
+    expect(report.pendingRestore, "nothing to put back").toBeUndefined();
+    expect(table).toEqual(before);
+  });
+
+  it("keeps the restore, saying why, when the standalone restore loses the notifications", async () => {
+    installMockDevice(populatedPlan());
+    lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 5) lose?.();
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0);
+    expect(report.pendingRestore, "the premise: a restore is kept").toBeDefined();
+    writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 2) lose?.();
+      return realSet(id, x, y, v);
+    });
+    const restore = await restoreSelfTest(model, report.pendingRestore!, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    vi.mocked(vdSet).mockImplementation(realSet);
+    expect(restore.lost).toBe(true);
+    expect(restore.restored).toBe(false);
+    expect(restore.pendingRestore, "kept until a restore succeeds").toBe(report.pendingRestore);
+  });
+
   it("stops at the next command when the connection's notifications are lost, and keeps what the restore needs", async () => {
     const seed = populatedPlan();
     const table = installMockDevice(seed);
@@ -2268,6 +2346,7 @@ describe("runSelfTest and Console Lock", () => {
     expect(report.locked).toBeUndefined();
     expect(report.aborted, "stopped the way a cancel stops").toBe(true);
     expect(writes, "the write on the wire lands; nothing after it goes").toBe(5);
+    expect(report.written, "every write that landed is counted").toBe(5);
     expect(report.pendingRestore?.model).toBe("URX44V");
     expect(formatSelfTestReport(report)).toContain(
       "- Stopped: the changes the unit announced could not be fetched; the unit is left changed, and what the restore needs is kept for Restore after self-test",
