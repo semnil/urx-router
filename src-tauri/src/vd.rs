@@ -1162,7 +1162,18 @@ mod imp {
             }
         }
 
+        /// The text a registration's or a release's caller is told, with the precedence
+        /// `request_text` gives a request: the unit's own refusal and this operation's own
+        /// deadline settled it, and an end of the connection that came with or after them
+        /// is the link watch's and the later commands' to report.
         fn lifecycle_failure_text(&self, failure: &LifecycleFailure) -> String {
+            if let Failure::Cause {
+                code: Cause::DeviceRejected | Cause::ResponseTimeout,
+                ..
+            } = failure.failure
+            {
+                return lifecycle_text(&failure.failure);
+            }
             if let Some(ended) = self.connection.terminal() {
                 return ended_text(&self.connection, ended);
             }
@@ -2084,10 +2095,67 @@ mod imp {
                 let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
                 let replaced = params_subscribe(tx.clone(), vec![(1, 0, 0)], first)
                     .and_then(|()| params_subscribe(tx.clone(), vec![(2, 0, 0)], second));
-                assert!(replaced.is_err(), "{late}");
+                // The caller is told of its own deadline, and the commands after it of the
+                // end that deadline brought.
+                assert_eq!(
+                    replaced,
+                    Err("broker-timeout: Subscription".to_string()),
+                    "{late}"
+                );
+                assert_eq!(
+                    get(tx, 1, 0, 0),
+                    Err(BROKER_UNRESPONSIVE.to_string()),
+                    "{late}"
+                );
                 let stats = counters.read();
                 assert_eq!((stats.deadlines, stats.stalled), (1, 1), "{late}");
             }
+        }
+
+        // The unit's refusal of a registration or of the old set's release is what the
+        // caller is told, even when the connection ends with it or right after: a refused
+        // registration whose cleanup then runs out of time, and a release the unit refuses,
+        // which ends the connection. The later commands are told of that end.
+        #[test]
+        fn a_refused_registration_or_release_is_what_its_caller_is_told() {
+            let refused_then_late = connected(|request| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                if uri == "/vd/parameters/2:0:0?operation=regist" {
+                    return vec![post_reply("/vd/parameters/2:0:0", "regist", 400)];
+                }
+                if uri == "/vd/parameters/1:0:0?operation=unregist" {
+                    thread::sleep(LATE);
+                }
+                plain(request)
+            });
+            let release_refused = connected(|request| {
+                if request["vdp"]["uri"] == "/vd/parameters/1:0:0?operation=unregist" {
+                    return vec![post_reply("/vd/parameters/1:0:0", "unregist", 400)];
+                }
+                plain(request)
+            });
+            let (tx, _unit, _) = refused_then_late;
+            let (channel, _) = capture::<Vec<super::super::ParamUpdate>>();
+            assert_eq!(
+                params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], channel),
+                Err("broker-rejected: Subscription".to_string())
+            );
+            assert_eq!(get(tx, 1, 0, 0), Err(BROKER_UNRESPONSIVE.to_string()));
+            let (tx, _unit, _) = release_refused;
+            let (first, _) = capture::<Vec<super::super::ParamUpdate>>();
+            let (second, _) = capture::<Vec<super::super::ParamUpdate>>();
+            params_subscribe(tx.clone(), vec![(1, 0, 0)], first).unwrap();
+            assert_eq!(
+                params_subscribe(tx.clone(), vec![(2, 0, 0)], second),
+                Err("broker-rejected: Subscription".to_string())
+            );
+            let after = get(tx, 1, 0, 0);
+            assert!(
+                after
+                    .as_ref()
+                    .is_err_and(|e| !e.starts_with("broker-rejected")),
+                "{after:?}"
+            );
         }
 
         // The ledger's frame rows are what reached the unit, however the call that sent
