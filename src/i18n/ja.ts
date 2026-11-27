@@ -1162,7 +1162,7 @@ export const ja: Messages = {
       brokerBadResponse: (detail: string): string => `Device Center から想定外の応答が返りました (${detail})`,
       brokerIo: (detail: string): string => `Device Center との通信に失敗しました (${detail})`,
       notificationsLost:
-        "デバイスが知らせた変更を取得できなかったため、変更を追えなくなりました。ライブ同期をもう一度始めてください。",
+        "デバイスが知らせた変更を取得できなかったため、この接続ではこれ以上何も送りません。もう一度始めてください。",
       fileNotFound: "そのパスにファイルがありません",
       fileDenied: "ファイルへのアクセスが拒否されました",
       fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,

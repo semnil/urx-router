@@ -113,6 +113,6 @@ test("a live session whose notification fetch fails stops naming that cause", as
   await expect
     .poll(async () => (await dialogsOf(page)).filter((d) => d.startsWith("Live sync stopped:")))
     .toEqual([
-      "Live sync stopped: the changes the device announced could not be fetched, so the app no longer follows them. Start Live sync again.",
+      "Live sync stopped: the changes the device announced could not be fetched, so the app sends nothing more on this connection. Start it again.",
     ]);
 });

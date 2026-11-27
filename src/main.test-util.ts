@@ -335,6 +335,8 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   // fetch takes it.
   const outbox = {
     epoch: null as number | null,
+    /** The number the page's next fetch carries on this connection: one more for every answer. */
+    seq: 0,
     runs: [] as Array<{ kind: string; handler: unknown; updates: unknown }>,
     waiter: null as { epoch: number; resolve: (runs: unknown[] | null) => void } | null,
     /** Answers the outstanding fetch once there is something to answer: the runs of its own
@@ -346,6 +348,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       if (waiter.epoch !== this.epoch) return waiter.resolve(null);
       const runs = this.runs;
       this.runs = [];
+      this.seq += 1;
       waiter.resolve(runs);
     },
   };
@@ -361,11 +364,22 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     const epoch = outbox.epoch;
     if (epoch === null || a?.epoch !== epoch) return Promise.resolve(null);
     if (outbox.runs.length === 0) for (const taken of takenWaiters.splice(0)) taken();
-    // One fetch outstanding at a time, as the page keeps it; a second one would be the page's defect.
+    // One fetch outstanding at a time, numbered after the answer before it, as the page keeps them;
+    // anything else would be the page's defect.
     if (outbox.waiter !== null) return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
+    if (a?.seq !== outbox.seq)
+      return Promise.reject(new Error(`stub: fetch ${String(a?.seq)}, ${outbox.seq} expected`));
     return new Promise((resolve) => {
-      outbox.waiter = { epoch, resolve };
+      const waiter = { epoch, resolve };
+      outbox.waiter = waiter;
       outbox.answer();
+      // As the shell does, an empty answer when nothing came within a second.
+      setTimeout(() => {
+        if (outbox.waiter !== waiter) return;
+        outbox.waiter = null;
+        outbox.seq += 1;
+        resolve([]);
+      }, 1_000);
     });
   };
   const follow = (cmd: string, a: Record<string, unknown> | undefined, answered: Promise<unknown>): void => {
@@ -373,6 +387,7 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       void answered.then(
         (connection) => {
           outbox.epoch = (connection as { epoch?: number } | null)?.epoch ?? null;
+          outbox.seq = 0;
           outbox.runs = [];
           outbox.answer();
         },

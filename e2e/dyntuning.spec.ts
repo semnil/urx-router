@@ -209,6 +209,12 @@ test.beforeEach(async ({ page }) => {
             return new Promise((resolve) => {
               outbox.waiter = resolve;
               outbox.answer();
+              // As the shell does, an empty answer when nothing came within a second.
+              setTimeout(() => {
+                if (outbox.waiter !== resolve) return;
+                outbox.waiter = null;
+                resolve([]);
+              }, 1_000);
             });
           case "vd_get":
             // Answer reads with what was written: a blanket 0 would let a scoped

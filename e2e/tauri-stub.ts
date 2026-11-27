@@ -337,8 +337,15 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
             if (outbox.waiter !== null)
               return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
             return new Promise<unknown[] | null>((resolve, reject) => {
-              outbox.waiter = { resolve, reject };
+              const waiter = { resolve, reject };
+              outbox.waiter = waiter;
               outbox.answer();
+              // As the shell does, an empty answer when nothing came within a second.
+              setTimeout(() => {
+                if (outbox.waiter !== waiter) return;
+                outbox.waiter = null;
+                resolve([]);
+              }, 1_000);
             });
           }
           if (cmd === "vd_disconnect") {

@@ -1071,7 +1071,7 @@ OS が出す言語で届く: `file-io:` の後ろの詳細は、macOS では英�
 | 発生源                             | コード                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/src/lib.rs` (ファイル IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                  |
-| `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io` |
+| `src-tauri/src/vd.rs` (broker)     | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io`, `notifications-lost` |
 | `src-tauri/src/midi.rs`            | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                         |
 | `src-tauri/src/keepawake.rs`       | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                     |
 | `core/storage.ts` (画像出力)       | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                               |
@@ -1478,8 +1478,17 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   にその受け手へ渡す。追従の層は古い購読と新しい購読を 1 つの受け手で受けるので、購読し直す前に本体が知らせた
   Console Lock は、その後の解除より前に届く。通知を Tauri のチャンネルで押し出さず、ページが取りに行くのはこのため
   である: Tauri は 1 本のチャンネルの中の順番は守るが、2 本のチャンネルの間の順番は守らない (8 KiB 以上の
-  メッセージは、ページが後から取りに行く)。取得が失敗したときは、セッションを `notifications-lost` で終える。
-  本体が知らせた変更がページに届いていないかもしれず、その後の変更をもう追えないからである。
+  メッセージは、ページが後から取りに行く)。取得には接続ごとに 0 から番号を付け、次の番号で取りに来ることが、
+  前の答えをページが受け取った知らせになる。`vd.rs` はそれまで答えを持ち、同じ番号の送り直しには同じ答えを返す —
+  Tauri は、独自プロトコルが postMessage へ切り替わるときに、ページが答えを読めなかった要求を送り直す。答えを
+  持たなければ、その送り直しは、失われた run の後の run を取ってしまう。順番の外れた番号は断る。取得が失敗するか、
+  5 秒 (`NOTIFICATION_FETCH_DEADLINE_MS`。シェルは 1 秒の待ちの中で答える) を超えたときは、その接続の通知を
+  失ったとみなす: 本体が知らせた変更がページに届いていないかもしれないので、その接続の後の書き込みは、どの操作から
+  でも送る前に断り (`notifications-lost`)、ライブ同期はそのコードで終える。切断の監視を通して終えるので、監視が
+  失った後に登録されたときも、すぐに終える。次の接続は影響を受けない。本体が知らせた Console Lock は、ページに
+  届くまでシェルが書き込みを止める: その知らせが `Outbox` にあるか、ページが受け取りを知らせていない答えにある間、
+  `vd.rs` は書き込みを `writes-held` と、それを運ぶ取得の番号とで断る。ページはその取得を受け手に渡し終えてから
+  断りを渡すので、断りを扱う側は、もうロックを受け取っている。
   ライブ同期中は `core/control/follow.ts` の `DeviceFollow` が各通知を live snapshot のアドレス
   →ノード索引 (`live.lookup`) で分類する: ノードローカルなスカラ (フェーダー/PAN/ON/レベル。カタログで
   `follow: "direct"`) は読み戻しなしで値を直接 plan へ適用し (`applyDirect`)、その 1 アドレス分の snapshot も

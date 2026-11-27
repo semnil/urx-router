@@ -327,7 +327,7 @@ describe("streaming channel adapters", () => {
       { kind: "probe", handler: probeHandler, updates: [{ param_id: 838, x: 0, y: 0, value: 2 }] },
     );
     await settle();
-    expect(outbox.fetches[0]).toEqual({ epoch: 1 });
+    expect(outbox.fetches[0]).toEqual({ epoch: 1, seq: 0 });
 
     await platform.vdWatchLink((reason) => drops.push(reason));
     channelFrom<{ reason: string }>(harness, "vd_watch_link").onmessage({ reason: "deadline" });
@@ -442,10 +442,13 @@ describe("notification fetch", () => {
     await platform.vdMetersSubscribe([[101, 0]], vi.fn());
     await platform.vdProbeSubscribe([[838, 0, 0]], vi.fn());
     await settle();
-    expect(outbox.fetches, "the subscriptions share one fetch").toEqual([{ epoch: 1 }]);
+    expect(outbox.fetches, "the subscriptions share one fetch").toEqual([{ epoch: 1, seq: 0 }]);
     outbox.idle();
     await settle();
-    expect(outbox.fetches, "an empty answer is fetched past").toEqual([{ epoch: 1 }, { epoch: 1 }]);
+    expect(outbox.fetches, "an empty answer is fetched past, numbered after it").toEqual([
+      { epoch: 1, seq: 0 },
+      { epoch: 1, seq: 1 },
+    ]);
     expect(outbox.mostOutstanding).toBe(1);
   });
 
@@ -535,7 +538,7 @@ describe("notification fetch", () => {
     await settle();
     expect(seen, "the next connection's own handlers only").toEqual([3]);
     expect(outbox.fetches, "a closed connection is fetched no more").toHaveLength(1);
-    expect(next.fetches[0]).toEqual({ epoch: 2 });
+    expect(next.fetches[0], "numbered from 0 again on the next connection").toEqual({ epoch: 2, seq: 0 });
     await platform.vdDisconnect(2);
   });
 
@@ -558,6 +561,116 @@ describe("notification fetch", () => {
     await settle();
     expect(next.fetches, "the next connection goes on fetching").toHaveLength(2);
     await platform.vdDisconnect(2);
+  });
+
+  it("numbers each fetch after the answer before it", async () => {
+    const { harness, outbox } = await connected();
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
+    await settle();
+    outbox.put(params(handler, 1));
+    await settle();
+    outbox.idle();
+    await settle();
+    outbox.put(params(handler, 2));
+    await settle();
+    expect(outbox.fetches.map((args) => (args as { seq: number }).seq)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("loses the connection's notifications when a fetch outlasts its deadline", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { harness, outbox } = await connected();
+      const seen: number[] = [];
+      const drops: string[] = [];
+      await platform.vdParamsSubscribe([[1, 0, 0]], (p) => seen.push(p.value));
+      await platform.vdWatchLink((reason) => drops.push(reason));
+      const [handler] = handlersOf(harness, "vd_params_subscribe");
+      await vi.advanceTimersByTimeAsync(platform.NOTIFICATION_FETCH_DEADLINE_MS - 1);
+      expect(drops).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(drops).toEqual([platform.NOTIFICATIONS_LOST]);
+      outbox.put(params(handler, 1));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen, "a late answer is not taken").toEqual([]);
+      expect(outbox.fetches).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses every write on a connection whose notifications were lost, and writes on the next", async () => {
+    const { harness, outbox } = await connected();
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await settle();
+    outbox.fail();
+    await settle();
+    harness.invoke.mockClear();
+    await expect(platform.vdSet(1, 0, 0, 5)).rejects.toThrow(`${platform.NOTIFICATIONS_LOST}:`);
+    await expect(platform.vdSetStr(1, 0, 0, "name")).rejects.toThrow(`${platform.NOTIFICATIONS_LOST}:`);
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await settle();
+    expect(outbox.fetches, "nor is it fetched again, whatever subscribes").toHaveLength(1);
+    expect(
+      harness.invoke.mock.calls.map(([cmd]) => cmd),
+      "nothing was written",
+    ).not.toContain("vd_set");
+    await reconnect(harness, new FakeOutbox(), vi.fn());
+    await expect(platform.vdSet(1, 0, 0, 5)).resolves.toBeUndefined();
+    expect(harness.invoke).toHaveBeenCalledWith("vd_set", { paramId: 1, x: 0, y: 0, value: 5 }, undefined);
+    await platform.vdDisconnect(2);
+  });
+
+  it("reports a loss to a link watch registered after it", async () => {
+    const { outbox } = await connected();
+    const drops: string[] = [];
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await settle();
+    outbox.fail();
+    await settle();
+    await platform.vdWatchLink((reason) => drops.push(reason));
+    await settle();
+    expect(drops).toEqual([platform.NOTIFICATIONS_LOST]);
+  });
+
+  it("passes a write the shell held for a lock on its way on once a later fetch has been handed on", async () => {
+    const { harness, outbox } = await connected();
+    const seen: number[] = [];
+    await platform.vdParamsSubscribe([[895, 0, 0]], (p) => seen.push(p.value));
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
+    await settle();
+    harness.answers.vd_set = () => {
+      throw new Error(
+        `${platform.WRITES_HELD}: the unit announced Console Lock, which the app has not taken yet (fetch 0)`,
+      );
+    };
+    let settled: unknown;
+    void platform.vdSet(1, 0, 0, 5).then(
+      () => (settled = "written"),
+      (error: unknown) => (settled = error),
+    );
+    await settle();
+    expect(settled, "held while the announcement has not been handed on").toBeUndefined();
+    outbox.put({ kind: "params", handler, updates: [{ param_id: 895, x: 0, y: 0, value: 1 }] });
+    await settle();
+    expect(String(settled), "passed on as soon as the fetch it named is handed on").toContain(
+      `${platform.WRITES_HELD}:`,
+    );
+    expect(seen, "the announcement was handed on first").toEqual([1]);
+    expect(outbox.fetches, "passed on as the fetch it named was handed on").toHaveLength(2);
+  });
+
+  it("passes a write the shell held on at once when nothing fetches", async () => {
+    const harness = installInternals({
+      vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 },
+      vd_set: () => {
+        throw new Error(`${platform.WRITES_HELD}: the unit announced Console Lock, which the app has not taken yet`);
+      },
+    });
+    await platform.vdConnect("URX44V");
+    await expect(platform.vdSetStr(1, 0, 0, "name")).resolves.toBeUndefined();
+    harness.answers.vd_set_str = harness.answers.vd_set;
+    await expect(platform.vdSetStr(1, 0, 0, "name")).rejects.toThrow(`${platform.WRITES_HELD}:`);
   });
 
   it("leaves the followed connection alone at an older connection's disconnect", async () => {

@@ -553,7 +553,10 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
       // vd.rs `Outbox`: the runs routed to the page since its last `vd_notifications`, which the page
       // fetches one request at a time. What the fake delivers waits here for that fetch, routed to the
       // subscription's handler as vd.rs routes it; nothing is routed once the worker is gone, and a
-      // fetch then answers null.
+      // fetch then answers null. Divergence kept: vd.rs also numbers its answers against Tauri's
+      // resend, which a browser page never makes, and holds a write while a Console Lock waits for
+      // the page (`Outbox::lock_fetch`), whose refusal the page passes on only once its own hold
+      // has the lock, so the fake does neither.
       const outbox = {
         open: false,
         runs: [] as unknown[],
@@ -1253,6 +1256,12 @@ export async function installFake(page: Page, opts: InstallOptions = {}): Promis
               new Promise<unknown[] | null>((resolve) => {
                 outbox.waiter = resolve;
                 outbox.answer();
+                // As vd.rs does, an empty answer when nothing came within a second.
+                setTimeout(() => {
+                  if (outbox.waiter !== resolve) return;
+                  outbox.waiter = null;
+                  resolve([]);
+                }, 1_000);
               }),
             );
           }

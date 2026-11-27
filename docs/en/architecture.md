@@ -1380,7 +1380,7 @@ Japanese there is the expected reading and not a defect. Both sides of the shell
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                       |
-| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io` |
+| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io`, `notifications-lost` |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
 | `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
@@ -1859,8 +1859,18 @@ drag lands on the nearest.
   with one handler, so a Console Lock the unit announced before a re-subscription reaches it ahead of the unlock
   that followed. Notifications are fetched rather than pushed over Tauri channels for that reason: Tauri keeps one
   channel's messages in order and not two channels' — a message of 8 KiB or more is fetched by the page after the
-  fact. A fetch that fails ends the session with `notifications-lost`, since a change the unit announced may then
-  not have reached the page, and what follows it can no longer be followed.
+  fact. The fetches are numbered from 0 on each connection, and asking for the next number is the page's
+  acknowledgement of the last answer: `vd.rs` keeps an answer until then, and answers a resend of its number with it
+  again — Tauri resends a request whose response the page could not read, when its custom protocol fails over to
+  `postMessage`, and that resend would otherwise take the runs after the ones lost. A number out of sequence is
+  refused. A fetch that fails, or takes longer than 5 s (`NOTIFICATION_FETCH_DEADLINE_MS`; the shell answers within
+  its one-second wait), loses the connection's notifications: a change the unit announced may not have reached the
+  page, so every later write on that connection is refused before it is sent (`notifications-lost`), whichever
+  operation sends it, and a live session ends with that code — through its link watch, at once if the watch is
+  registered after the loss. The next connection starts clean. A Console Lock the unit announced holds the writes
+  in the shell until the page has it: while the announcement waits in the outbox or in an answer the page has not
+  acknowledged, `vd.rs` refuses a write with `writes-held` and the number of the fetch that carries it, and the page
+  passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock already taken.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan

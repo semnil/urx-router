@@ -26,7 +26,8 @@ use urx_device_transport::connection::SentFrames;
 // message would reach a Japanese dialog in English. Codes: broker-unreachable,
 // no-device, multiple-devices, control-worker-gone, not-connected, device-lost, broker-closed,
 // broker-timeout, broker-unresponsive, broker-rejected, broker-bad-response,
-// broker-io.
+// broker-io, notifications-lost. A write refused while a Console Lock waits for the page
+// is the page's own `writes-held`, which it takes as the lock's stop and never words.
 //
 // This list is the Rust half of a two-sided inventory — src/i18n/index.ts asks to
 // keep it in step, and error-text.test.ts asserts the TypeScript half exhaustive
@@ -38,6 +39,21 @@ use urx_device_transport::connection::SentFrames;
 /// must not change. `lib.rs` raises the same code when a worker task panics: from
 /// the frontend's side the control worker is equally unavailable either way.
 pub(crate) const CONTROL_WORKER_GONE: &str = "control-worker-gone";
+
+/// The code a fetch of the notifications is refused with when its number is out of
+/// sequence: the page's own code for notifications it could not fetch
+/// (`NOTIFICATIONS_LOST`, src/core/platform.ts).
+pub(crate) const NOTIFICATIONS_LOST: &str = "notifications-lost";
+
+/// The code a write is refused with while a Console Lock the unit announced has not
+/// reached the page yet: the page's own code for a write the lock holds (`WRITES_HELD`,
+/// src/core/platform.ts), which it takes as the lock's stop rather than a failure.
+pub(crate) const WRITES_HELD: &str = "writes-held";
+
+/// The address of the unit's [Console Lock] (`PARAMS.CONSOLE_LOCK`,
+/// src/core/control/params.ts), the same on every model; announced on, it holds the
+/// writes in the shell until the page has the announcement.
+const CONSOLE_LOCK_PARAM: u32 = 895;
 
 /// Device identity exposed to the frontend (no serial). `firmware` is the
 /// unit's System firmware version (from /vd/device); empty when the device reports
@@ -170,10 +186,15 @@ pub enum Run {
 }
 
 /// The runs a session has routed that the page has not fetched yet, in receive order.
-/// The page fetches them with one request at a time (`vd_notifications`), so they reach
-/// it in this order and once each, and a fetch that fails is a rejection the page sees
-/// — where notifications pushed over Tauri channels could arrive out of order across
-/// channels, and one lost inside a channel held back every one after it unseen.
+/// The page fetches them with one numbered request at a time (`vd_notifications`), so
+/// they reach it in this order and once each, and a fetch that fails is a rejection the
+/// page sees — where notifications pushed over Tauri channels could arrive out of order
+/// across channels, and one lost inside a channel held back every one after it unseen.
+///
+/// An answer is kept until the page asks for the next number, which is its
+/// acknowledgement: Tauri resends a request whose response the page could not read
+/// (its custom protocol failing over to `postMessage`), and the resend of a number is
+/// answered with what that number was answered with, not with the runs after it.
 #[derive(Default)]
 pub struct Outbox {
     state: Mutex<OutboxState>,
@@ -185,6 +206,15 @@ struct OutboxState {
     runs: Vec<Run>,
     records: usize,
     ended: bool,
+    /// The number the page's next new fetch carries.
+    expect: u64,
+    /// The last answer and its number, kept until a fetch of the next number arrives;
+    /// whether it carried a Console Lock the unit announced.
+    answered: Option<(u64, Vec<Run>, bool)>,
+    /// A fetch of `expect` is waiting for runs: a resend of it waits for its answer.
+    taking: bool,
+    /// `runs` carries a Console Lock the unit announced.
+    queued_lock: bool,
 }
 
 /// How many updates the outbox holds before the delivery waits for the page: past it,
@@ -193,8 +223,9 @@ const OUTBOX_UPDATES: usize = 8192;
 
 impl Outbox {
     /// Adds a delivered batch's runs, waiting while the page has more than
-    /// `OUTBOX_UPDATES` unfetched; nothing is added once the session has ended.
-    fn put(&self, runs: Vec<Run>) {
+    /// `OUTBOX_UPDATES` unfetched; nothing is added once the session has ended. `lock`
+    /// says the runs carry the unit's announcement that Console Lock is on.
+    fn put(&self, runs: Vec<Run>, lock: bool) {
         let count: usize = runs.iter().map(Run::len).sum();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         while !state.ended && state.records > OUTBOX_UPDATES {
@@ -209,33 +240,71 @@ impl Outbox {
         }
         state.records += count;
         state.runs.extend(runs);
+        state.queued_lock |= lock;
         self.changed.notify_all();
     }
 
-    /// Every run waiting, after waiting up to `wait` for one: empty when none came, and
-    /// `None` once the session has ended with nothing left to fetch.
-    pub fn take(&self, wait: Duration) -> Option<Vec<Run>> {
+    /// The answer to the page's fetch numbered `seq`. A resend of the last number gets
+    /// that number's answer again; the next number acknowledges it and takes every run
+    /// waiting, after waiting up to `wait` for one: empty when none came, and `None`
+    /// once the session has ended with nothing left to fetch. Any other number is out
+    /// of sequence: the page has lost an answer, and the rejection says so.
+    pub fn take(&self, seq: u64, wait: Duration) -> Result<Option<Vec<Run>>, String> {
         let end = Instant::now() + wait;
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         loop {
-            if !state.runs.is_empty() {
-                state.records = 0;
-                let runs = std::mem::take(&mut state.runs);
-                self.changed.notify_all();
-                return Some(runs);
+            if let Some((number, runs, _)) = &state.answered {
+                if *number == seq {
+                    return Ok(Some(runs.clone()));
+                }
             }
-            if state.ended {
-                return None;
+            if seq != state.expect {
+                return Err(format!(
+                    "{NOTIFICATIONS_LOST}: fetch {seq} out of sequence, {} expected",
+                    state.expect
+                ));
             }
+            if !state.taking {
+                break;
+            }
+            // A resend of the fetch being answered: it gets the same answer.
+            state = self.changed.wait(state).unwrap_or_else(|p| p.into_inner());
+        }
+        state.answered = None;
+        state.taking = true;
+        while state.runs.is_empty() && !state.ended {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Some(Vec::new());
+                break;
             }
             state = self
                 .changed
                 .wait_timeout(state, left)
                 .unwrap_or_else(|p| p.into_inner())
                 .0;
+        }
+        state.taking = false;
+        self.changed.notify_all();
+        if state.runs.is_empty() && state.ended {
+            return Ok(None);
+        }
+        state.records = 0;
+        let runs = std::mem::take(&mut state.runs);
+        let lock = std::mem::take(&mut state.queued_lock);
+        state.answered = Some((seq, runs.clone(), lock));
+        state.expect = seq + 1;
+        Ok(Some(runs))
+    }
+
+    /// The number of the fetch that hands the page a Console Lock the unit announced, while
+    /// one is waiting for the page, unfetched or unacknowledged: until the page has it, the
+    /// shell holds the writes itself.
+    pub fn lock_fetch(&self) -> Option<u64> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        match &state.answered {
+            Some((number, _, true)) => Some(*number),
+            _ if state.queued_lock => Some(state.expect),
+            _ => None,
         }
     }
 
@@ -764,7 +833,7 @@ mod imp {
     //! Tauri channels a notification goes out on, the link-lost event and the ledger.
     use super::{
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, Outbox, ParamUpdate, Run,
-        BULK_CHANGE, CONTROL_WORKER_GONE,
+        BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, WRITES_HELD,
     };
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -923,6 +992,8 @@ mod imp {
         batch: NotificationBatch,
     ) {
         let mut runs = Runs::default();
+        // Whether the batch routes the unit's announcement that Console Lock is on.
+        let mut lock = false;
         {
             let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
             for record in &batch.records {
@@ -958,10 +1029,20 @@ mod imp {
                             Notification::BulkChange => BULK_CHANGE,
                             Notification::Meter { .. } => unreachable!("matched above"),
                         };
-                        if let Some(handler) = routes.params.pick(&record.recipients) {
+                        let to_params = routes.params.pick(&record.recipients);
+                        let to_probe = routes.probe.pick(&record.recipients);
+                        if (to_params.is_some() || to_probe.is_some())
+                            && update.param_id == CONSOLE_LOCK_PARAM
+                            && (update.x, update.y) == (0, 0)
+                            && update.value_str.is_none()
+                            && update.value != 0
+                        {
+                            lock = true;
+                        }
+                        if let Some(handler) = to_params {
                             runs.param(false, handler, update.clone());
                         }
-                        if let Some(handler) = routes.probe.pick(&record.recipients) {
+                        if let Some(handler) = to_probe {
                             runs.param(true, handler, update);
                         }
                     }
@@ -969,7 +1050,7 @@ mod imp {
             }
         }
         // Outside the routes lock: a subscribe switching routes must not wait on the page.
-        outbox.put(runs.0);
+        outbox.put(runs.0, lock);
         if let Some(connection) = connection.get() {
             connection.adopt_notifications(batch.ticket);
         }
@@ -1114,6 +1195,9 @@ mod imp {
         connection: Arc<Connection>,
         routes: Arc<Mutex<Routes>>,
         counters: Arc<LinkCounters>,
+        /// The page's notifications, whose Console Lock the shell holds the writes on
+        /// until the page has it.
+        outbox: Arc<Outbox>,
         meters: Option<Held>,
         params: Option<Held>,
         probe: Option<Held>,
@@ -1169,7 +1253,15 @@ mod imp {
             }
         }
 
+        /// A write, refused before it is sent while a Console Lock the unit announced
+        /// has not reached the page: the page holds its writes once it has the lock, and
+        /// until then a write would reach a unit it has been told is locked.
         fn set(&mut self, req: Request, at: String) -> Result<(), String> {
+            if let Some(fetch) = self.outbox.lock_fetch() {
+                return Err(format!(
+                    "{WRITES_HELD}: the unit announced Console Lock, which the app has not taken yet (fetch {fetch})"
+                ));
+            }
             self.run(req, &at).map(|_| ())
         }
 
@@ -1451,6 +1543,7 @@ mod imp {
             connection,
             routes,
             counters,
+            outbox: Arc::clone(&outbox),
             meters: None,
             params: None,
             probe: None,
@@ -1618,7 +1711,7 @@ mod imp {
         };
         use super::{
             link_failure_text, request_text, worker_at, Route, Runs, BROKER_UNRESPONSIVE,
-            CONNECT_DEADLINE, DEVICE_LOST_PREFIX,
+            CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, WRITES_HELD,
         };
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
@@ -1832,6 +1925,7 @@ mod imp {
             let counters = Arc::new(LinkCounters::default());
             let outbox = Arc::new(Outbox::default());
             OUTBOX.with(|current| *current.borrow_mut() = Some(Arc::clone(&outbox)));
+            FETCHED.with(|next| next.set(0));
             let (worker_counters, preferred) = (Arc::clone(&counters), preferred.to_string());
             thread::spawn(move || {
                 worker_at(
@@ -1866,6 +1960,8 @@ mod imp {
             /// Runs fetched from it that belong to a handler not yet read.
             static HELD: std::cell::RefCell<Vec<Value>> = const { std::cell::RefCell::new(Vec::new()) };
             static NEXT_HANDLER: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+            /// The number of the session's next fetch, as the page counts them.
+            static FETCHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
         }
 
         /// A subscription's handler number, as the page gives one, and what reads its runs.
@@ -1901,7 +1997,9 @@ mod imp {
                         return None;
                     }
                     let outbox = OUTBOX.with(|current| current.borrow().clone())?;
-                    let runs = outbox.take(left)?;
+                    let seq = FETCHED.with(|next| next.get());
+                    let runs = outbox.take(seq, left).expect("fetched in sequence")?;
+                    FETCHED.with(|next| next.set(seq + 1));
                     HELD.with(|held| {
                         held.borrow_mut()
                             .extend(runs.iter().map(|run| serde_json::to_value(run).unwrap()))
@@ -2240,50 +2338,231 @@ mod imp {
             );
         }
 
-        // The outbox hands the page its runs in the order they were put, all that wait at
-        // once, an empty list when none came within the wait, and nothing once the session
-        // has ended and nothing is left; what was put before the end is still fetched.
-        #[test]
-        fn the_outbox_hands_over_its_runs_in_order_and_then_the_end() {
-            let outbox = Outbox::default();
-            let meter = |handler, value| super::super::Run::Meters {
+        fn meter_run(handler: u64, value: i64) -> super::super::Run {
+            super::super::Run::Meters {
                 handler,
                 updates: vec![super::super::MeterUpdate {
                     meter_id: 1,
                     x: 0,
                     value,
                 }],
-            };
+            }
+        }
+
+        fn run_values(runs: Vec<super::super::Run>) -> Vec<Value> {
+            runs.iter()
+                .map(|run| serde_json::to_value(run).unwrap()["updates"][0]["value"].clone())
+                .collect()
+        }
+
+        // The outbox hands the page its runs in the order they were put, all that wait at
+        // once, an empty list when none came within the wait, and nothing once the session
+        // has ended and nothing is left; what was put before the end is still fetched.
+        #[test]
+        fn the_outbox_hands_over_its_runs_in_order_and_then_the_end() {
+            let outbox = Outbox::default();
             assert_eq!(
-                outbox.take(Duration::from_millis(20)).map(|r| r.len()),
+                outbox
+                    .take(0, Duration::from_millis(20))
+                    .unwrap()
+                    .map(|r| r.len()),
                 Some(0)
             );
-            outbox.put(vec![meter(1, -10)]);
-            outbox.put(vec![meter(2, -20), meter(1, -30)]);
-            let values = |runs: Vec<super::super::Run>| -> Vec<Value> {
-                runs.iter()
-                    .map(|run| serde_json::to_value(run).unwrap()["updates"][0]["value"].clone())
-                    .collect()
-            };
+            outbox.put(vec![meter_run(1, -10)], false);
+            outbox.put(vec![meter_run(2, -20), meter_run(1, -30)], false);
             assert_eq!(
-                values(outbox.take(Duration::ZERO).unwrap()),
+                run_values(outbox.take(1, Duration::ZERO).unwrap().unwrap()),
                 vec![json!(-10), json!(-20), json!(-30)]
             );
-            outbox.put(vec![meter(1, -40)]);
+            outbox.put(vec![meter_run(1, -40)], false);
             outbox.end();
             assert_eq!(
-                values(outbox.take(Duration::ZERO).unwrap()),
+                run_values(outbox.take(2, Duration::ZERO).unwrap().unwrap()),
                 vec![json!(-40)]
             );
             assert!(
-                outbox.take(Duration::from_secs(5)).is_none(),
+                outbox.take(3, Duration::from_secs(5)).unwrap().is_none(),
                 "the end, at once"
             );
-            outbox.put(vec![meter(1, -50)]);
+            outbox.put(vec![meter_run(1, -50)], false);
             assert!(
-                outbox.take(Duration::ZERO).is_none(),
+                outbox.take(3, Duration::ZERO).unwrap().is_none(),
                 "nothing is added after the end"
             );
+        }
+
+        // An answer is kept until the page asks for the next number: Tauri resends a
+        // request whose response the page could not read, and the resend gets the same
+        // runs, not the ones after them. A number past the next, or one already
+        // acknowledged, is refused: an answer has been lost.
+        #[test]
+        fn a_resend_gets_its_answer_again_until_the_next_number_acknowledges_it() {
+            let outbox = Outbox::default();
+            outbox.put(vec![meter_run(1, -10)], false);
+            assert_eq!(
+                run_values(outbox.take(0, Duration::ZERO).unwrap().unwrap()),
+                vec![json!(-10)]
+            );
+            outbox.put(vec![meter_run(1, -20)], false);
+            assert_eq!(
+                run_values(outbox.take(0, Duration::ZERO).unwrap().unwrap()),
+                vec![json!(-10)],
+                "the resend"
+            );
+            assert_eq!(
+                run_values(outbox.take(1, Duration::ZERO).unwrap().unwrap()),
+                vec![json!(-20)]
+            );
+            assert_eq!(
+                run_values(outbox.take(1, Duration::ZERO).unwrap().unwrap()),
+                vec![json!(-20)],
+                "a resend of the next"
+            );
+            for lost in [0, 3] {
+                let refused = outbox.take(lost, Duration::ZERO).err().expect("refused");
+                assert!(
+                    refused.starts_with("notifications-lost: fetch"),
+                    "{refused}"
+                );
+            }
+            assert_eq!(
+                outbox
+                    .take(2, Duration::ZERO)
+                    .unwrap()
+                    .map(|runs| runs.len()),
+                Some(0)
+            );
+        }
+
+        // A resend that arrives while its fetch still waits for runs gets that fetch's
+        // answer rather than an answer of its own.
+        #[test]
+        fn a_resend_while_its_fetch_waits_gets_the_same_answer() {
+            let outbox = Arc::new(Outbox::default());
+            let fetch = || {
+                let outbox = Arc::clone(&outbox);
+                thread::spawn(move || outbox.take(0, Duration::from_secs(5)))
+            };
+            let first = fetch();
+            let until = Instant::now() + Duration::from_secs(5);
+            while !outbox.state.lock().unwrap().taking {
+                assert!(Instant::now() < until, "the first fetch waits");
+                thread::sleep(Duration::from_millis(1));
+            }
+            let resend = fetch();
+            thread::sleep(Duration::from_millis(50));
+            outbox.put(vec![meter_run(1, -10)], false);
+            for answer in [first, resend] {
+                assert_eq!(
+                    run_values(answer.join().unwrap().unwrap().unwrap()),
+                    vec![json!(-10)]
+                );
+            }
+        }
+
+        // A Console Lock the unit announced is held from the moment it is put to the
+        // page's acknowledgement of the answer that carried it, resends included.
+        #[test]
+        fn a_lock_is_held_until_the_answer_carrying_it_is_acknowledged() {
+            let outbox = Outbox::default();
+            outbox.put(vec![meter_run(1, -10)], false);
+            assert_eq!(outbox.lock_fetch(), None);
+            outbox.take(0, Duration::ZERO).unwrap();
+            outbox.put(vec![meter_run(1, -20)], true);
+            assert_eq!(
+                outbox.lock_fetch(),
+                Some(1),
+                "not fetched: the next fetch hands it on"
+            );
+            outbox.take(1, Duration::ZERO).unwrap();
+            assert_eq!(outbox.lock_fetch(), Some(1), "fetched, not acknowledged");
+            outbox.take(1, Duration::ZERO).unwrap();
+            assert_eq!(outbox.lock_fetch(), Some(1), "resent");
+            let outbox = Arc::new(outbox);
+            let waiting = {
+                let outbox = Arc::clone(&outbox);
+                thread::spawn(move || outbox.take(2, Duration::from_secs(5)))
+            };
+            let until = Instant::now() + Duration::from_secs(5);
+            while !outbox.state.lock().unwrap().taking {
+                assert!(Instant::now() < until, "the next fetch waits");
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert_eq!(
+                outbox.lock_fetch(),
+                None,
+                "acknowledged as the next fetch arrives, while it waits"
+            );
+            outbox.put(vec![meter_run(1, -30)], false);
+            waiting.join().unwrap().unwrap();
+            assert_eq!(outbox.lock_fetch(), None);
+        }
+
+        // The shell refuses a write while the unit's announcement of Console Lock on has
+        // not reached the page — waiting in the outbox, or in an answer the page has not
+        // acknowledged — as the lock's stop, and sends nothing for it; once the page has
+        // it, the shell sends again. An announcement of the lock off holds nothing.
+        #[test]
+        fn a_console_lock_waiting_for_the_page_holds_the_shells_writes() {
+            let (tx, unit, _) = connected(plain);
+            let (params, seen) = subscriber();
+            params_subscribe(
+                tx.clone(),
+                vec![(CONSOLE_LOCK_PARAM, 0, 0), (1, 0, 0)],
+                params,
+            )
+            .unwrap();
+            let announce = |value: i64| {
+                unit.push(json!({
+                    "method": "notify",
+                    "uri": format!("/vd/parameters/{CONSOLE_LOCK_PARAM}:0:0"),
+                    "data": { "current_value": value },
+                }))
+            };
+            let outbox = OUTBOX.with(|current| current.borrow().clone()).unwrap();
+            let first = FETCHED.with(|next| next.get());
+            let writes = || {
+                unit.seen()
+                    .iter()
+                    .filter(|uri| uri.as_str() == "/vd/parameters/1:0:0?operation=value")
+                    .count()
+            };
+            announce(1);
+            let until = Instant::now() + Duration::from_secs(5);
+            while outbox.lock_fetch().is_none() {
+                assert!(
+                    Instant::now() < until,
+                    "the announcement reaches the outbox"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            let held = |tx: &mpsc::Sender<Cmd>| {
+                let refused = set(tx.clone(), 1, 0, 0, 5).unwrap_err();
+                assert!(
+                    refused.starts_with(&format!("{WRITES_HELD}:"))
+                        && refused.ends_with(&format!("(fetch {first})")),
+                    "{refused}"
+                );
+            };
+            held(&tx);
+            assert_eq!(
+                updates(&seen),
+                json!([{ "param_id": CONSOLE_LOCK_PARAM, "x": 0, "y": 0, "value": 1 }])
+            );
+            held(&tx);
+            assert_eq!(writes(), 0, "nothing was sent for the held writes");
+            assert!(
+                seen.none_within(Duration::from_millis(20)),
+                "the acknowledgement"
+            );
+            assert_eq!(set(tx.clone(), 1, 0, 0, 5), Ok(()));
+            assert_eq!(writes(), 1);
+            announce(0);
+            assert_eq!(
+                updates(&seen),
+                json!([{ "param_id": CONSOLE_LOCK_PARAM, "x": 0, "y": 0, "value": 0 }])
+            );
+            assert_eq!(set(tx, 1, 0, 0, 6), Ok(()), "the lock off holds nothing");
         }
 
         // The unit's own refusal settles the request it answers: an end of the link that

@@ -291,9 +291,14 @@ type RawRun =
 
 type RunKind = RawRun["kind"];
 
-/** The code a live session ends with when the page could not fetch its notifications: a change the
- *  unit announced may not have reached the app, so what follows it can no longer be followed. */
+/** The code a live session ends with, and every later write on the connection is refused with, when
+ *  the page could not fetch its notifications: a change the unit announced — a Console Lock among
+ *  them — may not have reached the app, so what follows it can no longer be followed. */
 export const NOTIFICATIONS_LOST = "notifications-lost";
+
+/** How long a fetch of the notifications may take before the connection counts them as lost: the
+ *  shell answers within its one-second wait, so one this late is not coming. */
+export const NOTIFICATION_FETCH_DEADLINE_MS = 5_000;
 
 // The connection whose notifications the page fetches, by its epoch; null while none is connected.
 let connectionEpoch: number | null = null;
@@ -303,6 +308,31 @@ const handlers = new Map<number, { readonly kind: RunKind; readonly deliver: (up
 let nextHandler = 1;
 // The epoch the fetch loop is running for, if one is.
 let fetching: number | null = null;
+// The connection whose notifications could not be fetched: nothing more is written on it, and the
+// loop does not start again for it.
+let lostEpoch: number | null = null;
+// The number of the fetch the loop has outstanding, and who waits for a later one to be handed on
+// (`handedOn`).
+let fetchInFlight = 0;
+const handOnWaiters: Array<{ readonly after: number; readonly resolve: () => void }> = [];
+
+/** Lets go every hand-on waiter whose fetch has been handed on — all of them once the loop stops. */
+function releaseHandOns(handedOn: number): void {
+  for (let i = handOnWaiters.length - 1; i >= 0; i--) {
+    const waiter = handOnWaiters[i];
+    if (waiter.after <= handedOn) {
+      handOnWaiters.splice(i, 1);
+      waiter.resolve();
+    }
+  }
+}
+
+/** Settles once the fetch numbered `fetch` has been handed on to its handlers — or, without a number,
+ *  one that starts after this call — and at once when no loop is fetching; and when the loop stops. */
+function handedOn(fetch: number | undefined): Promise<void> {
+  if (fetching === null) return Promise.resolve();
+  return new Promise((resolve) => handOnWaiters.push({ after: fetch ?? fetchInFlight + 1, resolve }));
+}
 // The current session's link watch: a fetch that fails ends the session through it, as the shell's
 // report of a link that ended does. Cleared with the connection.
 let linkDropped: ((reason: string) => void) | null = null;
@@ -311,7 +341,9 @@ function beginConnection(epoch: number): void {
   connectionEpoch = epoch;
   handlers.clear();
   fetching = null;
+  lostEpoch = null;
   linkDropped = null;
+  releaseHandOns(Infinity);
 }
 
 /** A handler for a subscription of `kind`, with the fetch loop running for the connection. */
@@ -327,32 +359,55 @@ function forget(kind: RunKind): void {
   for (const [handler, entry] of handlers) if (entry.kind === kind) handlers.delete(handler);
 }
 
+/** The connection lost its notifications: nothing more is written on it, and its session ends. */
+function notificationsLost(epoch: number): void {
+  fetching = null;
+  lostEpoch = epoch;
+  releaseHandOns(Infinity);
+  linkDropped?.(NOTIFICATIONS_LOST);
+}
+
+/** Rejects with `NOTIFICATIONS_LOST` once `NOTIFICATION_FETCH_DEADLINE_MS` has passed. */
+function fetchDeadline(): { readonly passed: Promise<never>; clear(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const passed = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(NOTIFICATIONS_LOST)), NOTIFICATION_FETCH_DEADLINE_MS);
+  });
+  return { passed, clear: () => clearTimeout(timer) };
+}
+
 /**
  * Fetches the connection's notifications with one request outstanding at a time and hands each run to
  * its subscription's handler, so they arrive in the order the shell received them and once each — where
  * notifications pushed over Tauri channels could arrive out of order across channels, and one lost
- * inside a channel held back every one after it unseen. A fetch that fails ends the session through the
- * link watch; the shell answering null means the connection is over.
+ * inside a channel held back every one after it unseen. The fetches are numbered from 0 on each
+ * connection: asking for the next number acknowledges the last answer, and the shell answers a resend
+ * of a number (Tauri's, when its custom protocol fails over to `postMessage`) with that number's answer.
+ * A fetch that fails, or takes longer than `NOTIFICATION_FETCH_DEADLINE_MS`, loses the connection's
+ * notifications (`notificationsLost`); the shell answering null means the connection is over.
  */
 function startFetching(): void {
   const epoch = connectionEpoch;
-  if (epoch === null || fetching === epoch) return;
+  if (epoch === null || fetching === epoch || lostEpoch === epoch) return;
   fetching = epoch;
   void (async () => {
+    let seq = 0;
     while (fetching === epoch) {
+      fetchInFlight = seq;
       let runs: RawRun[] | null;
+      const deadline = fetchDeadline();
       try {
-        runs = await invoke<RawRun[] | null>("vd_notifications", { epoch });
+        runs = await Promise.race([invoke<RawRun[] | null>("vd_notifications", { epoch, seq }), deadline.passed]);
       } catch {
-        if (fetching === epoch) {
-          fetching = null;
-          linkDropped?.(NOTIFICATIONS_LOST);
-        }
+        if (fetching === epoch) notificationsLost(epoch);
         return;
+      } finally {
+        deadline.clear();
       }
       if (fetching !== epoch) return;
       if (runs === null) {
         fetching = null;
+        releaseHandOns(Infinity);
         return;
       }
       for (const run of runs) {
@@ -363,6 +418,8 @@ function startFetching(): void {
           console.error(error);
         }
       }
+      releaseHandOns(seq);
+      seq += 1;
     }
   })();
 }
@@ -389,10 +446,36 @@ export function deviceWritesHeld(): boolean {
 const heldWrite = (): Promise<never> =>
   Promise.reject(new Error(`${WRITES_HELD}: the unit is under Console Lock, so the app sends it nothing`));
 
+/** Whether the current connection lost its notifications, so that nothing more may be written on it. */
+const writesLost = (): boolean => lostEpoch !== null && lostEpoch === connectionEpoch;
+
+const lostWrite = (): Promise<never> =>
+  Promise.reject(
+    new Error(`${NOTIFICATIONS_LOST}: a change the unit announced may not have reached the app, so nothing is written`),
+  );
+
+/**
+ * A write the shell refused because the unit announced Console Lock and the announcement has not
+ * reached the page yet (vd.rs `Outbox::lock_fetch`): the refusal is passed on once the page has
+ * handed on the fetch the shell names as the one carrying the announcement, so whoever handles the
+ * refusal finds the lock already taken — as it does with the page's own refusal (`heldWrite`).
+ */
+function shellHeld<T>(write: Promise<T>): Promise<T> {
+  return write.catch(async (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith(`${WRITES_HELD}:`)) {
+      const fetch = /\(fetch (\d+)\)$/.exec(message)?.[1];
+      await handedOn(fetch === undefined ? undefined : Number(fetch));
+    }
+    throw error;
+  });
+}
+
 /** Set one parameter instance to an absolute broker value. */
 export function vdSet(paramId: number, x: number, y: number, value: number): Promise<void> {
+  if (writesLost()) return lostWrite();
   if (writesHeld) return heldWrite();
-  return invoke<void>("vd_set", { paramId, x, y, value });
+  return shellHeld(invoke<void>("vd_set", { paramId, x, y, value }));
 }
 
 /** Read one parameter instance's current absolute broker value. */
@@ -402,8 +485,9 @@ export function vdGet(paramId: number, x: number, y: number): Promise<number> {
 
 /** Set one string-valued parameter instance (e.g. a CH SETTING name). */
 export function vdSetStr(paramId: number, x: number, y: number, value: string): Promise<void> {
+  if (writesLost()) return lostWrite();
   if (writesHeld) return heldWrite();
-  return invoke<void>("vd_set_str", { paramId, x, y, value });
+  return shellHeld(invoke<void>("vd_set_str", { paramId, x, y, value }));
 }
 
 /** Read one string-valued parameter instance (empty when it holds no string). */
@@ -534,8 +618,10 @@ interface RawLinkEvent {
 export async function vdWatchLink(onDrop: (reason: string) => void): Promise<void> {
   if (!isTauri()) return;
   const channel = newChannel<RawLinkEvent>((d) => onDrop(d.reason));
-  // A fetch of the notifications that fails ends the session the same way.
+  // A fetch of the notifications that fails ends the session the same way — one that failed before
+  // this watch was registered as well.
   linkDropped = onDrop;
+  if (writesLost()) queueMicrotask(() => onDrop(NOTIFICATIONS_LOST));
   // Awaited: without this watch an idle link drop surfaces as a frozen session
   // (tally lit, meters stopped) instead of a teardown, so a failure here has to
   // stop the session rather than start one that cannot notice its own death.
@@ -549,8 +635,10 @@ export function vdDisconnect(epoch: number): Promise<void> {
   if (epoch === connectionEpoch) {
     connectionEpoch = null;
     fetching = null;
+    lostEpoch = null;
     handlers.clear();
     linkDropped = null;
+    releaseHandOns(Infinity);
   }
   return invoke<void>("vd_disconnect", { epoch });
 }

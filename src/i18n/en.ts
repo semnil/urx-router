@@ -1497,7 +1497,7 @@ export const en = {
       brokerBadResponse: (detail: string): string => `Device Center sent an unexpected response (${detail})`,
       brokerIo: (detail: string): string => `the connection to Device Center failed (${detail})`,
       notificationsLost: tr(
-        "the changes the device announced could not be fetched, so the app no longer follows them. Start Live sync again.",
+        "the changes the device announced could not be fetched, so the app sends nothing more on this connection. Start it again.",
       ),
       fileNotFound: tr("the file no longer exists at that path"),
       fileDenied: tr("access to the file was denied"),

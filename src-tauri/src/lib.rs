@@ -855,19 +855,24 @@ async fn vd_probe_subscribe(
 // The notifications of the connection of generation `epoch` the page has not
 // fetched, in the order the shell received them: waits up to a second for one, and
 // answers an empty list when none came, or null once that connection is over. The
-// page keeps one fetch outstanding at a time, so the runs reach it in this order and
-// once each, and a fetch that fails is a rejection it sees.
+// page keeps one fetch outstanding at a time and numbers them from 0 on each
+// connection; asking for `seq` acknowledges the answer to `seq - 1`, and a resend of a
+// number is answered with that number's answer (`vd::Outbox`). A fetch that fails is a
+// rejection the page sees.
 #[tauri::command]
 async fn vd_notifications(
     state: State<'_, vd::VdState>,
     epoch: u64,
+    seq: u64,
 ) -> Result<Option<Vec<vd::Run>>, String> {
     let Some(outbox) = vd::outbox(&state, epoch) else {
         return Ok(None);
     };
-    tauri::async_runtime::spawn_blocking(move || outbox.take(std::time::Duration::from_secs(1)))
-        .await
-        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        outbox.take(seq, std::time::Duration::from_secs(1))
+    })
+    .await
+    .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
 // Watch the held-open live connection: the worker pushes a single LinkEvent
