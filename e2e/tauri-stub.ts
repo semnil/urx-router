@@ -250,6 +250,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
         __urxInstance: Record<string, number>;
         __urxNotify: { onmessage: (batch: unknown) => void } | null;
         __urxMeters: { addrs: Array<[number, number]>; channel: { onmessage: (batch: unknown) => void } } | null;
+        __urxLink: { onmessage: (event: unknown) => void } | null;
         __urxRefuseReads: number[];
         __urxHoldReads: number[];
         __urxHeld: Array<{ id: number; go: () => void }>;
@@ -272,6 +273,7 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
       w.__urxSaved = saved;
       w.__urxNotify = null;
       w.__urxMeters = null;
+      w.__urxLink = null;
       // Per-instance state, empty until something writes. x/y default to 0 so a
       // scalar param has exactly one key whichever way it is addressed.
       const instance: Record<string, number> = {};
@@ -360,6 +362,8 @@ export async function stubTauriDevice(page: Page, opts: DeviceStubOptions = {}):
           // beside the constant answer rather than instead of it, so a spec that never
           // registered the live commands still meets the same refusal it always did.
           if (cmd === "vd_params_subscribe") w.__urxNotify = args?.channel as typeof w.__urxNotify;
+          // The link watch's channel, which is how the shell tells a session its link ended.
+          if (cmd === "vd_watch_link") w.__urxLink = args?.channel as typeof w.__urxLink;
           // The meter registration likewise: what it names, and the channel the unit's meter stream
           // would arrive through. A registration replaces the one before it, as the shell's does.
           if (cmd === "vd_meters_subscribe")
@@ -578,6 +582,16 @@ export const notifyBurst = (
     },
     updates as Array<{ paramId: number; y: number; value: number; x?: number }>,
   );
+
+/** End the session from the shell's side, as the link watch does when the link drops: `reason`
+ *  is the shell's code (`device-lost: …`, `broker-unresponsive`, …). Throws when no session
+ *  registered the watch, for the reason `notifyParam` does. */
+export const dropLink = (page: Page, reason: string): Promise<void> =>
+  page.evaluate((r) => {
+    const w = window as unknown as { __urxLink: { onmessage: (event: unknown) => void } | null };
+    if (!w.__urxLink) throw new Error("dropLink: no session registered the link watch");
+    w.__urxLink.onmessage({ reason: r });
+  }, reason);
 
 /** The contents of every text file the stub was asked to write, in order — a saved plan is
  *  its JSON document. Recorded only; pass `write_text_file` (and `plugin:dialog|save`) in

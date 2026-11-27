@@ -6486,7 +6486,10 @@ if (!DEMO) {
         // drop freezes the session instead of ending it. Either failure throws to
         // failLive rather than starting a session that cannot do its job.
         await follow?.begin();
-        await vdWatchLink(() => stopLiveOnError(t().error.shell.deviceLost));
+        // The watch says how the link ended — the unit lost, Device Center closed or stopped
+        // answering, the socket failing — and the stop says the same: a deadline the broker
+        // let pass is not a cable pulled out.
+        await vdWatchLink((reason) => stopLiveOnError(errorText(reason)));
         // The lock as it stands now that its notify is registered. A notify that lands while this
         // read is out is the newer of the two, and the read is not taken over it.
         const lockAt = lockSeq;

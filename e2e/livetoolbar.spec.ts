@@ -1,5 +1,5 @@
 import { test, expect, textContrast } from "./fixtures";
-import { LIVE_COMMANDS, dialogsOf, stubTauriDevice, writesOf } from "./tauri-stub";
+import { LIVE_COMMANDS, dialogsOf, dropLink, stubTauriDevice, writesOf } from "./tauri-stub";
 import { chooseOption } from "./choose-option";
 import { PARAMS } from "../src/core/control/params";
 
@@ -75,3 +75,27 @@ test("a live session with Follow USB off writes a rate chosen on the picker once
   ).toHaveLength(1);
   await expect(page.locator("#rate-picker")).toHaveValue("44100");
 });
+
+// A session the link watch ends stops with the cause the watch named: Device Center letting a
+// deadline pass is not the cable pulled out, and the stop must not say it was.
+for (const [reason, said] of [
+  [
+    "broker-unresponsive",
+    "Device Center stopped answering, so the operation was stopped. Restart Device Center, then try again.",
+  ],
+  ["device-lost: the unit went offline", "the device link dropped (USB unplugged or Device Center quit)"],
+  ["broker-io: ConnectionReset", "the connection to Device Center failed (ConnectionReset)"],
+]) {
+  test(`a live session the link watch ends with ${reason.split(":")[0]} stops naming that cause`, async ({ page }) => {
+    await stubTauriDevice(page, { commands: LIVE_COMMANDS });
+    await page.goto("/");
+    await page.click("#btn-device");
+    await page.click("#btn-live");
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "true");
+    await dropLink(page, reason);
+    await expect(page.locator("#btn-live")).toHaveAttribute("aria-checked", "false");
+    await expect
+      .poll(async () => (await dialogsOf(page)).filter((d) => d.startsWith("Live sync stopped:")))
+      .toEqual([`Live sync stopped: ${said}`]);
+  });
+}
