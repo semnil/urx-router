@@ -359,6 +359,10 @@ export async function sendCommands(
   for (const command of commands) {
     signal?.throwIfAborted();
     await hold.before(command, command.vdValue, signal);
+    // Again after the wait, with nothing awaited between here and the send: a stop that came
+    // during it (a Console Lock, which also holds every write) stops the loop rather than
+    // failing the send it held.
+    signal?.throwIfAborted();
     hold.sending(command, command.vdValue, writeSettle.mark());
     onSending?.(command);
     let outcome: SendOutcome;
