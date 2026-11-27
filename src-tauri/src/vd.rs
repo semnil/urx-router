@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
+use urx_device_transport::connection::SentFrames;
 
 // Every error this module returns is a stable kebab-case code, optionally followed
 // by ": " and a technical detail (an address, a URI, an OS message). The frontend
@@ -75,18 +76,18 @@ pub struct Connection {
 /// notify emission are decoupled on this protocol (a registered address can change
 /// and announce nothing), and an address nobody moves emits nothing however many
 /// times it is registered. See docs/{en,ja}/architecture.md "The link ledger".
-/// Reads a connection's registration and unregistration frames, or nothing once the
-/// connection is gone.
-type FrameSource = Box<dyn Fn() -> Option<(u64, u64)> + Send + Sync>;
+/// Reads what a connection has written whole — its registration and unregistration
+/// frames, its parameter reads and its writes — or nothing once the connection is gone.
+type FrameSource = Box<dyn Fn() -> Option<SentFrames> + Send + Sync>;
 
 #[derive(Default)]
 pub struct LinkCounters {
-    sets: AtomicU64,
-    gets: AtomicU64,
     param_subscribes: AtomicU64,
     meter_subscribes: AtomicU64,
-    /// The registration and unregistration frames the session's connection has written
-    /// whole, read from the connection at each reading; installed when it opens.
+    /// The frames and requests the session's connection has written whole, read from the
+    /// connection at each reading; installed when it opens. The transport counts a
+    /// request as it puts it on the socket, so one it refused before sending — the session
+    /// already over included — is in no row.
     frames: OnceLock<FrameSource>,
     deadlines: AtomicU64,
     /// The CURRENT consecutive-deadline run, not a total. The transport ends the
@@ -100,8 +101,8 @@ impl LinkCounters {
         c.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Where the frame rows are read from: the session's connection, set once when it
-    /// opens.
+    /// Where the frame and request rows are read from: the session's connection, set once
+    /// when it opens.
     fn read_frames_with(&self, source: FrameSource) {
         let _ = self.frames.set(source);
     }
@@ -114,18 +115,18 @@ impl LinkCounters {
     }
 
     fn read(&self) -> LinkStats {
-        let (regist_frames, unregist_frames) = self
+        let sent = self
             .frames
             .get()
             .and_then(|read| read())
             .unwrap_or_default();
         LinkStats {
-            sets: self.sets.load(Ordering::Relaxed),
-            gets: self.gets.load(Ordering::Relaxed),
+            sets: sent.sets,
+            gets: sent.gets,
             param_subscribes: self.param_subscribes.load(Ordering::Relaxed),
             meter_subscribes: self.meter_subscribes.load(Ordering::Relaxed),
-            regist_frames,
-            unregist_frames,
+            regist_frames: sent.registrations,
+            unregist_frames: sent.unregistrations,
             deadlines: self.deadlines.load(Ordering::Relaxed),
             stalled: self.stalled.load(Ordering::Relaxed),
         }
@@ -133,7 +134,7 @@ impl LinkCounters {
 }
 
 /// The counters above as one serializable reading. Read straight off the atomics and
-/// the connection's frame counts rather than through `Cmd`, deliberately: a stats request queued behind an ~800
+/// the connection's counts rather than through `Cmd`, deliberately: a stats request queued behind an ~800
 /// command sweep would report the state of the link as it was minutes ago, which is
 /// exactly the moment the reading matters.
 #[derive(Clone, Default, Serialize)]
@@ -765,7 +766,6 @@ mod imp {
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, Outbox, ParamUpdate, Run,
         BULK_CHANGE, CONTROL_WORKER_GONE,
     };
-    use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
@@ -1126,27 +1126,12 @@ mod imp {
 
     impl Session {
         /// Runs a parameter command and keeps the ledger's deadline rows: a missed
-        /// deadline adds to the total, and the run is the transport's. `sent` counts the command once it
-        /// reached the socket: one the transport refused before it was sent — the session
-        /// already over included — leaves the ledger's row where it was, and is worded by
-        /// the session's end (`request_text`).
-        fn run(
-            &mut self,
-            req: Request,
-            at: &str,
-            sent: &AtomicU64,
-        ) -> Result<Option<ReadValue>, String> {
-            let outcome = request(&self.connection, req);
-            if !matches!(
-                outcome,
-                Outcome::Failure {
-                    evidence: Evidence::NotSent,
-                    ..
-                }
-            ) {
-                LinkCounters::bump(sent);
-            }
-            match outcome {
+        /// deadline adds to the total, and the run is the transport's. The get and set rows
+        /// are the transport's count of what reached the socket (`LinkCounters::frames`); a
+        /// command it refused before sending — the session already over included — is
+        /// worded by the session's end (`request_text`).
+        fn run(&mut self, req: Request, at: &str) -> Result<Option<ReadValue>, String> {
+            match request(&self.connection, req) {
                 Outcome::Success { value, .. } => Ok(value),
                 Outcome::Failure { failure, evidence } => {
                     if matches!(
@@ -1165,12 +1150,7 @@ mod imp {
 
         fn get(&mut self, param_id: u32, x: i64, y: i64) -> Result<i64, String> {
             let at = format!("{param_id}:{x}:{y}");
-            let counters = Arc::clone(&self.counters);
-            match self.run(
-                Request::GetNumeric(address(param_id, x, y)),
-                &at,
-                &counters.gets,
-            )? {
+            match self.run(Request::GetNumeric(address(param_id, x, y)), &at)? {
                 Some(ReadValue::Numeric(value)) => Ok(value),
                 _ => Err("broker-bad-response: value was not an integer".to_string()),
             }
@@ -1180,12 +1160,7 @@ mod imp {
         /// as the literal string; a number decodes to "", so callers see "no custom name".
         fn get_str(&mut self, param_id: u32, x: i64, y: i64) -> Result<String, String> {
             let at = format!("{param_id}:{x}:{y}");
-            let counters = Arc::clone(&self.counters);
-            match self.run(
-                Request::GetName(address(param_id, x, y)),
-                &at,
-                &counters.gets,
-            )? {
+            match self.run(Request::GetName(address(param_id, x, y)), &at)? {
                 Some(ReadValue::Name(NameValue::Text(text))) | Some(ReadValue::Text(text)) => {
                     Ok(text)
                 }
@@ -1195,8 +1170,7 @@ mod imp {
         }
 
         fn set(&mut self, req: Request, at: String) -> Result<(), String> {
-            let counters = Arc::clone(&self.counters);
-            self.run(req, &at, &counters.sets).map(|_| ())
+            self.run(req, &at).map(|_| ())
         }
 
         /// Replaces one subscription: a new token for `addresses`, switched to, then the
@@ -1466,15 +1440,12 @@ mod imp {
             connection.close(CLOSE_TEARDOWN);
             return;
         }
-        // The ledger's frame rows are what the connection has written, read at each
-        // reading: a frame counts once it is on the socket, whether the call that sent it
-        // has its answer yet or not.
+        // The ledger's frame and request rows are what the connection has written, read at
+        // each reading: a frame or a request counts once it is on the socket, whether the
+        // call that sent it has its answer yet or not.
         let source = Arc::downgrade(&connection);
         counters.read_frames_with(Box::new(move || {
-            source.upgrade().map(|connection| {
-                let frames = connection.sent_frames();
-                (frames.registrations, frames.unregistrations)
-            })
+            source.upgrade().map(|connection| connection.sent_frames())
         }));
         let session = Session {
             connection,
