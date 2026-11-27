@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -75,14 +75,19 @@ pub struct Connection {
 /// notify emission are decoupled on this protocol (a registered address can change
 /// and announce nothing), and an address nobody moves emits nothing however many
 /// times it is registered. See docs/{en,ja}/architecture.md "The link ledger".
+/// Reads a connection's registration and unregistration frames, or nothing once the
+/// connection is gone.
+type FrameSource = Box<dyn Fn() -> Option<(u64, u64)> + Send + Sync>;
+
 #[derive(Default)]
 pub struct LinkCounters {
     sets: AtomicU64,
     gets: AtomicU64,
     param_subscribes: AtomicU64,
     meter_subscribes: AtomicU64,
-    regist_frames: AtomicU64,
-    unregist_frames: AtomicU64,
+    /// The registration and unregistration frames the session's connection has written
+    /// whole, read from the connection at each reading; installed when it opens.
+    frames: OnceLock<FrameSource>,
     deadlines: AtomicU64,
     /// The CURRENT consecutive-deadline run, not a total. The transport ends the
     /// connection on its first response deadline (N1), so it is 1 once a deadline has
@@ -95,8 +100,10 @@ impl LinkCounters {
         c.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn add(c: &AtomicU64, n: usize) {
-        c.fetch_add(n as u64, Ordering::Relaxed);
+    /// Where the frame rows are read from: the session's connection, set once when it
+    /// opens.
+    fn read_frames_with(&self, source: FrameSource) {
+        let _ = self.frames.set(source);
     }
 
     /// A command ran out its deadline, which ends the session: one more on the total,
@@ -107,21 +114,26 @@ impl LinkCounters {
     }
 
     fn read(&self) -> LinkStats {
+        let (regist_frames, unregist_frames) = self
+            .frames
+            .get()
+            .and_then(|read| read())
+            .unwrap_or_default();
         LinkStats {
             sets: self.sets.load(Ordering::Relaxed),
             gets: self.gets.load(Ordering::Relaxed),
             param_subscribes: self.param_subscribes.load(Ordering::Relaxed),
             meter_subscribes: self.meter_subscribes.load(Ordering::Relaxed),
-            regist_frames: self.regist_frames.load(Ordering::Relaxed),
-            unregist_frames: self.unregist_frames.load(Ordering::Relaxed),
+            regist_frames,
+            unregist_frames,
             deadlines: self.deadlines.load(Ordering::Relaxed),
             stalled: self.stalled.load(Ordering::Relaxed),
         }
     }
 }
 
-/// The counters above as one serializable reading. Read straight off the atomics
-/// rather than through `Cmd`, deliberately: a stats request queued behind an ~800
+/// The counters above as one serializable reading. Read straight off the atomics and
+/// the connection's frame counts rather than through `Cmd`, deliberately: a stats request queued behind an ~800
 /// command sweep would report the state of the link as it was minutes ago, which is
 /// exactly the moment the reading matters.
 #[derive(Clone, Default, Serialize)]
@@ -641,7 +653,7 @@ mod imp {
     use tauri::ipc::Channel;
     use urx_device_transport::connection::{
         open_with, CloseOutcome, Connection, ConnectionOptions, LinkFailure, LinkLoss,
-        NotificationHandler, SentFrames, Subscription,
+        NotificationHandler, Subscription,
     };
     use urx_device_transport::delivery::NotificationBatch;
     use urx_device_transport::discovery::{discover, DiscoveryOptions, SystemFirmware};
@@ -942,8 +954,6 @@ mod imp {
         connection: Arc<Connection>,
         routes: Arc<Mutex<Routes>>,
         counters: Arc<LinkCounters>,
-        /// The connection's sent frames the ledger has counted so far.
-        frames: SentFrames,
         meters: Option<Held>,
         params: Option<Held>,
         probe: Option<Held>,
@@ -1087,7 +1097,6 @@ mod imp {
                     let _ = self.release(&failed.subscription);
                 }
             }
-            self.note_frames();
             activated.and(released)
         }
 
@@ -1098,26 +1107,6 @@ mod imp {
             if let Some(old) = self.slot(which).take() {
                 let _ = self.release(&old.subscription);
             }
-            self.note_frames();
-        }
-
-        /// Puts the registration and unregistration frames the connection sent since the
-        /// last look on the ledger: what reached the socket, whether the registration, the
-        /// release or the close that sent them succeeded or failed (R1-C-A).
-        fn note_frames(&mut self) {
-            let now = self.connection.sent_frames();
-            let more = |now: u64, before: u64| {
-                usize::try_from(now.saturating_sub(before)).unwrap_or(usize::MAX)
-            };
-            LinkCounters::add(
-                &self.counters.regist_frames,
-                more(now.registrations, self.frames.registrations),
-            );
-            LinkCounters::add(
-                &self.counters.unregist_frames,
-                more(now.unregistrations, self.frames.unregistrations),
-            );
-            self.frames = now;
         }
 
         /// Releases a token and waits for the outcome: what it was the last holder of is
@@ -1313,8 +1302,17 @@ mod imp {
             connection.close(CLOSE_TEARDOWN);
             return;
         }
+        // The ledger's frame rows are what the connection has written, read at each
+        // reading: a frame counts once it is on the socket, whether the call that sent it
+        // has its answer yet or not.
+        let source = Arc::downgrade(&connection);
+        counters.read_frames_with(Box::new(move || {
+            source.upgrade().map(|connection| {
+                let frames = connection.sent_frames();
+                (frames.registrations, frames.unregistrations)
+            })
+        }));
         let session = Session {
-            frames: connection.sent_frames(),
             connection,
             routes,
             counters,
@@ -1457,8 +1455,6 @@ mod imp {
             // finish is told here, since nothing after this reads the session.
             unfinished => eprintln!("vd: the session's close did not finish: {unfinished:?}"),
         }
-        // The close's own unregistrations, on the ledger with the rest.
-        session.note_frames();
         // Sent LAST, so the app-exit path is released by the close having happened and
         // not merely by the intent to close.
         if let Some((done, _)) = exit_done.take() {
@@ -1681,6 +1677,19 @@ mod imp {
             Result<DeviceSummary, String>,
             Arc<LinkCounters>,
         ) {
+            start_within(list_port, preferred, DEADLINE)
+        }
+
+        /// `start` with a request deadline of the case's own.
+        fn start_within(
+            list_port: u16,
+            preferred: &str,
+            deadline: Duration,
+        ) -> (
+            mpsc::Sender<Cmd>,
+            Result<DeviceSummary, String>,
+            Arc<LinkCounters>,
+        ) {
             let (tx, rx) = mpsc::channel();
             let (ready_tx, ready_rx) = mpsc::channel();
             let counters = Arc::new(LinkCounters::default());
@@ -1688,7 +1697,7 @@ mod imp {
             thread::spawn(move || {
                 worker_at(
                     list_port,
-                    DEADLINE,
+                    deadline,
                     rx,
                     ready_tx,
                     worker_counters,
@@ -2427,32 +2436,45 @@ mod imp {
             }
         }
 
-        // The ledger's frame rows take in every step that sends frames, not a subscribe alone:
-        // an unsubscribe's unregistrations are on it once the call is done, and the close's
-        // once the close signals.
+        // The ledger's frame rows are read from the connection at each reading, so a frame is
+        // on them once it is on the socket: an unsubscribe still waiting for the unit's answer
+        // already counts the unregistration it sent. (The close's own unregistrations come
+        // after the app's last reading of a session, and are on none.)
         #[test]
-        fn an_unsubscribe_and_the_close_put_their_unregistrations_on_the_ledger() {
-            let (tx, unit, counters) = connected(plain);
+        fn a_reading_takes_in_the_frames_already_on_the_socket() {
+            let (answer, held) = mpsc::channel::<()>();
+            let held = Mutex::new(held);
+            let unit = Unit::start("<device-id-a>", move |request| {
+                if request["vdp"]["uri"] == "/vd/parameters/1:0:0?operation=unregist" {
+                    let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                }
+                plain(request)
+            });
+            let list = device_list(&[(&unit, "URX44V")]);
+            let (tx, summary, counters) = start_within(list, "URX44V", Duration::from_secs(5));
+            summary.expect("the unit opens");
             let (params, _) = capture::<Vec<super::super::ParamUpdate>>();
             let (probe, _) = capture::<Vec<super::super::ParamUpdate>>();
             params_subscribe(tx.clone(), vec![(1, 0, 0), (2, 0, 0)], params).unwrap();
             probe_subscribe(tx.clone(), vec![(2, 0, 0), (3, 0, 0)], probe).unwrap();
             params_unsubscribe(tx.clone()).unwrap();
-            // The worker takes its commands in order: once this read is answered, the
-            // unsubscribe before it is done.
-            assert_eq!(get(tx.clone(), 1, 0, 0), Ok(7));
             let frames = || {
                 let stats = counters.read();
                 (stats.regist_frames, stats.unregist_frames)
             };
+            // The unit holds its answer to the unregistration, so the release is still
+            // waiting while this reads.
+            let reading = Instant::now();
+            while frames() != (3, 1) && reading.elapsed() < Duration::from_secs(2) {
+                thread::sleep(Duration::from_millis(5));
+            }
             assert_eq!(frames(), (3, 1), "the watch still holds 2, so 1 alone goes");
-            let (done, signalled) = mpsc::channel();
-            tx.send(Cmd::Shutdown {
-                done: Some((done, Instant::now() + Duration::from_secs(2))),
-            })
-            .unwrap();
-            signalled.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(frames(), (3, 3), "the close lets go of 2 and 3");
+            answer.send(()).unwrap();
+            assert_eq!(
+                get(tx, 1, 0, 0),
+                Ok(7),
+                "the session goes on once the unit answers"
+            );
             let posted = |operation: &str| {
                 unit.seen()
                     .iter()
