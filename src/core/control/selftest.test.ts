@@ -5,7 +5,14 @@ import { defaultPlan } from "../../models/initial-state";
 
 // runSelfTest drives the device through platform connect/get/set/disconnect, so
 // mock those with a faithful in-memory device: vdSet stores, vdGet reads back.
-vi.mock("../platform", () => ({
+vi.mock("../platform", async (importOriginal) => ({
+  // How a stop the loss of the connection's notifications made is told apart, as the bridge says it.
+  NOTIFICATIONS_LOST: (await importOriginal<typeof import("../platform")>()).NOTIFICATIONS_LOST,
+  notificationsLostAbort: (await importOriginal<typeof import("../platform")>()).notificationsLostAbort,
+  stoppedByNotificationsLost: (await importOriginal<typeof import("../platform")>()).stoppedByNotificationsLost,
+  // The run's lock watch also listens for that loss: a case that loses the notifications calls
+  // the listener it was given.
+  onNotificationsLost: vi.fn(() => () => {}),
   vdConnect: vi.fn(),
   vdDisconnect: vi.fn(),
   vdGet: vi.fn(),
@@ -19,7 +26,16 @@ vi.mock("../platform", () => ({
   WRITES_HELD: "writes-held",
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdParamsSubscribe, vdSet, vdSetStr } from "../platform";
+import {
+  onNotificationsLost,
+  vdConnect,
+  vdDisconnect,
+  vdGet,
+  vdGetStr,
+  vdParamsSubscribe,
+  vdSet,
+  vdSetStr,
+} from "../platform";
 import type { ParamUpdate } from "../platform";
 import {
   auditUnverified,
@@ -2224,6 +2240,46 @@ describe("runSelfTest and Console Lock", () => {
     expect(report.pendingRestore).toBeUndefined();
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(formatSelfTestReport(report)).toContain("the unit is under Console Lock");
+  });
+
+  it("stops at the next command when the connection's notifications are lost, and keeps what the restore needs", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const before = new Map(table);
+    lockStream();
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writes++;
+      if (writes === 5) lose?.();
+      return realSet(id, x, y, v);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.lost).toBe(true);
+    expect(report.locked).toBeUndefined();
+    expect(report.aborted, "stopped the way a cancel stops").toBe(true);
+    expect(writes, "the write on the wire lands; nothing after it goes").toBe(5);
+    expect(report.pendingRestore?.model).toBe("URX44V");
+    expect(formatSelfTestReport(report)).toContain(
+      "- Stopped: the changes the unit announced could not be fetched; the unit is left changed, and what the restore needs is kept for Restore after self-test",
+    );
+    expect(lose, "the run let go of the listener").toBeNull();
+
+    // On the next connection the restore alone puts the unit back.
+    vi.mocked(vdSet).mockImplementation(realSet);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    const restore = await restoreSelfTest(model, report.pendingRestore!, 0);
+    expect(restore.restored).toBe(true);
+    for (const [k, v] of before) expect(table.get(k), k).toBe(v);
   });
 
   it("stops at the next command when the unit is locked under it, and keeps what the restore needs", async () => {

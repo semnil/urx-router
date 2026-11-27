@@ -68,6 +68,9 @@ export interface TauriShell {
    *  nothing is taken. A case that asserts what a delivery did before anything later (a follow's
    *  idle reconcile) can move it awaits this, not a `waitFor`. */
   delivered: () => Promise<void>;
+  /** Fail the page's notification fetch — the one outstanding, or the next — as an IPC call that
+   *  does not come back fails: the page loses the connection's notifications. */
+  loseNotifications: () => void;
   /** Deliver a shell event to every handler the app registered for it, and answer how
    *  many handlers actually took it. The desktop shell intercepts drag & drop and the
    *  macOS Edit menu before the webview sees them, so those arrive as events rather than
@@ -338,11 +341,22 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     /** The number the page's next fetch carries on this connection: one more for every answer. */
     seq: 0,
     runs: [] as Array<{ kind: string; handler: unknown; updates: unknown }>,
-    waiter: null as { epoch: number; resolve: (runs: unknown[] | null) => void } | null,
+    waiter: null as {
+      epoch: number;
+      resolve: (runs: unknown[] | null) => void;
+      reject: (error: Error) => void;
+    } | null,
+    /** The next fetch fails (`loseNotifications`). */
+    failNext: false,
     /** Answers the outstanding fetch once there is something to answer: the runs of its own
      *  connection, or null once that connection is no longer the one followed. */
     answer(): void {
       const waiter = this.waiter;
+      if (waiter !== null && this.failNext) {
+        this.failNext = false;
+        this.waiter = null;
+        return waiter.reject(new Error("stub: the notification fetch failed"));
+      }
       if (waiter === null || (waiter.epoch === this.epoch && this.runs.length === 0)) return;
       this.waiter = null;
       if (waiter.epoch !== this.epoch) return waiter.resolve(null);
@@ -369,8 +383,8 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     if (outbox.waiter !== null) return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
     if (a?.seq !== outbox.seq)
       return Promise.reject(new Error(`stub: fetch ${String(a?.seq)}, ${outbox.seq} expected`));
-    return new Promise((resolve) => {
-      const waiter = { epoch, resolve };
+    return new Promise((resolve, reject) => {
+      const waiter = { epoch, resolve, reject };
       outbox.waiter = waiter;
       outbox.answer();
       // As the shell does, an empty answer when nothing came within a second.
@@ -480,6 +494,10 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     answer: (cmd, value) => void (table[cmd] = guard && DEVICE_TRAFFIC.includes(cmd) ? guard(value) : value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
+    loseNotifications: () => {
+      outbox.failNext = true;
+      outbox.answer();
+    },
     delivered: () =>
       outbox.epoch === null ? Promise.resolve() : new Promise<void>((resolve) => takenWaiters.push(resolve)),
     emit: (event, payload, from = "main") => {

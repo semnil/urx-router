@@ -673,6 +673,54 @@ describe("notification fetch", () => {
     await expect(platform.vdSetStr(1, 0, 0, "name")).rejects.toThrow(`${platform.WRITES_HELD}:`);
   });
 
+  it("passes a write the shell held on at once when the fetch it names was already handed on", async () => {
+    const { harness, outbox } = await connected();
+    await platform.vdParamsSubscribe([[895, 0, 0]], vi.fn());
+    const [handler] = handlersOf(harness, "vd_params_subscribe");
+    outbox.put({ kind: "params", handler, updates: [{ param_id: 895, x: 0, y: 0, value: 1 }] });
+    await settle();
+    harness.answers.vd_set = () => {
+      throw new Error(`${platform.WRITES_HELD}: the unit announced Console Lock (fetch 0)`);
+    };
+    let settled: unknown;
+    void platform.vdSet(1, 0, 0, 5).then(
+      () => (settled = "written"),
+      (error: unknown) => (settled = error),
+    );
+    await settle();
+    expect(String(settled)).toContain(`${platform.WRITES_HELD}:`);
+  });
+
+  it("tells every operation that asked when the connection's notifications are lost, and forgets them on the next", async () => {
+    const { harness, outbox } = await connected();
+    const told: string[] = [];
+    const forget = platform.onNotificationsLost(() => told.push("forgotten"));
+    forget();
+    platform.onNotificationsLost(() => told.push("write"));
+    platform.onNotificationsLost(() => told.push("self-test"));
+    await platform.vdParamsSubscribe([[1, 0, 0]], vi.fn());
+    await settle();
+    outbox.fail();
+    await settle();
+    expect(told).toEqual(["write", "self-test"]);
+    platform.onNotificationsLost(() => told.push("late"));
+    await settle();
+    expect(told, "one that asks after the loss is told at once").toEqual(["write", "self-test", "late"]);
+    const stop = platform.notificationsLostAbort();
+    expect(stop.name).toBe("AbortError");
+    expect(platform.stoppedByNotificationsLost(stop)).toBe(true);
+    const controller = new AbortController();
+    controller.abort(stop);
+    expect(platform.stoppedByNotificationsLost(controller.signal)).toBe(true);
+    expect(platform.stoppedByNotificationsLost(new Error("writes-held: locked"))).toBe(false);
+
+    await reconnect(harness, new FakeOutbox(), vi.fn());
+    platform.onNotificationsLost(() => told.push("next"));
+    await settle();
+    expect(told, "the next connection has lost nothing").toHaveLength(3);
+    await platform.vdDisconnect(2);
+  });
+
   it("leaves the followed connection alone at an older connection's disconnect", async () => {
     const { harness, outbox } = await connected();
     const seen: number[] = [];

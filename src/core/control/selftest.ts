@@ -54,7 +54,7 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan, PHANTOM_KEYS } from "../plan";
 import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
+import { stoppedByNotificationsLost, vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   COMP_EQ_COMP_FIRST,
@@ -275,9 +275,12 @@ export interface SelfTestReport {
   /** True when the unit went into Console Lock while the run was going: it stopped at the next
    *  command, as a cancel stops it (`aborted` is true with it). */
   locked?: boolean;
-  /** What a run Console Lock stopped once it had written, and before its restore was done, needs
-   *  to put the unit back: handed to `restoreSelfTest` once the unit is unlocked. Absent
-   *  otherwise. The unit is left changed until then. */
+  /** True when the connection's notifications were lost while the run was going: it stopped at
+   *  the next command the same way, since a Console Lock would no longer be heard. */
+  lost?: boolean;
+  /** What a run Console Lock or a loss of notifications stopped once it had written, and before its
+   *  restore was done, needs to put the unit back: handed to `restoreSelfTest` on a later
+   *  connection. Absent otherwise. The unit is left changed until then. */
   pendingRestore?: PendingRestore;
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
@@ -1165,13 +1168,15 @@ export async function runSelfTest(
 }
 
 /**
- * A run Console Lock stopped says so, and one it stopped once it had written, with the restore not
- * done, keeps what the restore needs (`pendingRestore`) — what the run read before the sweep is
- * the only record of what the unit held.
+ * A run Console Lock or a loss of the connection's notifications stopped says so, and one stopped
+ * once it had written, with the restore not done, keeps what the restore needs (`pendingRestore`)
+ * — what the run read before the sweep is the only record of what the unit held.
  */
 function keepForLock(report: SelfTestReport, run: RunWatch | null, pending: PendingRestore | null): void {
-  if (!run || !stoppedByConsoleLock(run.signal)) return;
-  report.locked = true;
+  if (!run) return;
+  if (stoppedByNotificationsLost(run.signal)) report.lost = true;
+  else if (stoppedByConsoleLock(run.signal)) report.locked = true;
+  else return;
   const wrote = report.phase === "write" || report.phase === "verify" || report.phase === "restore";
   if (pending && wrote && !report.restored) report.pendingRestore = pending;
 }
@@ -1688,6 +1693,12 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       report.pendingRestore
         ? "- Stopped: the unit went into Console Lock; the unit is left changed, and what the restore needs is kept for Restore after self-test"
         : "- Stopped: the unit went into Console Lock",
+    );
+  if (report.lost)
+    lines.push(
+      report.pendingRestore
+        ? "- Stopped: the changes the unit announced could not be fetched; the unit is left changed, and what the restore needs is kept for Restore after self-test"
+        : "- Stopped: the changes the unit announced could not be fetched",
     );
 
   if (report.unverified.length) {

@@ -26,7 +26,7 @@
 import type { DeviceModel } from "../../models/types";
 import { PHANTOM_KEYS } from "../plan";
 import type { Plan } from "../plan";
-import { vdConnect, vdDisconnect } from "../platform";
+import { stoppedByNotificationsLost, vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
 import { captureDeviceState, floorSilent, sweepInputSource } from "./selftest";
 import { stoppedByConsoleLock, watchRun, type RunWatch } from "./console-lock";
@@ -91,6 +91,9 @@ export interface PrepareReport {
   /** True when the unit was under Console Lock, or went into it: nothing was written, or the
    *  write stopped at its next command. */
   locked?: boolean;
+  /** True when the connection's notifications were lost: the write stopped at its next command,
+   *  since a Console Lock would no longer be heard. */
+  lost?: boolean;
 }
 
 // Non-round, well-separated fractions of a range. Cycling them per scalar keeps
@@ -342,7 +345,8 @@ export async function runPrepareModified(model: DeviceModel, outer?: AbortSignal
   } catch (e) {
     if (signal?.aborted) {
       report.aborted = true;
-      if (stoppedByConsoleLock(signal)) report.locked = true;
+      if (stoppedByNotificationsLost(signal)) report.lost = true;
+      else if (stoppedByConsoleLock(signal)) report.locked = true;
       return report;
     }
     throw e;

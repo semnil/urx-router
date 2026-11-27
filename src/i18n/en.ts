@@ -1054,6 +1054,8 @@ export const en = {
     writeError: (message: string): string => `Device write failed: ${message}`,
     writeLocked: (sent: number, total: number): string =>
       `The unit went into Console Lock, so the write stopped: ${sent} of ${total} sent. Write again once it is unlocked to compare the unit with the plan again and send what differs`,
+    writeLost: (sent: number, total: number): string =>
+      `The changes the device announced could not be fetched, so the write stopped: ${sent} of ${total} sent. Write again to compare the unit with the plan again and send what differs`,
     // Console Lock during Live sync (core/control/console-lock.ts).
     consoleLocked: tr("The unit is under Console Lock — the app sends it nothing until it is unlocked on the unit"),
     consoleUnlocked: tr("The unit's Console Lock is off — edits are sent to the unit again"),
@@ -1098,8 +1100,16 @@ export const en = {
     selfTestLocked: tr(
       "Self-test stopped — the unit went into Console Lock. The unit is left changed: once it is unlocked, choose Restore after self-test in the Device menu",
     ),
+    selfTestLostUntouched: tr(
+      "Self-test stopped — the changes the device announced could not be fetched before the run wrote anything. The device was not touched.",
+    ),
+    // The run stopped part-way and kept what the restore needs; the Device menu runs it on the next
+    // connection.
+    selfTestLost: tr(
+      "Self-test stopped — the changes the device announced could not be fetched. The unit is left changed: choose Restore after self-test in the Device menu",
+    ),
     selfTestRestorePending: tr(
-      "A self-test Console Lock stopped is not restored yet — choose Restore after self-test in the Device menu first",
+      "A stopped self-test is not restored yet — choose Restore after self-test in the Device menu first",
     ),
     selfTestRestoring: tr("Restoring the unit to what it held before the self-test…"),
     selfTestRestored: tr("Restored the unit to what it held before the self-test"),

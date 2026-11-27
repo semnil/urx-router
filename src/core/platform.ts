@@ -314,10 +314,13 @@ let lostEpoch: number | null = null;
 // The number of the fetch the loop has outstanding, and who waits for a later one to be handed on
 // (`handedOn`).
 let fetchInFlight = 0;
+// The number of the last fetch the loop handed on, on the current connection.
+let handedOnSeq = -1;
 const handOnWaiters: Array<{ readonly after: number; readonly resolve: () => void }> = [];
 
 /** Lets go every hand-on waiter whose fetch has been handed on — all of them once the loop stops. */
 function releaseHandOns(handedOn: number): void {
+  if (Number.isFinite(handedOn)) handedOnSeq = handedOn;
   for (let i = handOnWaiters.length - 1; i >= 0; i--) {
     const waiter = handOnWaiters[i];
     if (waiter.after <= handedOn) {
@@ -327,10 +330,11 @@ function releaseHandOns(handedOn: number): void {
   }
 }
 
-/** Settles once the fetch numbered `fetch` has been handed on to its handlers — or, without a number,
- *  one that starts after this call — and at once when no loop is fetching; and when the loop stops. */
+/** Settles once the fetch numbered `fetch` has been handed on to its handlers — at once if it already
+ *  has, and without a number once one that starts after this call has — and at once when no loop is
+ *  fetching; and when the loop stops. */
 function handedOn(fetch: number | undefined): Promise<void> {
-  if (fetching === null) return Promise.resolve();
+  if (fetching === null || (fetch !== undefined && fetch <= handedOnSeq)) return Promise.resolve();
   return new Promise((resolve) => handOnWaiters.push({ after: fetch ?? fetchInFlight + 1, resolve }));
 }
 // The current session's link watch: a fetch that fails ends the session through it, as the shell's
@@ -339,6 +343,8 @@ let linkDropped: ((reason: string) => void) | null = null;
 
 function beginConnection(epoch: number): void {
   connectionEpoch = epoch;
+  handedOnSeq = -1;
+  lossListeners.clear();
   handlers.clear();
   fetching = null;
   lostEpoch = null;
@@ -359,12 +365,49 @@ function forget(kind: RunKind): void {
   for (const [handler, entry] of handlers) if (entry.kind === kind) handlers.delete(handler);
 }
 
-/** The connection lost its notifications: nothing more is written on it, and its session ends. */
+// Who stops when the current connection loses its notifications (`onNotificationsLost`).
+const lossListeners = new Set<() => void>();
+
+/** The connection lost its notifications: nothing more is written on it, its session ends, and every
+ *  operation that asked (`onNotificationsLost`) is told. */
 function notificationsLost(epoch: number): void {
   fetching = null;
   lostEpoch = epoch;
   releaseHandOns(Infinity);
   linkDropped?.(NOTIFICATIONS_LOST);
+  const told = [...lossListeners];
+  lossListeners.clear();
+  for (const listener of told) listener();
+}
+
+/**
+ * Tell `listener` when the current connection loses its notifications — at once (on a later
+ * microtask) if it already has — so an operation running on it stops with that cause, as the link
+ * watch ends a live session. Returns the removal; the next connection forgets every listener.
+ */
+export function onNotificationsLost(listener: () => void): () => void {
+  if (writesLost()) {
+    queueMicrotask(listener);
+    return () => {};
+  }
+  lossListeners.add(listener);
+  return () => void lossListeners.delete(listener);
+}
+
+/** The stop an operation is aborted with when its connection lost its notifications: an
+ *  `AbortError`, so every abort path takes it, that `stoppedByNotificationsLost` tells apart. */
+export function notificationsLostAbort(): Error {
+  const err = new Error(`${NOTIFICATIONS_LOST}: the changes the unit announced could not be fetched`);
+  err.name = "AbortError";
+  return err;
+}
+
+/** Whether `cause` — an error, its message, or an aborted signal's reason — is the loss of the
+ *  connection's notifications. */
+export function stoppedByNotificationsLost(cause: unknown): boolean {
+  if (cause instanceof AbortSignal) return cause.aborted && stoppedByNotificationsLost(cause.reason);
+  const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  return message.startsWith(`${NOTIFICATIONS_LOST}:`);
 }
 
 /** Rejects with `NOTIFICATIONS_LOST` once `NOTIFICATION_FETCH_DEADLINE_MS` has passed. */
@@ -455,10 +498,11 @@ const lostWrite = (): Promise<never> =>
   );
 
 /**
- * A write the shell refused because the unit announced Console Lock and the announcement has not
- * reached the page yet (vd.rs `Outbox::lock_fetch`): the refusal is passed on once the page has
- * handed on the fetch the shell names as the one carrying the announcement, so whoever handles the
- * refusal finds the lock already taken — as it does with the page's own refusal (`heldWrite`).
+ * A write the shell refused because the unit announced Console Lock (vd.rs `Outbox::lock_fetch`),
+ * which it does until the unit announces the lock off: the refusal is passed on once the page has
+ * handed on the fetch the shell names as the one carrying the announcement — at once when it already
+ * has — so whoever handles the refusal finds the lock already taken, as it does with the page's own
+ * refusal (`heldWrite`).
  */
 function shellHeld<T>(write: Promise<T>): Promise<T> {
   return write.catch(async (error: unknown) => {
@@ -638,6 +682,7 @@ export function vdDisconnect(epoch: number): Promise<void> {
     lostEpoch = null;
     handlers.clear();
     linkDropped = null;
+    lossListeners.clear();
     releaseHandOns(Infinity);
   }
   return invoke<void>("vd_disconnect", { epoch });

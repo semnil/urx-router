@@ -174,6 +174,8 @@ import {
   setKeepAwake,
   thirdPartyLicenses,
   holdDeviceWrites,
+  notificationsLostAbort,
+  stoppedByNotificationsLost,
   vdConnect,
   vdDisconnect,
   vdGet,
@@ -5363,7 +5365,11 @@ async function withDevice(
     let watch: LockWatch | null = null;
     try {
       if (writes) {
-        watch = await watchConsoleLock(() => writes.abort(consoleLockAbort()));
+        watch = await watchConsoleLock(
+          () => writes.abort(consoleLockAbort()),
+          undefined,
+          () => writes.abort(notificationsLostAbort()),
+        );
         if (watch.lockedAtStart) {
           showError(t().error.consoleLocked);
           return;
@@ -5936,9 +5942,14 @@ if (!DEMO) {
           // the loop and takes its outcomes with it — and how many it set out to send.
           let sentNow = 0;
           let attemptTotal = 0;
-          // What a stopped write says: a cancel, or Console Lock with how much of the write went out.
+          // What a stopped write says: a cancel, Console Lock, or the loss of the connection's
+          // notifications, the last two with how much of the write went out.
           const stoppedLine = (sent: number): string =>
-            stoppedByConsoleLock(signal) ? t().status.writeLocked(sent, attemptTotal) : t().status.canceled;
+            stoppedByNotificationsLost(signal)
+              ? t().status.writeLost(sent, attemptTotal)
+              : stoppedByConsoleLock(signal)
+                ? t().status.writeLocked(sent, attemptTotal)
+                : t().status.canceled;
           // A read that fails once something has gone out is a read-back the write could not
           // confirm; before anything has, it is the read the write stops on.
           const readFailed = (reads: string[]): void => {
@@ -7062,51 +7073,55 @@ if (!DEMO) {
         const verdicts = summarizeVerdicts(report.unverified);
         const divergence = report.residual.filter((r) => !r.stoppedOn).length;
         const neverCompared = report.residual.length - divergence;
-        // A run Console Lock stopped once it had written keeps what the restore needs, which the
-        // Device menu runs once the unit is unlocked.
+        // A run Console Lock or a loss of notifications stopped once it had written keeps what the
+        // restore needs, which the Device menu runs on a later connection.
         if (report.pendingRestore) selfTestPending = report.pendingRestore;
         syncSelfTestRestore();
         setStatus(
-          report.locked
+          report.lost
             ? report.pendingRestore
-              ? t().status.selfTestLocked
-              : t().status.selfTestLockedUntouched
-            : report.aborted
-              ? cancelledBeforeWriting(report)
-                ? t().status.selfTestCancelledUntouched
-                : t().status.selfTestCancelled
-              : // Before the restore verdict: a refusal wrote nothing, so `restored` is
-                // false only because there was nothing to restore — reading it as a failed
-                // restore tells the operator their unit may be left perturbed when it was
-                // never touched.
-                report.phase === "refused"
-                ? report.refusal === "modelMismatch"
-                  ? t().status.selfTestModelMismatch(report.device, modelId)
-                  : report.refusal === "sideEffectUnheld"
-                    ? t().status.selfTestRefusedHead
-                    : report.refusal === "hpfFreqUnwritable"
-                      ? t().status.selfTestRefusedHpfFreq
-                      : report.refusal === "consoleLock"
-                        ? t().status.selfTestRefusedLock
-                        : t().status.selfTestRefused
-                : !report.restored
-                  ? t().status.selfTestRestoreFail
-                  : report.unverified.length
-                    ? t().status.selfTestUnverified(
-                        verdicts.confirmed,
-                        verdicts.roundTripped,
-                        verdicts.refuted,
-                        verdicts.untestable,
-                      )
-                    : report.ok
-                      ? t().status.selfTestPass(report.written)
-                      : // `residual` holds two things once a pass can stop partway: what the
-                        // device answered differently, and what the run never got to ask
-                        // about. Only the first is a mismatch, and if there is any of the
-                        // second the headline is that the run did not finish.
-                        neverCompared > 0
-                        ? t().status.selfTestIncomplete(neverCompared)
-                        : t().status.selfTestFail(divergence),
+              ? t().status.selfTestLost
+              : t().status.selfTestLostUntouched
+            : report.locked
+              ? report.pendingRestore
+                ? t().status.selfTestLocked
+                : t().status.selfTestLockedUntouched
+              : report.aborted
+                ? cancelledBeforeWriting(report)
+                  ? t().status.selfTestCancelledUntouched
+                  : t().status.selfTestCancelled
+                : // Before the restore verdict: a refusal wrote nothing, so `restored` is
+                  // false only because there was nothing to restore — reading it as a failed
+                  // restore tells the operator their unit may be left perturbed when it was
+                  // never touched.
+                  report.phase === "refused"
+                  ? report.refusal === "modelMismatch"
+                    ? t().status.selfTestModelMismatch(report.device, modelId)
+                    : report.refusal === "sideEffectUnheld"
+                      ? t().status.selfTestRefusedHead
+                      : report.refusal === "hpfFreqUnwritable"
+                        ? t().status.selfTestRefusedHpfFreq
+                        : report.refusal === "consoleLock"
+                          ? t().status.selfTestRefusedLock
+                          : t().status.selfTestRefused
+                  : !report.restored
+                    ? t().status.selfTestRestoreFail
+                    : report.unverified.length
+                      ? t().status.selfTestUnverified(
+                          verdicts.confirmed,
+                          verdicts.roundTripped,
+                          verdicts.refuted,
+                          verdicts.untestable,
+                        )
+                      : report.ok
+                        ? t().status.selfTestPass(report.written)
+                        : // `residual` holds two things once a pass can stop partway: what the
+                          // device answered differently, and what the run never got to ask
+                          // about. Only the first is a mismatch, and if there is any of the
+                          // second the headline is that the run did not finish.
+                          neverCompared > 0
+                          ? t().status.selfTestIncomplete(neverCompared)
+                          : t().status.selfTestFail(divergence),
         );
         // Two reasons to keep the report, kept apart: the model's unconfirmed mappings
         // (a property of the model, so the run always has those verdicts to send back)
@@ -7155,11 +7170,13 @@ if (!DEMO) {
             ? t().status.selfTestRestoreRefusedLock
             : report.refusal === "modelMismatch"
               ? t().status.selfTestRestoreModelMismatch(report.device, pending.model)
-              : report.locked
-                ? t().status.selfTestLocked
-                : report.restored
-                  ? t().status.selfTestRestored
-                  : t().status.selfTestRestoreFail,
+              : report.lost
+                ? t().status.selfTestLost
+                : report.locked
+                  ? t().status.selfTestLocked
+                  : report.restored
+                    ? t().status.selfTestRestored
+                    : t().status.selfTestRestoreFail,
         );
         if (report.phase === "done" && !report.restored)
           await offerErrorReport(

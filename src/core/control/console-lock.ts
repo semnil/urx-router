@@ -13,7 +13,15 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { holdDeviceWrites, vdGet, vdParamsSubscribe, WRITES_HELD, type ParamUpdate } from "../platform";
+import {
+  holdDeviceWrites,
+  notificationsLostAbort,
+  onNotificationsLost,
+  vdGet,
+  vdParamsSubscribe,
+  WRITES_HELD,
+  type ParamUpdate,
+} from "../platform";
 import { PARAMS } from "./params";
 import { cmdAddr, planToCommands, planToNameWrites, type WriteScope } from "./translate";
 
@@ -87,19 +95,24 @@ export interface LockWatch {
 export interface LockWatchIo {
   subscribe: typeof vdParamsSubscribe;
   get: (paramId: number, x: number, y: number) => Promise<number>;
+  /** Where the loss of the connection's notifications is heard (`onNotificationsLost`). */
+  lost?: typeof onNotificationsLost;
 }
 
 /**
  * Watch the unit's [Console Lock] for a write outside a live session. Registers for its notify
  * first and reads it second, so a lock made between the two is not missed. Locked at the start,
  * writes are held and `lockedAtStart` says so; a lock announced later holds writes and calls
- * `onLock` once, where the caller stops its run. `stop()` releases both. A failed registration or
- * read rejects, with nothing left registered or held: a write that cannot tell whether the unit
- * is locked does not start. The caller must have connected first.
+ * `onLock` once, where the caller stops its run. A loss of the connection's notifications calls
+ * `onLost` once, since a lock the unit announced may then never be heard: the caller stops its run
+ * on that too. `stop()` releases all of it. A failed registration or read rejects, with nothing left
+ * registered or held: a write that cannot tell whether the unit is locked does not start. The caller
+ * must have connected first.
  */
 export async function watchConsoleLock(
   onLock: () => void,
   io: LockWatchIo = { subscribe: vdParamsSubscribe, get: vdGet },
+  onLost?: () => void,
 ): Promise<LockWatch> {
   let tripped = false;
   let stopped = false;
@@ -109,6 +122,14 @@ export async function watchConsoleLock(
     holdDeviceWrites(true);
     onLock();
   };
+  let lostTold = false;
+  const unlost = onLost
+    ? (io.lost ?? onNotificationsLost)(() => {
+        if (stopped || lostTold) return;
+        lostTold = true;
+        onLost();
+      })
+    : () => {};
   let unsubscribe: () => void;
   try {
     unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
@@ -118,12 +139,14 @@ export async function watchConsoleLock(
     // A lock announced before the registration failed held writes on this watch's
     // behalf; a watch that never started holds nothing, and hears nothing after this.
     stopped = true;
+    unlost();
     if (tripped) holdDeviceWrites(false);
     throw err;
   }
   const release = (): void => {
     if (stopped) return;
     stopped = true;
+    unlost();
     unsubscribe();
     holdDeviceWrites(false);
   };
@@ -154,8 +177,9 @@ export interface RunWatch {
 
 /**
  * Watch a run that connects on its own (the self-test, the audit-prep writer) for Console Lock:
- * the signal it hands back is the one the run passes to every phase, so a lock stops the run at its
- * next command the way the caller's cancel does. The caller must have connected first.
+ * the signal it hands back is the one the run passes to every phase, so a lock — or the loss of the
+ * connection's notifications, under which a lock would go unheard — stops the run at its next
+ * command the way the caller's cancel does. The caller must have connected first.
  */
 export async function watchRun(outer?: AbortSignal, io?: LockWatchIo): Promise<RunWatch> {
   const ctl = new AbortController();
@@ -164,7 +188,11 @@ export async function watchRun(outer?: AbortSignal, io?: LockWatchIo): Promise<R
   else outer?.addEventListener("abort", follow, { once: true });
   let watch: LockWatch;
   try {
-    watch = await watchConsoleLock(() => ctl.abort(consoleLockAbort()), io);
+    watch = await watchConsoleLock(
+      () => ctl.abort(consoleLockAbort()),
+      io,
+      () => ctl.abort(notificationsLostAbort()),
+    );
   } catch (err) {
     outer?.removeEventListener("abort", follow);
     throw err;

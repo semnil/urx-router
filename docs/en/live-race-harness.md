@@ -491,7 +491,8 @@ reaches the app when the page next fetches its notifications, a task after the p
 outbox answers it; **`delivered`** on the fake settles once the page has handed on everything pushed so
 far, which is what an in-page sequence awaits before acting on the notify's effect in the same task.
 **Divergence kept**: the fake neither numbers its answers (`vd.rs` does, against a resend Tauri makes and a
-browser never does) nor holds a write while a Console Lock waits for the page (`Outbox::lock_fetch`); the page
+browser never does) nor holds a write from the unit's announcement of Console Lock to that of the lock off
+(`Outbox::lock_fetch`); the page
 passes that refusal on only once its own hold has the lock, which is what the cases measure.
 
 **`pushNameNotify`** is the string-path member of that family — a rename made on the unit's own LCD,

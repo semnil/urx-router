@@ -1867,10 +1867,15 @@ drag lands on the nearest.
   its one-second wait), loses the connection's notifications: a change the unit announced may not have reached the
   page, so every later write on that connection is refused before it is sent (`notifications-lost`), whichever
   operation sends it, and a live session ends with that code — through its link watch, at once if the watch is
-  registered after the loss. The next connection starts clean. A Console Lock the unit announced holds the writes
-  in the shell until the page has it: while the announcement waits in the outbox or in an answer the page has not
-  acknowledged, `vd.rs` refuses a write with `writes-held` and the number of the fetch that carries it, and the page
-  passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock already taken.
+  registered after the loss. An operation running on the connection stops with that cause at its next command, as
+  it stops on a Console Lock (its lock watch is told, `onNotificationsLost`): Write to device says how much it sent
+  and offers no retry on that connection, and a self-test that had written keeps what its restore needs for Restore
+  after self-test on a later connection. The next connection starts clean. A Console Lock the unit announced holds
+  the writes in the shell from that announcement to the announcement of the lock off: `vd.rs` keeps the last lock
+  state the unit announced and refuses a write meanwhile with `writes-held` and the number of the fetch that
+  carries the announcement, so a write the page handed over before it knew of the lock does not reach the locked
+  unit; the page passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock
+  already taken.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan

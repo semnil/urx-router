@@ -573,6 +573,52 @@ describe("Console Lock and a write outside a session", () => {
     expect(errors(shell)).toEqual([]);
   });
 
+  // A lock the unit announces is no longer heard once the connection's notifications are lost, so
+  // the write stops there as it stops on the lock: with what it sent, and no retry offered on the
+  // connection that lost them.
+  it("stops Write to device at the next command when the connection's notifications are lost", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let sent = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_set: () => {
+        sent++;
+        if (sent === 3) box.shell!.loseNotifications();
+        return null;
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_set"), "nothing after the write on the wire").toBe(3);
+    expect(shell.count("vd_set_str")).toBe(0);
+    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
+    expect(statusText()).toBe(t().status.writeLost(3, total));
+    expect(total).toBeGreaterThan(3);
+    expect(confirms(shell), "no retry is offered").toHaveLength(1);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // Lost while the write is still reading the unit: it stops there, saying why, with nothing sent.
+  it("stops Write to device with the cause when the notifications are lost while it reads", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let reads = 0;
+    const read = clockReads(false, 48_000);
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        reads++;
+        if (reads === 20) box.shell!.loseNotifications();
+        return read(a);
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(statusText()).toBe(t().status.writeLost(0, 0));
+    expect(shell.count("vd_set")).toBe(0);
+    expect(errors(shell)).toEqual([]);
+  });
+
   it("refuses the Follow USB switch on a locked unit", SLOW, async () => {
     const shell = await bootDevice({
       vd_get: (a: Record<string, unknown>) => (a.paramId === PARAMS.CONSOLE_LOCK.id ? 1 : clockReads(true, 48_000)(a)),

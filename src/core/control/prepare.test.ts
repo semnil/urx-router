@@ -19,6 +19,10 @@ const mocks = vi.hoisted(() => ({
   vdGet: vi.fn<(id: number, x: number, y: number) => Promise<number>>(),
   vdParamsSubscribe: vi.fn(),
   lock: { deliver: null as ((p: { paramId: number; x: number; y: number; value: number }) => void) | null },
+  // The run's lock watch also listens for the loss of the connection's notifications; `lost.lose`
+  // is that loss.
+  onNotificationsLost: vi.fn(),
+  lost: { lose: null as (() => void) | null },
   captureDeviceState: vi.fn(),
 }));
 
@@ -29,6 +33,7 @@ vi.mock("../platform", async (importOriginal) => ({
   vdSet: mocks.vdSet,
   vdGet: mocks.vdGet,
   vdParamsSubscribe: mocks.vdParamsSubscribe,
+  onNotificationsLost: mocks.onNotificationsLost,
 }));
 
 vi.mock("./selftest", async (importOriginal) => ({
@@ -215,6 +220,13 @@ describe("runPrepareModified", () => {
     mocks.vdSet.mockReset().mockResolvedValue(undefined);
     mocks.vdGet.mockReset().mockResolvedValue(0);
     mocks.lock.deliver = null;
+    mocks.lost.lose = null;
+    mocks.onNotificationsLost.mockReset().mockImplementation((listener: () => void) => {
+      mocks.lost.lose = listener;
+      return () => {
+        mocks.lost.lose = null;
+      };
+    });
     mocks.vdParamsSubscribe.mockReset().mockImplementation(async (_addrs: unknown, onUpdate: never) => {
       mocks.lock.deliver = onUpdate;
       return () => {
@@ -383,6 +395,19 @@ describe("runPrepareModified", () => {
     expect(report).toMatchObject({ aborted: true, locked: true });
     expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("stops at the next command when the connection's notifications are lost under it", async () => {
+    captureOk();
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === 3) mocks.lost.lose?.();
+    });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject({ aborted: true, lost: true });
+    expect(report.locked).toBeUndefined();
+    expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
+    expect(report.errors, "the writes it did not send are no failures").toEqual([]);
   });
 
   it("does not disconnect a link it never opened", async () => {
