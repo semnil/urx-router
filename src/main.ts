@@ -5383,13 +5383,29 @@ async function withDevice(
     }
   } catch (err) {
     // A cancel surfaces as an AbortError; show the neutral "canceled" status rather than
-    // wrapping it as an action failure — or, for a stop Console Lock made, say so.
-    if (isAbortError(err)) setStatus(stoppedByConsoleLock(err) ? t().status.consoleLockedStopped : t().status.canceled);
+    // wrapping it as an action failure — or, for a stop Console Lock or the loss of the
+    // connection's notifications made, say which.
+    if (stoppedByNotificationsLost(err)) setStatus(connectFailureStatus(err, onError));
+    else if (isAbortError(err))
+      setStatus(stoppedByConsoleLock(err) ? t().status.consoleLockedStopped : t().status.canceled);
     else if (stoppedByConsoleLock(err)) setStatus(t().status.consoleLockedStopped);
     else showError(connectFailureStatus(err, onError));
   } finally {
     releaseDeviceLink(holder);
   }
+}
+
+/**
+ * A question a writing action asks while the unit is watched (`withDevice`'s `writes`): not asked
+ * once the action's stop has come, and its answer not taken when the stop came while it was open.
+ * The stop is thrown either way, so the action ends with its cause — Console Lock, or the loss of
+ * the connection's notifications — rather than going on to Canceled, a plan change or a retry.
+ */
+async function askWhileWriting<T>(signal: AbortSignal | undefined, ask: () => Promise<T>): Promise<T> {
+  signal?.throwIfAborted();
+  const answer = await ask();
+  signal?.throwIfAborted();
+  return answer;
 }
 
 // The pre-flight every device action that acts on the *current plan* runs: connect,
@@ -5409,7 +5425,7 @@ async function withCheckedDevice(
     connecting,
     onError,
     async (device) => {
-      if (!(await confirmFirmware(device))) {
+      if (!(await askWhileWriting(writes?.signal, () => confirmFirmware(device)))) {
         setStatus(t().status.canceled);
         return;
       }
@@ -5542,13 +5558,14 @@ if (!DEMO) {
       }
       // Inside the holder, so the question is asked of a unit that answered: declining
       // leaves the link released by withDevice's own teardown and writes nothing.
+      const writes = new AbortController();
       await withWritingDevice(
-        new AbortController(),
+        writes,
         "follow-usb",
         t().status.writeConnecting,
         t().status.writeError,
         async (device) => {
-          if (!(await ask(device.model))) {
+          if (!(await askWhileWriting(writes.signal, () => ask(device.model)))) {
             setStatus(t().status.canceled);
             return;
           }
@@ -5762,14 +5779,20 @@ if (!DEMO) {
   // A read failure aborts. Which rate the device will end up running at decides
   // which parameters the rest of the write may even contain, so proceeding without
   // it would be writing on a premise the link just failed to establish.
-  async function settleSampleRate(): Promise<boolean> {
+  //
+  // `signal` is the write's stop: once it has come — Console Lock, or the loss of the
+  // connection's notifications — this throws it at its next step rather than asking, refusing
+  // or changing the plan, and a failure on the way says the stop rather than itself.
+  async function settleSampleRate(signal: AbortSignal): Promise<boolean> {
     let clock;
     try {
       clock = await readClockState();
     } catch (err) {
+      signal.throwIfAborted();
       showError(t().status.writeError(t().error.clockUnread(errorText(err))));
       return false;
     }
+    signal.throwIfAborted();
     // The read just told us what the badge is for; show it whether or not there is
     // anything to settle.
     setFollowUsbBadge(clock.followUsb);
@@ -5789,6 +5812,7 @@ if (!DEMO) {
     try {
       trackCost = await trackCountCost(plan.sampleRate);
     } catch (err) {
+      signal.throwIfAborted();
       showError(t().status.writeError(t().error.trackCountUnread(errorText(err))));
       return false;
     }
@@ -5799,9 +5823,11 @@ if (!DEMO) {
     try {
       recorderHold = hasRecorder(modelId) ? await readSdRecorderHold() : null;
     } catch (err) {
+      signal.throwIfAborted();
       showError(t().status.writeError(t().error.playbackUnread(errorText(err))));
       return false;
     }
+    signal.throwIfAborted();
     const refuseHeldRate = (): false => {
       const refuse = recorderHold === "recording" ? t().error.rateDuringRecording : t().error.rateDuringPlayback;
       showError(t().status.writeError(refuse(deviceRate, planRate)));
@@ -5814,7 +5840,7 @@ if (!DEMO) {
       // plain yes/no: the plan's rate is the one that sticks.
       const cost = trackCost ? t().confirm.trackCountDrop(trackCost.from, trackCost.to) : "";
       const ask = [t().confirm.reclock(deviceRate, planRate), cost].filter(Boolean).join(" ");
-      if (await confirmDialog(ask)) return true;
+      if (await askWhileWriting(signal, () => confirmDialog(ask))) return true;
       setStatus(t().status.canceled);
       return false;
     }
@@ -5845,7 +5871,9 @@ if (!DEMO) {
     ]
       .filter(Boolean)
       .join(" ");
-    const choice = await askRateChoice(planRate, deviceRate, note, releaseNote, adoptNote);
+    const choice = await askWhileWriting(signal, () =>
+      askRateChoice(planRate, deviceRate, note, releaseNote, adoptNote),
+    );
     if (choice === "cancel") {
       setStatus(t().status.canceled);
       return false;
@@ -5864,6 +5892,7 @@ if (!DEMO) {
     try {
       await setFollowUsb(false);
     } catch (err) {
+      signal.throwIfAborted();
       showError(t().status.writeError(t().error.followUsbWrite(errorText(err))));
       return false;
     }
@@ -5910,7 +5939,7 @@ if (!DEMO) {
           // Scene scope drops SAMPLE_RATE from the write set, so there is no
           // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
-          if (scope !== "scene" && !(await settleSampleRate())) return;
+          if (scope !== "scene" && !(await settleSampleRate(signal))) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
           // offer a retry), or null when there is nothing left to do.
@@ -5933,23 +5962,33 @@ if (!DEMO) {
           // …and on every outcome the line says which HPF frequencies the write left out.
           const adoptedNote = (): string =>
             (adopted ? ` — ${t().status.paramsBounded(adopted)}` : "") + hpfFreqNotSentNote();
-          // What the whole operation has sent, numeric values and presets both, and which nodes an
-          // accepted preset left unconfirmed — across attempts, for the same reason: a retry that
-          // stops before sending anything still stands on what an earlier attempt sent.
+          // What the whole operation has sent — numeric values, presets and names alike, counted as
+          // each lands, since a stop throws out of the send loops and takes their outcomes with it —
+          // and which nodes an accepted preset left unconfirmed, across attempts for the same reason:
+          // a retry that stops before sending anything still stands on what an earlier attempt sent.
           let sentSoFar = 0;
           const unconfirmedSoFar: string[] = [];
-          // What the attempt in flight has sent, counted as each send lands — a stop throws out of
-          // the loop and takes its outcomes with it — and how many it set out to send.
-          let sentNow = 0;
-          let attemptTotal = 0;
+          // How many the operation has set out to send: what the attempts before the one in flight
+          // sent, and what that one diffed. Null until the first attempt has diffed.
+          let operationTotal: number | null = null;
           // What a stopped write says: a cancel, Console Lock, or the loss of the connection's
-          // notifications, the last two with how much of the write went out.
-          const stoppedLine = (sent: number): string =>
-            stoppedByNotificationsLost(signal)
-              ? t().status.writeLost(sent, attemptTotal)
-              : stoppedByConsoleLock(signal)
-                ? t().status.writeLocked(sent, attemptTotal)
+          // notifications, the last two with how much of the write went out — or the stop alone, when
+          // it came before the write knew how much it was to send.
+          const stoppedLine = (): string => {
+            const lost = stoppedByNotificationsLost(signal);
+            const locked = !lost && stoppedByConsoleLock(signal);
+            if (operationTotal === null)
+              return lost
+                ? connectFailureStatus(signal.reason, t().status.writeError)
+                : locked
+                  ? t().status.consoleLockedStopped
+                  : t().status.canceled;
+            return lost
+              ? t().status.writeLost(sentSoFar, operationTotal)
+              : locked
+                ? t().status.writeLocked(sentSoFar, operationTotal)
                 : t().status.canceled;
+          };
           // A read that fails once something has gone out is a read-back the write could not
           // confirm; before anything has, it is the read the write stops on.
           const readFailed = (reads: string[]): void => {
@@ -5964,7 +6003,7 @@ if (!DEMO) {
           const attemptWrite = async (
             confirmFirst: boolean,
           ): Promise<{ sent: number; notSent: number; unread?: number } | null> => {
-            sentNow = 0;
+            const sentBefore = sentSoFar;
             // A read failure leaves those parameters' device values unknown, so the
             // write stops on the first one — the rest of the sweep would only be
             // establishing values for a write that is already canceled.
@@ -5982,7 +6021,7 @@ if (!DEMO) {
               return null;
             }
             const total = diffs.length + nameWrites.length;
-            attemptTotal = total;
+            operationTotal = sentBefore + total;
             // From the EMITTED list, not from `diffs`: a survivor that already
             // matches the device is not a diff, and the owner it displaced would
             // then go unmentioned — including when the only pending change is that
@@ -6014,7 +6053,7 @@ if (!DEMO) {
               ]
                 .filter(Boolean)
                 .join("\n\n");
-            if (confirmFirst && !(await confirmDialog(ask()))) {
+            if (confirmFirst && !(await askWhileWriting(signal, () => confirmDialog(ask())))) {
               setStatus(t().status.canceled + adoptedNote());
               return null;
             }
@@ -6047,7 +6086,7 @@ if (!DEMO) {
                 // rate that goes out arms it, whatever put it in the plan, on a model that
                 // has the recorder.
                 onSent: (o: SendOutcome) => {
-                  if (o.result === "accepted") sentNow++;
+                  if (o.result === "accepted") sentSoFar++;
                   if (o.result !== "refused" && o.command.name === "SAMPLE_RATE" && hasRecorder(device.model)) {
                     trackCountMayHaveDropped = true;
                   }
@@ -6064,6 +6103,7 @@ if (!DEMO) {
                     .map((o) => ({ name: `name ${o.write.param}:${o.write.y}`, error: o.error })),
                 );
                 presetsSent = second.presets.filter((o) => o.ok).length;
+                sentSoFar += presetsSent;
                 presetsCanceled = second.canceled;
                 if (second.canceled) unconfirmedSoFar.push(...second.unconfirmed);
                 if (presetFailures.length)
@@ -6086,7 +6126,7 @@ if (!DEMO) {
               // between the loop stopping and the join.
               const cancelTaken = adoptConfirmedWrites(confirmedAddrs(ledger));
               adopted += cancelTaken;
-              setStatus(stoppedLine(sentSoFar + sentNow) + adoptedNote());
+              setStatus(stoppedLine() + adoptedNote());
               return null;
             }
             const { outcomes, residual, readErrors: convergeErrors } = convergeResult;
@@ -6114,7 +6154,7 @@ if (!DEMO) {
               // the adoption above has already changed the plan, and a bare "Canceled" from
               // withDevice would leave that unsaid.
               if (signal.aborted) {
-                setStatus(stoppedLine(sentSoFar + outcomes.filter((o) => o.ok).length + presetsSent) + note);
+                setStatus(stoppedLine() + note);
                 return null;
               }
               // Counted as each lands, so a stop thrown between two names still says what went out.
@@ -6122,12 +6162,12 @@ if (!DEMO) {
                 nameWrites.filter((w) => w.name === undefined),
                 signal,
                 (o) => {
-                  if (o.ok) sentNow++;
+                  if (o.ok) sentSoFar++;
                 },
               );
               // A stop that arrived with the last name: what went out, and why it stopped.
               if (signal.aborted) {
-                setStatus(stoppedLine(sentSoFar + sentNow + presetsSent) + note);
+                setStatus(stoppedLine() + note);
                 return null;
               }
               // Normalize the two outcome shapes (numeric command vs string name write)
@@ -6144,8 +6184,7 @@ if (!DEMO) {
             // offer after disconnect (below), so the reasons are visible without the console.
             // Every read the converge makes comes after a send (the first round is the confirmed
             // diff), so a read failure here is a read-back of a write, not the read a write stops on.
-            const sent = outcomes.filter((o) => o.ok).length + presetsSent;
-            sentSoFar += sent;
+            const sent = sentSoFar - sentBefore;
             if (presetStop) unconfirmedSoFar.push(...presetStop.unconfirmed);
             if (failed.length || residual.length || convergeErrors.length || presetStop || presetsCanceled) {
               saveReport(failed, residual, convergeErrors, { wrote: sentSoFar > 0, unconfirmed: unconfirmedSoFar });
@@ -6153,7 +6192,7 @@ if (!DEMO) {
             // A cancel taken once a preset has gone out: what went out is in the report, and nothing
             // more is sent or offered.
             if (presetsCanceled) {
-              setStatus(stoppedLine(sentSoFar) + note);
+              setStatus(stoppedLine() + note);
               return null;
             }
             if (presetStop) {
@@ -6199,14 +6238,13 @@ if (!DEMO) {
             while (stop) {
               // A stop that has arrived offers no retry on this connection; it says what went out.
               if (signal.aborted) {
-                setStatus(stoppedLine(sentSoFar) + adoptedNote());
+                setStatus(stoppedLine() + adoptedNote());
                 break;
               }
-              const retry = await confirmDialog(
-                stop.unread
-                  ? t().confirm.writeRetryUnread(stop.sent, stop.unread)
-                  : t().confirm.writeRetry(stop.sent, stop.notSent),
-              );
+              const question = stop.unread
+                ? t().confirm.writeRetryUnread(stop.sent, stop.unread)
+                : t().confirm.writeRetry(stop.sent, stop.notSent);
+              const retry = await askWhileWriting(signal, () => confirmDialog(question));
               if (!retry) break;
               stop = await attemptWrite(false);
             }
@@ -6216,7 +6254,7 @@ if (!DEMO) {
             // withDevice would write for that says nothing about what an earlier attempt took
             // back. Counted across attempts because each one adopts different keys: a key the
             // plan has already taken is no longer a problem the next attempt reports.
-            setStatus(stoppedLine(sentSoFar + sentNow) + adoptedNote());
+            setStatus(stoppedLine() + adoptedNote());
             wroteOutcome = true;
           } finally {
             // INSIDE the action, because withDevice awaits its own vdDisconnect on the way
