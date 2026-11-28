@@ -3385,6 +3385,16 @@ mod imp {
                 "every later command fails with the same end"
             );
             assert!(!link.adopt("request-2"), "the slot went with the end");
+            let after = link.request(2, "request-3", package_call(Method::GetNumeric, 1.0, None));
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cause", "code": "not_connected", "phase": "admission" },
+                    "evidence": { "state": "not_sent" },
+                }),
+                "the connection is closed: a later request is refused before it is sent"
+            );
         }
 
         // Terminate ends the connection only for a result still holding its slot.
