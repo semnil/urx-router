@@ -832,14 +832,17 @@ carries a one-line map of the same directories and points here.
   alone) + the control package's requests (`vd/package.rs`, `PackageLink`: `vd_package_request` submits one request
   of the page's operation owner on the session's connection beside the worker's, through the same Console Lock
   gate for a write, and answers its K34 record; its result keeps the connection's single wire slot until
-  `vd_package_adopt`, so the worker's own requests wait behind it; each ticket's request, reply and settlement are
-  one record, so a resend Tauri makes after the page could not read a reply is answered from it and reaches the unit
-  no second time, and the page sends with each request the oldest ticket and owner it may still name, below which
-  the shell keeps nothing; `vd_package_cancel` / `vd_package_finish` stop and release an owner;
+  `vd_package_adopt`, so the worker's own requests wait behind it; an open ticket's request and reply are one record,
+  so a resend Tauri makes after the page could not read a reply is answered from it and reaches the unit no second
+  time; settled tickets and finished owners are kept as ranges of numbers, a request on one of them is rejected and
+  sends nothing, and a report or terminate that arrives ahead of its request leaves the ticket ended; the page sends
+  with each request the oldest ticket it may still name, and one below it the shell still holds unsettled is one the
+  page gave up, which ends the connection with its slot; `vd_package_cancel` / `vd_package_finish` stop and release an owner;
   `vd_package_fail_delivery` / `vd_package_terminate` end the connection for a result still holding the slot, and
   the session's link watch and every later command report that end as `control-worker-gone`, since the close
-  records none on the connection; letting a session go tears the link down first, closing the connection outside
-  the worker's queue for a slot no page will adopt any more) + **the session teardown** (one epilogue
+  records none on the connection; letting a session go tears the link down first, starting the connection's close
+  outside the worker's queue while a package request is on its way or holds the slot, and a result that completes
+  after it lets its slot go) + **the session teardown** (one epilogue
   every way out lands on, the transport's `Connection::close`: unregister every address the session may still
   have registered, then shut the socket down and wait for the connection's threads, within one teardown budget —
   a replaced connection, an explicit disconnect, a dropped channel, a link that has already ended and the
