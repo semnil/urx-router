@@ -833,9 +833,10 @@ describe("Console Lock and a write outside a session", () => {
       await invoked(shell, "vd_disconnect");
       expect(confirms(shell).filter(asks), "the premise: it was asked").toHaveLength(1);
       expect(confirms(shell), "nothing asked after it").toHaveLength(1);
-      if (question === "write") {
-        expect(statusText()).toBe(t().status.writeLost(0));
-      } else expect(statusText()).toBe(LOST_BEFORE_COUNT);
+      // The firmware question comes before the write; the rate and write questions are inside it,
+      // so the line says what it sent.
+      if (question === "firmware") expect(statusText()).toBe(LOST_BEFORE_COUNT);
+      else expect(statusText()).toBe(t().status.writeLost(0));
       expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
       expect(errors(shell)).toEqual([]);
     },
@@ -876,7 +877,7 @@ describe("Console Lock and a write outside a session", () => {
     $("rate-choice-adopt").click();
     await invoked(shell, "vd_disconnect");
     expect($<HTMLSelectElement>("rate-picker").value, "the plan keeps its rate").toBe(rate);
-    expect(statusText()).toBe(LOST_BEFORE_COUNT);
+    expect(statusText()).toBe(t().status.writeLost(0));
     expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
     expect(errors(shell)).toEqual([]);
   });
@@ -964,6 +965,38 @@ describe("Console Lock and a write outside a session", () => {
       expect(confirms(shell), "the premise: it asked").toHaveLength(1);
       expect(statusText()).toBe(LOST_BEFORE_COUNT);
       expect(writesTo(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
+  // Releasing the clock is a write the unit takes, so a stop after it counts it with the rest.
+  it.each(["lock", "loss"] as const)(
+    "counts the Follow USB release among what Write to device sent when it stops after it (%s)",
+    SLOW,
+    async (stop) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      const shell = await bootDevice({
+        vd_get: clockReads(true, 96_000),
+        // The stop comes while the release is on the wire, which the unit takes.
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.FOLLOW_USB.id) {
+            if (stop === "lock") announceLock(box.shell!, 1);
+            else box.shell!.loseNotifications();
+          }
+          return null;
+        },
+      });
+      box.shell = shell;
+      expect($<HTMLSelectElement>("rate-picker").value, "the premise: the plan and the unit disagree").not.toBe(
+        "96000",
+      );
+      $("btn-write").click();
+      await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 15_000 });
+      $("rate-choice-release").click();
+      await invoked(shell, "vd_disconnect");
+      expect(writesTo(shell, PARAMS.FOLLOW_USB.id), "the premise: the release went out").toEqual([0]);
+      expect(shell.count("vd_set") + shell.count("vd_set_str"), "nothing after it").toBe(1);
+      expect(statusText()).toBe(stop === "lock" ? t().status.writeLocked(1) : t().status.writeLost(1));
       expect(errors(shell)).toEqual([]);
     },
   );

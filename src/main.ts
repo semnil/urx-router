@@ -5784,8 +5784,9 @@ if (!DEMO) {
   //
   // `signal` is the write's stop: once it has come — Console Lock, or the loss of the
   // connection's notifications — this throws it at its next step rather than asking, refusing
-  // or changing the plan, and a failure on the way says the stop rather than itself.
-  async function settleSampleRate(signal: AbortSignal): Promise<boolean> {
+  // or changing the plan, and a failure on the way says the stop rather than itself. `onWrote`
+  // is told when the Follow USB write it makes lands, so the write's count holds it.
+  async function settleSampleRate(signal: AbortSignal, onWrote?: () => void): Promise<boolean> {
     let clock;
     try {
       clock = await readClockState();
@@ -5898,6 +5899,7 @@ if (!DEMO) {
       showError(t().status.writeError(t().error.followUsbWrite(errorText(err))));
       return false;
     }
+    onWrote?.();
     setFollowUsbBadge(false);
     return true;
   }
@@ -5938,10 +5940,7 @@ if (!DEMO) {
       let report: ErrorReport = null;
       try {
         await withWrite(controller, "write", t().status.writeConnecting, t().status.writeError, async (device) => {
-          // Scene scope drops SAMPLE_RATE from the write set, so there is no
-          // rate to settle — the device keeps running at its own.
           const scope = getSettings().deviceScope;
-          if (scope !== "scene" && !(await settleSampleRate(signal))) return;
           // One attempt of the whole diff → confirm → send sequence. Returns the
           // sent/not-sent split when the send stopped part-way (so the caller can
           // offer a retry), or null when there is nothing left to do.
@@ -6231,6 +6230,10 @@ if (!DEMO) {
           // only when there is an outcome to restore.
           let wroteOutcome = false;
           try {
+            // Scene scope drops SAMPLE_RATE from the write set, so there is no rate to settle — the
+            // device keeps running at its own. Settled inside the write's count, so the Follow USB
+            // write it can make counts, and a stop during it ends on the same line as any other.
+            if (scope !== "scene" && !(await settleSampleRate(signal, () => sentSoFar++))) return;
             let stop = await attemptWrite(true);
             wroteOutcome = true;
             while (stop) {
