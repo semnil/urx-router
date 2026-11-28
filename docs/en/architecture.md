@@ -1877,12 +1877,13 @@ drag lands on the nearest.
   from that announcement to the announcement of the lock off: `vd.rs` takes the lock state as the transport
   receives each announcement — the transport shows it every notification as it queues it (`open_observed`), ahead
   of the batch that carries it, which can wait behind others on the cap of unfetched updates — and refuses a write
-  meanwhile with `writes-held` and the number of the fetch that carries the announcement. The hold is asked just
+  meanwhile with `writes-held` and the number of the first fetch that carries the announcement. The hold is asked just
   before the write's first byte would go out (the transport's send gate, `submit_gated`), under the gate the
   transport takes each frame out of its buffer under, so a lock received at any point before that byte holds the
-  write, however long ago the shell took it. The gate records the announcement it held the write on as it refuses,
-  and the refusal is worded from that record: a lock off the transport receives after the refusal changes neither the
-  refusal nor the fetch it names. To name that number it
+  write, however long ago the shell took it. The gate records the write as held on the announcement it refused on,
+  and the shell keeps that record, with the first fetch that handed the announcement on, until the refusal is worded
+  from it: what the unit announces and the page fetches after the refusal changes neither the refusal nor the fetch
+  it names. To name that number it
   waits for the announcement to reach the outbox, up to the page's own 5 s deadline, past which the refusal names
   none. So a write the page handed over before it knew of the lock does not reach the locked unit, however many
   updates wait; a batch that carries a lock announcement does not wait on the cap, so the next fetch hands it on.
