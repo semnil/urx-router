@@ -540,6 +540,30 @@ function shellHeld<T>(write: Promise<T>): Promise<T> {
   });
 }
 
+/** The connection the page follows, by its generation, or null while none is (`vdConnect`). */
+export function connectedEpoch(): number | null {
+  return connectionEpoch;
+}
+
+/**
+ * Whether the page refuses every write before it reaches the link (`vdSet`'s own holds): the
+ * connection lost its notifications, or the app knows the unit is under Console Lock. The control
+ * package's transport refuses its writes on the same holds (`package-transport.ts`).
+ */
+export function deviceWritesRefused(): boolean {
+  return writesLost() || writesHeld;
+}
+
+/**
+ * Settles once the page has handed on the fetch numbered `fetch` (`handedOn`): what a write the
+ * shell held for Console Lock waits for before its refusal is passed on (`shellHeld`), so whoever
+ * handles it finds the lock already taken. With no number, once a fetch that starts after this call
+ * has been handed on.
+ */
+export function untilHandedOn(fetch: number | undefined): Promise<void> {
+  return handedOn(fetch);
+}
+
 /** Set one parameter instance to an absolute broker value. */
 export function vdSet(paramId: number, x: number, y: number, value: number): Promise<void> {
   if (writesLost()) return lostWrite();
