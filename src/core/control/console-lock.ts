@@ -106,8 +106,9 @@ export interface LockWatchIo {
  * `onLock` once, where the caller stops its run. A loss of the connection's notifications calls
  * `onLost` once, since a lock the unit announced may then never be heard: the caller stops its run
  * on that too. `stop()` releases all of it. A failed registration or read rejects, with nothing left
- * registered or held: a write that cannot tell whether the unit is locked does not start. The caller
- * must have connected first.
+ * registered or held: a write that cannot tell whether the unit is locked does not start. Once the
+ * watch has told its caller of a stop, that rejection is the stop, not the failure. The caller must
+ * have connected first.
  */
 export async function watchConsoleLock(
   onLock: () => void,
@@ -116,9 +117,13 @@ export async function watchConsoleLock(
 ): Promise<LockWatch> {
   let tripped = false;
   let stopped = false;
+  // The first stop this watch told its caller of, which decides how the run ends: a start that
+  // fails after it rejects with it, whatever the call in flight failed with.
+  let told: Error | null = null;
   const trip = (): void => {
     if (tripped || stopped) return;
     tripped = true;
+    told ??= consoleLockAbort();
     holdDeviceWrites(true);
     onLock();
   };
@@ -127,6 +132,7 @@ export async function watchConsoleLock(
     ? (io.lost ?? onNotificationsLost)(() => {
         if (stopped || lostTold) return;
         lostTold = true;
+        told ??= notificationsLostAbort();
         onLost();
       })
     : () => {};
@@ -141,7 +147,7 @@ export async function watchConsoleLock(
     stopped = true;
     unlost();
     if (tripped) holdDeviceWrites(false);
-    throw err;
+    throw told ?? err;
   }
   const release = (): void => {
     if (stopped) return;
@@ -155,7 +161,7 @@ export async function watchConsoleLock(
     lockedAtStart = await readConsoleLock(io.get);
   } catch (err) {
     release();
-    throw err;
+    throw told ?? err;
   }
   // Locked already: the caller refuses, and writes are held until it lets go.
   if (lockedAtStart && !tripped) {
@@ -195,6 +201,9 @@ export async function watchRun(outer?: AbortSignal, io?: LockWatchIo): Promise<R
     );
   } catch (err) {
     outer?.removeEventListener("abort", follow);
+    // A stop already taken ends the run: it is handed back aborted, so the run ends through its
+    // own stop handling, with its report, rather than on the failure of the watch's start.
+    if (ctl.signal.aborted) return { signal: ctl.signal, lockedAtStart: false, stop: () => {} };
     throw err;
   }
   return {

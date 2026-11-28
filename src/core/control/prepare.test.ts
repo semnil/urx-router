@@ -397,6 +397,38 @@ describe("runPrepareModified", () => {
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
   });
 
+  // A stop that comes while the run's watch starts ends the run on it, even when the registration
+  // or the read it came during then fails: the report says the stop, and nothing is written.
+  it.each([
+    ["registration", "lock"],
+    ["registration", "loss"],
+    ["read", "lock"],
+    ["read", "loss"],
+  ] as const)("ends with its report on a %s that fails after a %s", async (phase, stop) => {
+    captureOk();
+    const announce = (): void => {
+      if (stop === "lock") mocks.lock.deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
+      else mocks.lost.lose?.();
+    };
+    if (phase === "registration")
+      mocks.vdParamsSubscribe.mockImplementation(async (_addrs: unknown, onUpdate: never) => {
+        mocks.lock.deliver = onUpdate;
+        announce();
+        throw new Error("connection-reset");
+      });
+    else
+      mocks.vdGet.mockImplementation(async () => {
+        announce();
+        throw new Error("connection-reset");
+      });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject(stop === "lock" ? { aborted: true, locked: true } : { aborted: true, lost: true });
+    expect(report.written).toBe(0);
+    expect(report.errors).toEqual([]);
+    expect(mocks.vdSet).not.toHaveBeenCalled();
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
   it("stops at the next command when the connection's notifications are lost under it", async () => {
     captureOk();
     let sent = 0;

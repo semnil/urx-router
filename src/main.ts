@@ -5381,7 +5381,9 @@ async function withDevice(
       // Release exactly the connection this action opened, by its epoch.
       await vdDisconnect(device.epoch);
     }
-  } catch (err) {
+  } catch (thrown) {
+    // Once a stop has come, the action ends on it, whatever the call in flight then failed with.
+    const err: unknown = writes?.signal.aborted && !isAbortError(thrown) ? writes.signal.reason : thrown;
     // A cancel surfaces as an AbortError; show the neutral "canceled" status rather than
     // wrapping it as an action failure — or, for a stop Console Lock or the loss of the
     // connection's notifications made, say which.
@@ -6245,7 +6247,9 @@ if (!DEMO) {
               stop = await attemptWrite(false);
             }
           } catch (err) {
-            if (!isAbortError(err)) throw err;
+            // Once the write has stopped, whatever the step it was on then failed with, the line is
+            // the stop and what it sent.
+            if (!isAbortError(err) && !signal.aborted) throw err;
             // A cancel taken in a LATER attempt throws out of it, and the neutral line
             // withDevice would write for that says nothing about what an earlier attempt took
             // back. Counted across attempts because each one adopts different keys: a key the
