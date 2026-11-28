@@ -506,11 +506,12 @@ const lostWrite = (): Promise<never> =>
   );
 
 /**
- * A write the shell refused because the unit announced Console Lock (vd.rs `Outbox::lock_fetch`),
+ * A write the shell refused because the unit announced Console Lock (vd.rs `Outbox::lock_hold`),
  * which it does until the unit announces the lock off: the refusal is passed on once the page has
  * handed on the fetch the shell names as the one carrying the announcement — at once when it already
- * has — so whoever handles the refusal finds the lock already taken, as it does with the page's own
- * refusal (`heldWrite`).
+ * has, and when the shell names none, once a fetch that starts after the refusal has been — so
+ * whoever handles the refusal finds the lock already taken, as it does with the page's own refusal
+ * (`heldWrite`).
  */
 function shellHeld<T>(write: Promise<T>): Promise<T> {
   return write.catch(async (error: unknown) => {
