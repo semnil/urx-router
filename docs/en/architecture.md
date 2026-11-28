@@ -3846,10 +3846,11 @@ aborts the write's controller with `consoleLockAbort`, which stops it at its nex
 the status line says how many writes the unit took (`status.writeLocked`), and writing again once the unit is
 unlocked compares the unit with the plan again and sends what differs then. The self-test and `--prepare-modified` connect on their own and take the same watch through
 `watchRun`, after the model check — so a unit of another model is still neither read nor written. A stop the watch
-has told of decides how the action ends, whatever the call in flight then comes back with: a registration or a first
-read of the lock that fails after a lock or a loss of the notifications has been heard ends the write on that stop,
-and the self-test and `--prepare-modified` return their report with it rather than the failure; a write's step
-that fails after the stop ends on the stop and what was sent.
+has told of decides how the action ends, whatever the call in flight then comes back with: once a lock or a loss of
+the notifications has been heard while the watch registers or reads the lock, the write ends on that stop whether the
+registration or the read then fails or the read says the unit is locked or unlocked — only a start that heard no stop
+refuses a unit locked at the start — and the self-test and `--prepare-modified` return their report with it; a
+write's step that fails after the stop ends on the stop and what was sent.
 
 **A self-test the lock stops** — or a loss of the connection's notifications, under which a lock would go unheard —
 once a write of it may have reached the unit (one has gone on the wire, counted as it goes) leaves the unit changed;

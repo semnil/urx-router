@@ -2512,17 +2512,21 @@ describe("runSelfTest and Console Lock", () => {
     expect(table.size).toBeGreaterThan(0);
   });
 
-  // A stop that comes while the run's watch starts ends the run on it, even when the registration
-  // or the read it came during then fails: the run returns its report, which says the stop, and
-  // nothing is written — the self-test and the restore alike.
-  const WATCH_START_CASES = [
-    ["registration", "lock"],
-    ["registration", "loss"],
-    ["read", "lock"],
-    ["read", "loss"],
-  ] as const;
-  // The watch's registration or its read of the lock announces the stop, then fails.
-  const failWatchStart = (phase: "registration" | "read", stop: "lock" | "loss"): void => {
+  // A stop that comes while the run's watch starts ends the run on it, whatever the registration or
+  // the read it came during then comes back with — a failure, or a read that says the unit is locked
+  // or unlocked: the run returns its report, which says the stop and no refusal, and nothing is
+  // written — the self-test and the restore alike.
+  const WATCH_START_CASES = (["registration", "read"] as const).flatMap((phase) =>
+    (["lock", "loss"] as const).flatMap((stop) =>
+      (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+    ),
+  );
+  // The watch's registration or its read of the lock announces the stop, then fails or answers.
+  const failWatchStart = (
+    phase: "registration" | "read",
+    stop: "lock" | "loss",
+    then: "fails" | "says locked" | "says unlocked",
+  ): void => {
     let deliver: ((p: ParamUpdate) => void) | null = null;
     let lose: (() => void) | null = null;
     vi.mocked(onNotificationsLost).mockImplementation((listener) => {
@@ -2539,55 +2543,61 @@ describe("runSelfTest and Console Lock", () => {
       deliver = onUpdate;
       if (phase === "registration") {
         announce();
-        throw new Error("connection-reset");
+        if (then === "fails") throw new Error("connection-reset");
       }
       return () => {
         deliver = null;
       };
     });
     const realGet = vi.mocked(vdGet).getMockImplementation()!;
-    let failed = false;
+    let answered = false;
     vi.mocked(vdGet).mockImplementation((id, x, y) => {
-      if (phase !== "read" || failed || id !== PARAMS.CONSOLE_LOCK.id) return realGet(id, x, y);
-      failed = true;
-      announce();
-      return Promise.reject(new Error("connection-reset"));
+      if (answered || id !== PARAMS.CONSOLE_LOCK.id) return realGet(id, x, y);
+      answered = true;
+      if (phase === "read") announce();
+      if (phase === "read" && then === "fails") return Promise.reject(new Error("connection-reset"));
+      return Promise.resolve(then === "says locked" ? 1 : 0);
     });
   };
 
-  it.each(WATCH_START_CASES)("ends with its report on a %s that fails after a %s", async (phase, stop) => {
+  it.each(WATCH_START_CASES)("ends with its report on a %s after a %s that then %s", async (phase, stop, then) => {
     const table = installMockDevice(populatedPlan());
     const before = new Map(table);
-    failWatchStart(phase, stop);
+    failWatchStart(phase, stop, then);
     const report = await runSelfTest(model, 0);
     vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
     expect(stop === "lock" ? report.locked : report.lost, "the report says the stop").toBe(true);
+    expect(report.refusal, "and no refusal").toBeUndefined();
     expect(report.aborted).toBe(true);
     expect(report.pendingRestore, "nothing was written, so nothing to put back").toBeUndefined();
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(table).toEqual(before);
   });
 
-  it.each(WATCH_START_CASES)("ends the restore with its report on a %s that fails after a %s", async (phase, stop) => {
-    installMockDevice(populatedPlan());
-    const stream = lockStream();
-    const realSet = vi.mocked(vdSet).getMockImplementation()!;
-    let writes = 0;
-    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
-      if (++writes === 3) stream.announce(1);
-      return realSet(id, x, y, v);
-    });
-    const pending = (await runSelfTest(model, 0)).pendingRestore!;
-    expect(pending, "the premise").toBeDefined();
-    vi.mocked(vdSet).mockClear().mockImplementation(realSet);
-    failWatchStart(phase, stop);
-    const restore = await restoreSelfTest(model, pending, 0);
-    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
-    expect(stop === "lock" ? restore.locked : restore.lost, "the report says the stop").toBe(true);
-    expect(restore.restored).toBeFalsy();
-    expect(restore.pendingRestore, "kept for another try").toBe(pending);
-    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
-  });
+  it.each(WATCH_START_CASES)(
+    "ends the restore with its report on a %s after a %s that then %s",
+    async (phase, stop, then) => {
+      installMockDevice(populatedPlan());
+      const stream = lockStream();
+      const realSet = vi.mocked(vdSet).getMockImplementation()!;
+      let writes = 0;
+      vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+        if (++writes === 3) stream.announce(1);
+        return realSet(id, x, y, v);
+      });
+      const pending = (await runSelfTest(model, 0)).pendingRestore!;
+      expect(pending, "the premise").toBeDefined();
+      vi.mocked(vdSet).mockClear().mockImplementation(realSet);
+      failWatchStart(phase, stop, then);
+      const restore = await restoreSelfTest(model, pending, 0);
+      vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+      expect(stop === "lock" ? restore.locked : restore.lost, "the report says the stop").toBe(true);
+      expect(restore.refusal, "and no refusal").toBeUndefined();
+      expect(restore.restored).toBeFalsy();
+      expect(restore.pendingRestore, "kept for another try").toBe(pending);
+      expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps the restore for another try when the unit is still locked, or is another model", async () => {
     const seed = populatedPlan();

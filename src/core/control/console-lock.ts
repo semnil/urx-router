@@ -107,8 +107,9 @@ export interface LockWatchIo {
  * `onLost` once, since a lock the unit announced may then never be heard: the caller stops its run
  * on that too. `stop()` releases all of it. A failed registration or read rejects, with nothing left
  * registered or held: a write that cannot tell whether the unit is locked does not start. Once the
- * watch has told its caller of a stop, that rejection is the stop, not the failure. The caller must
- * have connected first.
+ * watch has told its caller of a stop while it starts, the start rejects with that stop, whatever the
+ * registration and the read came back with, a read that says the unit is locked included: only a
+ * start that heard no stop says `lockedAtStart`. The caller must have connected first.
  */
 export async function watchConsoleLock(
   onLock: () => void,
@@ -117,8 +118,8 @@ export async function watchConsoleLock(
 ): Promise<LockWatch> {
   let tripped = false;
   let stopped = false;
-  // The first stop this watch told its caller of, which decides how the run ends: a start that
-  // fails after it rejects with it, whatever the call in flight failed with.
+  // The first stop this watch told its caller of, which decides how the run ends: a start it was
+  // told during rejects with it, whatever the calls in flight came back with.
   let told: Error | null = null;
   const trip = (): void => {
     if (tripped || stopped) return;
@@ -136,35 +137,39 @@ export async function watchConsoleLock(
         onLost();
       })
     : () => {};
-  let unsubscribe: () => void;
+  // The start is one step with one verdict: a stop this watch has told of is how it ends, whatever
+  // the registration and the read came back with; with none, their failure; with neither, the
+  // read's value.
+  let unsubscribe: (() => void) | null = null;
+  let lockedAtStart = false;
+  let failure: { err: unknown } | null = null;
   try {
     unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
       if (isConsoleLockAddr(p) && consoleLockedOf(p.value)) trip();
     });
+    lockedAtStart = await readConsoleLock(io.get);
   } catch (err) {
-    // A lock announced before the registration failed held writes on this watch's
-    // behalf; a watch that never started holds nothing, and hears nothing after this.
+    failure = { err };
+  }
+  if (told || failure) {
+    // A lock announced while the watch started held writes on its behalf; a watch that never
+    // started holds nothing, and hears nothing after this.
     stopped = true;
     unlost();
+    unsubscribe?.();
     if (tripped) holdDeviceWrites(false);
-    throw told ?? err;
+    throw told ?? failure?.err;
   }
+  const unregister = unsubscribe;
   const release = (): void => {
     if (stopped) return;
     stopped = true;
     unlost();
-    unsubscribe();
+    unregister?.();
     holdDeviceWrites(false);
   };
-  let lockedAtStart: boolean;
-  try {
-    lockedAtStart = await readConsoleLock(io.get);
-  } catch (err) {
-    release();
-    throw told ?? err;
-  }
   // Locked already: the caller refuses, and writes are held until it lets go.
-  if (lockedAtStart && !tripped) {
+  if (lockedAtStart) {
     tripped = true;
     holdDeviceWrites(true);
   }

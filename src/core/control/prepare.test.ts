@@ -397,32 +397,42 @@ describe("runPrepareModified", () => {
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
   });
 
-  // A stop that comes while the run's watch starts ends the run on it, even when the registration
-  // or the read it came during then fails: the report says the stop, and nothing is written.
-  it.each([
-    ["registration", "lock"],
-    ["registration", "loss"],
-    ["read", "lock"],
-    ["read", "loss"],
-  ] as const)("ends with its report on a %s that fails after a %s", async (phase, stop) => {
+  // A stop that comes while the run's watch starts ends the run on it, whatever the registration or
+  // the read it came during then comes back with — a failure, or a read that says the unit is locked
+  // or unlocked: the report says the stop, and nothing is written.
+  it.each(
+    (["registration", "read"] as const).flatMap((phase) =>
+      (["lock", "loss"] as const).flatMap((stop) =>
+        (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+      ),
+    ),
+  )("ends with its report on a %s after a %s that then %s", async (phase, stop, then) => {
     captureOk();
     const announce = (): void => {
       if (stop === "lock") mocks.lock.deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
       else mocks.lost.lose?.();
     };
-    if (phase === "registration")
-      mocks.vdParamsSubscribe.mockImplementation(async (_addrs: unknown, onUpdate: never) => {
-        mocks.lock.deliver = onUpdate;
+    const value = then === "says locked" ? 1 : 0;
+    mocks.vdParamsSubscribe.mockImplementation(async (_addrs: unknown, onUpdate: never) => {
+      mocks.lock.deliver = onUpdate;
+      if (phase === "registration") {
         announce();
-        throw new Error("connection-reset");
-      });
-    else
-      mocks.vdGet.mockImplementation(async () => {
+        if (then === "fails") throw new Error("connection-reset");
+      }
+      return () => {
+        mocks.lock.deliver = null;
+      };
+    });
+    mocks.vdGet.mockImplementation(async () => {
+      if (phase === "read") {
         announce();
-        throw new Error("connection-reset");
-      });
+        if (then === "fails") throw new Error("connection-reset");
+      }
+      return value;
+    });
     const report = await runPrepareModified(model);
     expect(report).toMatchObject(stop === "lock" ? { aborted: true, locked: true } : { aborted: true, lost: true });
+    if (stop === "loss") expect(report.locked, "a loss is not a lock").toBeUndefined();
     expect(report.written).toBe(0);
     expect(report.errors).toEqual([]);
     expect(mocks.vdSet).not.toHaveBeenCalled();
