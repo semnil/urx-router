@@ -832,10 +832,14 @@ carries a one-line map of the same directories and points here.
   alone) + the control package's requests (`vd/package.rs`, `PackageLink`: `vd_package_request` submits one request
   of the page's operation owner on the session's connection beside the worker's, through the same Console Lock
   gate for a write, and answers its K34 record; its result keeps the connection's single wire slot until
-  `vd_package_adopt`, so the worker's own requests wait behind it; `vd_package_cancel` / `vd_package_finish` stop
-  and release an owner; `vd_package_fail_delivery` / `vd_package_terminate` end the connection for a result still
-  holding the slot, and the session's link watch and every later command report that end as
-  `control-worker-gone`, since the close records none on the connection) + **the session teardown** (one epilogue
+  `vd_package_adopt`, so the worker's own requests wait behind it; each ticket's request, reply and settlement are
+  one record, so a resend Tauri makes after the page could not read a reply is answered from it and reaches the unit
+  no second time, and the page sends with each request the oldest ticket and owner it may still name, below which
+  the shell keeps nothing; `vd_package_cancel` / `vd_package_finish` stop and release an owner;
+  `vd_package_fail_delivery` / `vd_package_terminate` end the connection for a result still holding the slot, and
+  the session's link watch and every later command report that end as `control-worker-gone`, since the close
+  records none on the connection; letting a session go tears the link down first, closing the connection outside
+  the worker's queue for a slot no page will adopt any more) + **the session teardown** (one epilogue
   every way out lands on, the transport's `Connection::close`: unregister every address the session may still
   have registered, then shut the socket down and wait for the connection's threads, within one teardown budget —
   a replaced connection, an explicit disconnect, a dropped channel, a link that has already ended and the
@@ -1903,7 +1907,8 @@ drag lands on the nearest.
   none. So a write the page handed over before it knew of the lock does not reach the locked unit, however many
   updates wait; a batch that carries a lock announcement does not wait on the cap, so the next fetch hands it on.
   The page passes the refusal on only once it has handed that fetch on — or, when the refusal names none, a fetch
-  that starts after it — so whoever handles it finds the lock already taken.
+  that starts after it — so whoever handles it finds the lock already taken; once the connection the write went out
+  on is not the one the page follows, at once, since another connection's fetches carry nothing of it.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
