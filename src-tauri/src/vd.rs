@@ -204,6 +204,11 @@ pub enum Run {
 pub struct Outbox {
     state: Mutex<OutboxState>,
     changed: std::sync::Condvar,
+    /// Run once, on the worker, as the next request it makes comes back and before its result
+    /// is worded (`Session::run_with`): where a case makes the unit announce something between
+    /// the two.
+    #[cfg(test)]
+    after_request: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Default)]
@@ -222,14 +227,14 @@ struct OutboxState {
     /// receives it (`hear`), ahead of the batch that carries it, which can wait behind others.
     heard_locked: bool,
     /// Announcements of Console Lock received, and put in `runs` since: equal once every one
-    /// received is on its way to the page.
+    /// received is on its way to the page. An announcement is named by its place in this count.
     heard: u64,
     put_announcements: u64,
-    /// The last announcement put in `runs` was on.
-    locked: bool,
-    /// The number of the fetch that hands the page the announcement `locked` stands on,
-    /// once an answer carries it; none while it is still in `runs`.
-    locked_fetch: Option<u64>,
+    /// The announcements an answer has handed to the page, and the number of the last fetch
+    /// whose answer carried any: every announcement up to this count went out in that fetch or
+    /// in one before it.
+    handed_announcements: u64,
+    handed_fetch: u64,
 }
 
 /// How many updates the outbox holds before the delivery waits for the page: past it,
@@ -243,13 +248,12 @@ const OUTBOX_UPDATES: usize = 8192;
 const LOCK_HAND_ON_WAIT: Duration = Duration::from_secs(5);
 
 impl Outbox {
-    /// Whether the unit's last announcement of Console Lock the transport received was on: what
+    /// The announcement of Console Lock on that the transport received last, by its place among
+    /// the announcements received, while no announcement of the lock off has come after it: what
     /// a write's send gate asks just before its first byte (`Session::set`).
-    fn heard_locked(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .heard_locked
+    fn lock_heard(&self) -> Option<u64> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        state.heard_locked.then_some(state.heard)
     }
 
     /// The transport received an announcement of Console Lock, `on` or off (its receipt
@@ -262,14 +266,14 @@ impl Outbox {
     }
 
     /// Adds a delivered batch's runs, waiting while the page has more than
-    /// `OUTBOX_UPDATES` unfetched; nothing is added once the session has ended. `lock` is
-    /// the batch's last announcement of Console Lock, on or off, and how many it carries. A
-    /// batch that carries one does not wait: the next fetch has to be the one that hands it
-    /// to the page, whatever is waiting.
-    fn put(&self, runs: Vec<Run>, lock: Option<(bool, u64)>) {
+    /// `OUTBOX_UPDATES` unfetched; nothing is added once the session has ended.
+    /// `announcements` is how many announcements of Console Lock, on or off, the batch
+    /// carries. A batch that carries one does not wait: the next fetch has to be the one that
+    /// hands it to the page, whatever is waiting.
+    fn put(&self, runs: Vec<Run>, announcements: u64) {
         let count: usize = runs.iter().map(Run::len).sum();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        while lock.is_none() && !state.ended && state.records > OUTBOX_UPDATES {
+        while announcements == 0 && !state.ended && state.records > OUTBOX_UPDATES {
             state = self
                 .changed
                 .wait_timeout(state, Duration::from_millis(100))
@@ -279,11 +283,7 @@ impl Outbox {
         if state.ended {
             return;
         }
-        if let Some((on, announcements)) = lock {
-            state.locked = on;
-            state.locked_fetch = None;
-            state.put_announcements += announcements;
-        }
+        state.put_announcements += announcements;
         state.records += count;
         state.runs.extend(runs);
         self.changed.notify_all();
@@ -335,24 +335,24 @@ impl Outbox {
         }
         state.records = 0;
         let runs = std::mem::take(&mut state.runs);
-        if state.locked && state.locked_fetch.is_none() {
-            state.locked_fetch = Some(seq);
+        if state.put_announcements > state.handed_announcements {
+            state.handed_announcements = state.put_announcements;
+            state.handed_fetch = seq;
         }
         state.answered = Some((seq, runs.clone()));
         state.expect = seq + 1;
         Ok(Some(runs))
     }
 
-    /// Whether the unit's last announcement of Console Lock the transport received was on —
-    /// the shell sends no write meanwhile, whether or not the page has it yet: a write handed
-    /// over before the page knew would otherwise reach a locked unit — and if so, the number of
-    /// the fetch that hands it to the page: the next one while it is unfetched. That number is
-    /// known once the announcement is in `runs`, which this waits up to `wait` for; past it, or
-    /// once the session has ended, the hold names none.
-    pub fn lock_hold(&self, wait: Duration) -> Option<Option<u64>> {
+    /// The number of the fetch that hands the page the announcement of Console Lock a write was
+    /// held on (`lock_heard`, by its place among those received): the one whose answer carried
+    /// it, or the next one while it is unfetched — whatever the unit announced after it. That
+    /// number is known once the announcement is in `runs`, which this waits up to `wait` for;
+    /// past it, or once the session has ended, it names none.
+    pub fn lock_hold(&self, announcement: u64, wait: Duration) -> Option<u64> {
         let end = Instant::now() + wait;
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        while state.heard_locked && state.put_announcements < state.heard && !state.ended {
+        while state.put_announcements < announcement && !state.ended {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 break;
@@ -363,13 +363,27 @@ impl Outbox {
                 .unwrap_or_else(|p| p.into_inner())
                 .0;
         }
-        if !state.heard_locked {
+        if state.put_announcements < announcement {
             return None;
         }
-        Some(
-            (state.put_announcements == state.heard)
-                .then(|| state.locked_fetch.unwrap_or(state.expect)),
-        )
+        Some(if state.handed_announcements >= announcement {
+            state.handed_fetch
+        } else {
+            state.expect
+        })
+    }
+
+    /// Runs the case's `after_request`, once.
+    #[cfg(test)]
+    fn after_request(&self) {
+        let hook = self
+            .after_request
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     /// The session is over: a waiting fetch and a waiting delivery are let go.
@@ -900,6 +914,7 @@ mod imp {
         BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, LOCK_HAND_ON_WAIT, NOT_SENT,
         WRITES_HELD,
     };
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
@@ -1070,9 +1085,9 @@ mod imp {
         batch: NotificationBatch,
     ) {
         let mut runs = Runs::default();
-        // The batch's last announcement of Console Lock, on or off, and how many it carries:
-        // every one, routed or not, as the receipt observer hears every one (`hear`).
-        let mut lock: Option<(bool, u64)> = None;
+        // How many announcements of Console Lock, on or off, the batch carries: every one,
+        // routed or not, as the receipt observer hears every one (`hear`).
+        let mut announcements = 0;
         {
             let routes = routes.lock().unwrap_or_else(|p| p.into_inner());
             for record in &batch.records {
@@ -1090,8 +1105,8 @@ mod imp {
                         }
                     }
                     payload => {
-                        if let Some(on) = console_lock(payload) {
-                            lock = Some((on, lock.map_or(0, |(_, n)| n) + 1));
+                        if console_lock(payload).is_some() {
+                            announcements += 1;
                         }
                         let update = match payload {
                             Notification::Numeric { address, value } => ParamUpdate {
@@ -1124,7 +1139,7 @@ mod imp {
             }
         }
         // Outside the routes lock: a subscribe switching routes must not wait on the page.
-        outbox.put(runs.0, lock);
+        outbox.put(runs.0, announcements);
         if let Some(connection) = connection.get() {
             connection.adopt_notifications(batch.ticket);
         }
@@ -1268,6 +1283,30 @@ mod imp {
         ParameterAddress { param_id, x, y }
     }
 
+    /// A write's send gate for the unit's Console Lock, with what it decided: the
+    /// announcement it held the write on (`Outbox::lock_heard`), recorded as it refuses, so the
+    /// refusal is worded from that verdict and not from whatever the unit announced after it.
+    struct LockGate {
+        gate: SendGate,
+        /// The announcement the gate held the write on; 0 while it has held none.
+        held_on: Arc<AtomicU64>,
+    }
+
+    impl LockGate {
+        fn new(outbox: Arc<Outbox>) -> Self {
+            let held_on = Arc::new(AtomicU64::new(0));
+            let verdict = Arc::clone(&held_on);
+            let gate: SendGate = Box::new(move || match outbox.lock_heard() {
+                Some(announcement) => {
+                    verdict.store(announcement, Ordering::SeqCst);
+                    false
+                }
+                None => true,
+            });
+            LockGate { gate, held_on }
+        }
+    }
+
     /// The worker's view of the session: the connection, the routes its notification
     /// handler reads, and the subscriptions it holds.
     struct Session {
@@ -1297,31 +1336,40 @@ mod imp {
             self.run_with(req, at, None)
         }
 
-        /// `run`, with a send gate when `gate` is given: a request the gate held fails as the
-        /// write the unit's Console Lock holds (`held`).
+        /// `run`, with the send gate of the unit's Console Lock when `gate` is given: a request
+        /// the gate held fails as the write the lock holds (`held`), on the gate's own verdict,
+        /// whatever the unit announced after it.
         fn run_with(
             &mut self,
             req: Request,
             at: &str,
-            gate: Option<SendGate>,
+            gate: Option<LockGate>,
         ) -> Result<Option<ReadValue>, String> {
             let write = matches!(req, Request::SetNumeric(..) | Request::SetText(..));
-            let gated = gate.is_some();
-            match request(&self.connection, req, gate) {
+            let (send_gate, verdict) = match gate {
+                Some(LockGate { gate, held_on }) => (Some(gate), Some(held_on)),
+                None => (None, None),
+            };
+            let outcome = request(&self.connection, req, send_gate);
+            #[cfg(test)]
+            self.outbox.after_request();
+            match outcome {
                 Outcome::Success { value, .. } => Ok(value),
                 Outcome::Failure { failure, evidence } => {
-                    if gated
-                        && evidence == Evidence::NotSent
-                        && matches!(
-                            failure,
-                            RequestFailure::Cause {
-                                code: RequestCause::PreconditionFailed,
-                                ..
-                            }
-                        )
-                        && self.outbox.heard_locked()
-                    {
-                        return Err(self.held());
+                    let held_on = verdict
+                        .map(|held_on| held_on.load(Ordering::SeqCst))
+                        .filter(|&announcement| announcement != 0);
+                    if let Some(announcement) = held_on.filter(|_| {
+                        evidence == Evidence::NotSent
+                            && matches!(
+                                failure,
+                                RequestFailure::Cause {
+                                    code: RequestCause::PreconditionFailed,
+                                    ..
+                                }
+                            )
+                    }) {
+                        return Err(self.held(announcement));
                     }
                     if matches!(
                         failure,
@@ -1371,19 +1419,19 @@ mod imp {
         /// (`Connection::submit_gated`), under the gate it takes each announcement under, so a
         /// lock received at any point before that byte holds the write (`held`).
         fn set(&mut self, req: Request, at: String) -> Result<(), String> {
-            let outbox = Arc::clone(&self.outbox);
-            let gate: SendGate = Box::new(move || !outbox.heard_locked());
+            let gate = LockGate::new(Arc::clone(&self.outbox));
             self.run_with(req, &at, Some(gate)).map(|_| ())
         }
 
-        /// A write the unit's Console Lock held: refused with `writes-held` and the number of the
-        /// fetch that hands the page the announcement, once that is known (`Outbox::lock_hold`).
-        fn held(&self) -> String {
-            match self.outbox.lock_hold(LOCK_HAND_ON_WAIT) {
-                Some(Some(fetch)) => {
+        /// A write the unit's Console Lock held on `announcement` (`Outbox::lock_heard`):
+        /// refused with `writes-held` and the number of the fetch that hands the page that
+        /// announcement, once that is known (`Outbox::lock_hold`).
+        fn held(&self, announcement: u64) -> String {
+            match self.outbox.lock_hold(announcement, LOCK_HAND_ON_WAIT) {
+                Some(fetch) => {
                     format!("{WRITES_HELD}: the unit announced Console Lock (fetch {fetch})")
                 }
-                _ => format!("{WRITES_HELD}: the unit announced Console Lock"),
+                None => format!("{WRITES_HELD}: the unit announced Console Lock"),
             }
         }
 
@@ -2501,13 +2549,13 @@ mod imp {
                     .map(|r| r.len()),
                 Some(0)
             );
-            outbox.put(vec![meter_run(1, -10)], None);
-            outbox.put(vec![meter_run(2, -20), meter_run(1, -30)], None);
+            outbox.put(vec![meter_run(1, -10)], 0);
+            outbox.put(vec![meter_run(2, -20), meter_run(1, -30)], 0);
             assert_eq!(
                 run_values(outbox.take(1, Duration::ZERO).unwrap().unwrap()),
                 vec![json!(-10), json!(-20), json!(-30)]
             );
-            outbox.put(vec![meter_run(1, -40)], None);
+            outbox.put(vec![meter_run(1, -40)], 0);
             outbox.end();
             assert_eq!(
                 run_values(outbox.take(2, Duration::ZERO).unwrap().unwrap()),
@@ -2517,7 +2565,7 @@ mod imp {
                 outbox.take(3, Duration::from_secs(5)).unwrap().is_none(),
                 "the end, at once"
             );
-            outbox.put(vec![meter_run(1, -50)], None);
+            outbox.put(vec![meter_run(1, -50)], 0);
             assert!(
                 outbox.take(3, Duration::ZERO).unwrap().is_none(),
                 "nothing is added after the end"
@@ -2531,12 +2579,12 @@ mod imp {
         #[test]
         fn a_resend_gets_its_answer_again_until_the_next_number_acknowledges_it() {
             let outbox = Outbox::default();
-            outbox.put(vec![meter_run(1, -10)], None);
+            outbox.put(vec![meter_run(1, -10)], 0);
             assert_eq!(
                 run_values(outbox.take(0, Duration::ZERO).unwrap().unwrap()),
                 vec![json!(-10)]
             );
-            outbox.put(vec![meter_run(1, -20)], None);
+            outbox.put(vec![meter_run(1, -20)], 0);
             assert_eq!(
                 run_values(outbox.take(0, Duration::ZERO).unwrap().unwrap()),
                 vec![json!(-10)],
@@ -2584,7 +2632,7 @@ mod imp {
             }
             let resend = fetch();
             thread::sleep(Duration::from_millis(50));
-            outbox.put(vec![meter_run(1, -10)], None);
+            outbox.put(vec![meter_run(1, -10)], 0);
             for answer in [first, resend] {
                 assert_eq!(
                     run_values(answer.join().unwrap().unwrap().unwrap()),
@@ -2597,43 +2645,47 @@ mod imp {
         /// hands it over: heard at receipt, then put with the batch.
         fn announce(outbox: &Outbox, runs: Vec<super::super::Run>, on: bool) {
             outbox.hear(on);
-            outbox.put(runs, Some((on, 1)));
+            outbox.put(runs, 1);
         }
 
-        /// The hold as a write meets it, without waiting.
-        fn hold(outbox: &Outbox) -> Option<Option<u64>> {
-            outbox.lock_hold(Duration::ZERO)
+        /// The fetch a write held on `announcement` names, without waiting.
+        fn hold(outbox: &Outbox, announcement: u64) -> Option<u64> {
+            outbox.lock_hold(announcement, Duration::ZERO)
         }
 
-        // From the unit's announcement of Console Lock to its announcement of the lock off,
-        // the outbox names the fetch that hands the announcement to the page — the next one
-        // while it is unfetched — whether or not the page has acknowledged it.
+        // From the unit's announcement of Console Lock to its announcement of the lock off, a
+        // write is held on that announcement, and the outbox names the fetch that hands it to
+        // the page — the next one while it is unfetched — whether or not the page has
+        // acknowledged it, and whatever the unit announced after it.
         #[test]
         fn a_lock_is_held_from_its_announcement_to_the_announcement_of_the_lock_off() {
             let outbox = Outbox::default();
-            outbox.put(vec![meter_run(1, -10)], None);
-            assert_eq!(hold(&outbox), None);
+            outbox.put(vec![meter_run(1, -10)], 0);
+            assert_eq!(outbox.lock_heard(), None);
             outbox.take(0, Duration::ZERO).unwrap();
             announce(&outbox, vec![meter_run(1, -20)], true);
+            assert_eq!(outbox.lock_heard(), Some(1));
             assert_eq!(
-                hold(&outbox),
-                Some(Some(1)),
+                hold(&outbox, 1),
+                Some(1),
                 "not fetched: the next fetch hands it on"
             );
             outbox.take(1, Duration::ZERO).unwrap();
-            assert_eq!(hold(&outbox), Some(Some(1)), "fetched");
+            assert_eq!(hold(&outbox, 1), Some(1), "fetched");
             outbox.take(2, Duration::ZERO).unwrap();
-            assert_eq!(hold(&outbox), Some(Some(1)), "acknowledged, still locked");
-            outbox.put(vec![meter_run(1, -30)], None);
-            assert_eq!(hold(&outbox), Some(Some(1)), "other announcements leave it");
+            assert_eq!(hold(&outbox, 1), Some(1), "acknowledged");
+            outbox.put(vec![meter_run(1, -30)], 0);
+            assert_eq!(outbox.lock_heard(), Some(1), "other announcements leave it");
             announce(&outbox, vec![meter_run(1, -40)], false);
-            assert_eq!(hold(&outbox), None, "the lock off");
-            announce(&outbox, vec![meter_run(1, -50)], true);
+            assert_eq!(outbox.lock_heard(), None, "the lock off");
             assert_eq!(
-                hold(&outbox),
-                Some(Some(3)),
-                "locked again, in the next fetch"
+                hold(&outbox, 1),
+                Some(1),
+                "a write held on the lock still names its fetch"
             );
+            announce(&outbox, vec![meter_run(1, -50)], true);
+            assert_eq!(outbox.lock_heard(), Some(3), "locked again");
+            assert_eq!(hold(&outbox, 3), Some(3), "in the next fetch");
         }
 
         fn flood() -> super::super::Run {
@@ -2654,7 +2706,7 @@ mod imp {
         #[test]
         fn a_lock_announcement_is_not_held_back_by_the_cap() {
             let outbox = Arc::new(Outbox::default());
-            outbox.put(vec![flood()], None);
+            outbox.put(vec![flood()], 0);
             let lock = {
                 let outbox = Arc::clone(&outbox);
                 thread::spawn(move || announce(&outbox, vec![meter_run(1, -10)], true))
@@ -2667,10 +2719,10 @@ mod imp {
                 );
                 thread::sleep(Duration::from_millis(1));
             }
-            assert_eq!(hold(&outbox), Some(Some(0)), "held, in the next fetch");
+            assert_eq!(hold(&outbox, 1), Some(0), "held, in the next fetch");
             let held = {
                 let outbox = Arc::clone(&outbox);
-                thread::spawn(move || outbox.put(vec![meter_run(1, -20)], None))
+                thread::spawn(move || outbox.put(vec![meter_run(1, -20)], 0))
             };
             thread::sleep(Duration::from_millis(50));
             assert!(
@@ -2681,7 +2733,7 @@ mod imp {
             assert_eq!(runs.len(), 2, "the flood and the lock, in order");
             held.join().unwrap();
             announce(&outbox, vec![meter_run(1, -30)], false);
-            assert_eq!(hold(&outbox), None);
+            assert_eq!(outbox.lock_heard(), None);
         }
 
         // A lock announced while a batch ahead of it waits past the cap is not in the outbox
@@ -2690,22 +2742,19 @@ mod imp {
         #[test]
         fn a_lock_heard_behind_a_waiting_batch_holds_the_next_write_at_once() {
             let outbox = Arc::new(Outbox::default());
-            outbox.put(vec![flood()], None);
+            outbox.put(vec![flood()], 0);
             let waiting = {
                 let outbox = Arc::clone(&outbox);
-                thread::spawn(move || outbox.put(vec![meter_run(1, -10)], None))
+                thread::spawn(move || outbox.put(vec![meter_run(1, -10)], 0))
             };
             thread::sleep(Duration::from_millis(50));
             assert!(!waiting.is_finished(), "the premise: the batch ahead waits");
             outbox.hear(true);
-            assert_eq!(
-                hold(&outbox),
-                Some(None),
-                "held at receipt, no fetch carries it yet"
-            );
+            assert_eq!(outbox.lock_heard(), Some(1), "held at receipt");
+            assert_eq!(hold(&outbox, 1), None, "no fetch carries it yet");
             let refusal = {
                 let outbox = Arc::clone(&outbox);
-                thread::spawn(move || outbox.lock_hold(Duration::from_secs(5)))
+                thread::spawn(move || outbox.lock_hold(1, Duration::from_secs(5)))
             };
             thread::sleep(Duration::from_millis(50));
             assert!(
@@ -2714,10 +2763,10 @@ mod imp {
             );
             assert_eq!(outbox.take(0, Duration::ZERO).unwrap().unwrap().len(), 1);
             waiting.join().unwrap();
-            outbox.put(vec![meter_run(1, -20)], Some((true, 1)));
+            outbox.put(vec![meter_run(1, -20)], 1);
             assert_eq!(
                 refusal.join().unwrap(),
-                Some(Some(1)),
+                Some(1),
                 "the fetch after the flood"
             );
             let runs = outbox.take(1, Duration::ZERO).unwrap().unwrap();
@@ -2729,7 +2778,28 @@ mod imp {
                 "the waiting batch, then the lock, in receive order"
             );
             outbox.hear(false);
-            assert_eq!(hold(&outbox), None, "the lock off, as it is received");
+            assert_eq!(outbox.lock_heard(), None, "the lock off, as it is received");
+        }
+
+        // A write held on a lock names the fetch that carries that lock whatever the unit
+        // announced after it: the lock off received while the announcement still waits to be
+        // put does not take the fetch away, and the fetch carries the lock and its lock off.
+        #[test]
+        fn a_hold_names_its_lock_s_fetch_when_the_lock_off_follows_it() {
+            let outbox = Arc::new(Outbox::default());
+            outbox.hear(true);
+            let refusal = {
+                let outbox = Arc::clone(&outbox);
+                thread::spawn(move || outbox.lock_hold(1, Duration::from_secs(5)))
+            };
+            outbox.hear(false);
+            thread::sleep(Duration::from_millis(50));
+            assert!(
+                !refusal.is_finished(),
+                "it waits for the announcement it was held on"
+            );
+            outbox.put(vec![meter_run(1, -10), meter_run(1, -20)], 2);
+            assert_eq!(refusal.join().unwrap(), Some(0));
         }
 
         // A hold whose announcement never reaches the outbox — the page stopped fetching — names
@@ -2738,9 +2808,11 @@ mod imp {
         fn a_hold_names_no_fetch_when_the_announcement_does_not_arrive() {
             let outbox = Outbox::default();
             outbox.hear(true);
-            assert_eq!(outbox.lock_hold(Duration::from_millis(20)), Some(None));
+            assert_eq!(outbox.lock_hold(1, Duration::from_millis(20)), None);
             outbox.end();
-            assert_eq!(outbox.lock_hold(Duration::from_secs(5)), Some(None));
+            let started = Instant::now();
+            assert_eq!(outbox.lock_hold(1, Duration::from_secs(5)), None);
+            assert!(started.elapsed() < Duration::from_secs(1), "at once");
         }
 
         // The shell refuses a write from the unit's announcement of Console Lock to its
@@ -2774,7 +2846,11 @@ mod imp {
             };
             announce(1);
             let until = Instant::now() + Duration::from_secs(5);
-            while outbox.lock_hold(Duration::ZERO).is_none() {
+            while outbox
+                .lock_heard()
+                .and_then(|announcement| outbox.lock_hold(announcement, Duration::ZERO))
+                .is_none()
+            {
                 assert!(
                     Instant::now() < until,
                     "the announcement reaches the outbox"
@@ -2803,7 +2879,7 @@ mod imp {
             assert_eq!(writes(), 0, "nothing was sent for the held writes");
             announce(0);
             let until = Instant::now() + Duration::from_secs(5);
-            while outbox.lock_hold(Duration::ZERO).is_some() {
+            while outbox.lock_heard().is_some() {
                 assert!(Instant::now() < until, "the lock off reaches the outbox");
                 thread::sleep(Duration::from_millis(1));
             }
@@ -2843,13 +2919,14 @@ mod imp {
                 "data": { "current_value": 1 },
             }));
             let until = Instant::now() + Duration::from_secs(5);
-            while outbox.lock_hold(Duration::ZERO).is_none() {
+            while outbox.lock_heard().is_none() {
                 assert!(Instant::now() < until, "the transport receives the lock");
                 thread::sleep(Duration::from_millis(1));
             }
+            let heard = outbox.lock_heard().unwrap();
             assert_eq!(
-                outbox.lock_hold(Duration::ZERO),
-                Some(None),
+                outbox.lock_hold(heard, Duration::ZERO),
+                None,
                 "the premise: the lock waits behind the cap"
             );
             let writing = {
@@ -2869,6 +2946,60 @@ mod imp {
                     "{WRITES_HELD}: the unit announced Console Lock (fetch {})",
                     first + 1
                 ))
+            );
+            let writes = unit
+                .seen()
+                .iter()
+                .filter(|uri| uri.as_str() == "/vd/parameters/1:0:0?operation=value")
+                .count();
+            assert_eq!(writes, 0, "nothing was sent for the held write");
+        }
+
+        // A write the send gate held on the unit's Console Lock is refused as held, naming the
+        // fetch that carries the lock, though the transport receives the lock off between the
+        // refusal and its wording: the verdict is the gate's own, taken as it refused.
+        #[test]
+        fn a_write_held_on_a_lock_stays_held_when_the_lock_off_comes_before_its_wording() {
+            let (tx, unit, _) = connected(plain);
+            let (params, _seen) = subscriber();
+            params_subscribe(
+                tx.clone(),
+                vec![(CONSOLE_LOCK_PARAM, 0, 0), (1, 0, 0)],
+                params,
+            )
+            .unwrap();
+            let outbox = OUTBOX.with(|current| current.borrow().clone()).unwrap();
+            let first = FETCHED.with(|next| next.get());
+            unit.push(json!({
+                "method": "notify",
+                "uri": format!("/vd/parameters/{CONSOLE_LOCK_PARAM}:0:0"),
+                "data": { "current_value": 1 },
+            }));
+            let until = Instant::now() + Duration::from_secs(5);
+            while outbox
+                .lock_heard()
+                .and_then(|announcement| outbox.lock_hold(announcement, Duration::ZERO))
+                .is_none()
+            {
+                assert!(
+                    Instant::now() < until,
+                    "the announcement reaches the outbox"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            // The lock off, as the transport receives it, after the gate has held the write.
+            let off = Arc::clone(&outbox);
+            *outbox.after_request.lock().unwrap() = Some(Box::new(move || off.hear(false)));
+            assert_eq!(
+                set(tx.clone(), 1, 0, 0, 5),
+                Err(format!(
+                    "{WRITES_HELD}: the unit announced Console Lock (fetch {first})"
+                ))
+            );
+            assert_eq!(
+                outbox.lock_heard(),
+                None,
+                "the premise: the lock off came before the wording"
             );
             let writes = unit
                 .seen()
