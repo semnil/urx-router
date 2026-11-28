@@ -1868,11 +1868,11 @@ drag lands on the nearest.
   page, so every later write on that connection is refused before it is sent (`notifications-lost`), whichever
   operation sends it, and a live session ends with that code — through its link watch, at once if the watch is
   registered after the loss. An operation running on the connection stops with that cause at its next command, as
-  it stops on a Console Lock (its lock watch is told, `onNotificationsLost`): Write to device says how much it sent
-  — numeric values, Sweet Spot presets and names counted alike — asks nothing more and acts on no answer to a
+  it stops on a Console Lock (its lock watch is told, `onNotificationsLost`): Write to device says how many writes the unit took
+  — numeric values, Sweet Spot presets and names counted alike, re-sends included, with no total — asks nothing more and acts on no answer to a
   question it had open when the stop came (`askWhileWriting`), and offers no retry on that connection; a self-test
   that may have written — a write accepted, or one whose answer was lost, and not one the page or the shell refused
-  before sending it (`refusedBeforeSending`) — keeps what its restore needs for Restore after self-test on a later
+  before sending it, nor one the transport never sent, which the shell marks `not-sent` (`refusedBeforeSending`) — keeps what its restore needs for Restore after self-test on a later
   connection. The next connection starts clean. A Console Lock the unit announced holds the writes in the shell
   from that announcement to the announcement of the lock off: `vd.rs` takes the lock state as the transport
   receives each announcement — the transport shows it every notification as it queues it (`open_observed`), ahead
@@ -3838,7 +3838,7 @@ lands while that read is out is the newer of the two, and the read is not taken 
 after connecting and refuses a locked unit with `error.consoleLocked` before it asks anything (`withDevice`'s
 `writes` option). While it runs it is registered for the lock state's notify (`watchConsoleLock`), and a lock that arrives
 aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
-the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
+the status line says how many writes the unit took (`status.writeLocked`), and writing again once the unit is
 unlocked compares the unit with the plan again and sends what differs then. The self-test and `--prepare-modified` connect on their own and take the same watch through
 `watchRun`, after the model check — so a unit of another model is still neither read nor written.
 

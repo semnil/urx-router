@@ -808,10 +808,10 @@ export const ja: Messages = {
       `${n} 件の設定を書き込みましたが、${unread} 件を読み戻せず、デバイスの状態を確認できていません`,
     writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
-    writeLocked: (sent: number, total: number): string =>
-      `本体が Console Lock になったため、書き込みを止めました: ${total} 件中 ${sent} 件を送りました。ロックを外してからもう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
-    writeLost: (sent: number, total: number): string =>
-      `デバイスが知らせた変更を取得できなかったため、書き込みを止めました: ${total} 件中 ${sent} 件を送りました。もう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
+    writeLocked: (sent: number): string =>
+      `本体が Console Lock になったため、書き込みを止めました: 本体が受け取った書き込みは ${sent} 件です。ロックを外してからもう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
+    writeLost: (sent: number): string =>
+      `デバイスが知らせた変更を取得できなかったため、書き込みを止めました: 本体が受け取った書き込みは ${sent} 件です。もう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
     consoleLocked: "本体が Console Lock 中です — 本体でロックを外すまで、アプリからは何も送りません",
     consoleUnlocked: "本体の Console Lock が外れました — 編集はまた本体へ送られます",
     consoleLockedNotSent: "本体が Console Lock 中のため、送りませんでした",

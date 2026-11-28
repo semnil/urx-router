@@ -591,10 +591,7 @@ describe("Console Lock and a write outside a session", () => {
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set"), "nothing after the write on the wire").toBe(3);
     expect(shell.count("vd_set_str")).toBe(0);
-    // The total is read out of the line and put back, so the assertion pins the whole frame.
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLocked(3, total));
-    expect(total).toBeGreaterThan(3);
+    expect(statusText()).toBe(t().status.writeLocked(3));
     expect(errors(shell)).toEqual([]);
   });
 
@@ -617,9 +614,7 @@ describe("Console Lock and a write outside a session", () => {
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set"), "nothing after the write on the wire").toBe(3);
     expect(shell.count("vd_set_str")).toBe(0);
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLost(3, total));
-    expect(total).toBeGreaterThan(3);
+    expect(statusText()).toBe(t().status.writeLost(3));
     expect(confirms(shell), "no retry is offered").toHaveLength(1);
     expect(errors(shell)).toEqual([]);
   });
@@ -639,10 +634,34 @@ describe("Console Lock and a write outside a session", () => {
     box.shell = shell;
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
-    expect(statusText(), "before it knows how much it is to send, the stop alone").toBe(LOST_BEFORE_COUNT);
+    expect(statusText(), "nothing sent yet").toBe(t().status.writeLost(0));
     expect(shell.count("vd_set")).toBe(0);
     expect(errors(shell)).toEqual([]);
   });
+
+  // A read that fails once the write has stopped does not take the stop's place on the line.
+  it.each(["lock", "loss"] as const)(
+    "says the stop, not the read failure, when a read fails after Write to device stopped (%s)",
+    SLOW,
+    async (stop) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      let reads = 0;
+      const read = clockReads(false, 48_000);
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) => {
+          if (++reads !== 20) return read(a);
+          if (stop === "lock") announceLock(box.shell!, 1);
+          else box.shell!.loseNotifications();
+          return new Promise((_, reject) => setTimeout(() => reject(new Error("read-refused")), 100));
+        },
+      });
+      box.shell = shell;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      expect(statusText()).toBe(stop === "lock" ? t().status.writeLocked(0) : t().status.writeLost(0));
+      expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+    },
+  );
 
   // Lost while the write reads the names: it stops there, before it asks to write anything.
   it("asks nothing once the notifications are lost while Write to device reads the names", SLOW, async () => {
@@ -660,7 +679,7 @@ describe("Console Lock and a write outside a session", () => {
     await invoked(shell, "vd_disconnect");
     expect(names, "the premise: the names were being read").toBeGreaterThanOrEqual(3);
     expect(confirms(shell), "no write is offered").toEqual([]);
-    expect(statusText()).toBe(LOST_BEFORE_COUNT);
+    expect(statusText()).toBe(t().status.writeLost(0));
     expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
   });
 
@@ -681,8 +700,7 @@ describe("Console Lock and a write outside a session", () => {
     box.shell = shell;
     $("btn-write").click();
     await invoked(shell, "vd_disconnect");
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLocked(2, total));
+    expect(statusText()).toBe(t().status.writeLocked(2));
     expect(confirms(shell), "no retry is offered").toHaveLength(1);
     expect(sent, "nothing after the held write").toBe(3);
     expect(errors(shell)).toEqual([]);
@@ -725,7 +743,7 @@ describe("Console Lock and a write outside a session", () => {
       await invoked(shell, "vd_disconnect", 2);
       expect(shell.count("vd_set"), "the premise: only the names differ").toBe(setsBefore);
       expect(box.names, "nothing after the loss").toBe(at);
-      expect(statusText()).toBe(t().status.writeLost(at, names));
+      expect(statusText()).toBe(t().status.writeLost(at));
       expect(errors(shell)).toEqual([]);
     },
   );
@@ -774,9 +792,7 @@ describe("Console Lock and a write outside a session", () => {
       expect(confirms(shell).filter(asks), "the premise: it was asked").toHaveLength(1);
       expect(confirms(shell), "nothing asked after it").toHaveLength(1);
       if (question === "write") {
-        const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-        expect(statusText()).toBe(t().status.writeLost(0, total));
-        expect(total).toBeGreaterThan(0);
+        expect(statusText()).toBe(t().status.writeLost(0));
       } else expect(statusText()).toBe(LOST_BEFORE_COUNT);
       expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
       expect(errors(shell)).toEqual([]);
@@ -820,8 +836,7 @@ describe("Console Lock and a write outside a session", () => {
       "the premise: it was asked",
     ).toHaveLength(1);
     expect(sent, "nothing after the question").toBe(3);
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLost(2, total));
+    expect(statusText()).toBe(t().status.writeLost(2));
     expect(errors(shell)).toEqual([]);
   });
 
@@ -860,8 +875,7 @@ describe("Console Lock and a write outside a session", () => {
     expect(presets, "the premise: the presets went out").toBe(3);
     expect(box.renamed, "the premise: a name went out").toBe(true);
     const took = shell.count("vd_set") + shell.count("vd_set_str");
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLost(took, total));
+    expect(statusText()).toBe(t().status.writeLost(took));
     expect(errors(shell)).toEqual([]);
   });
 

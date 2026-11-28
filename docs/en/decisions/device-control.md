@@ -187,8 +187,8 @@ sites):
   read the lock right after connecting, and refuse a locked unit.
 - **Reading never stops**: a fetch, a compare, Live sync's start and follow, and the meters.
 - **A lock announced in the middle of a write stops it at the next command.** A Live sync flush puts
-  what it had not sent back to the unit's values at once; Write to device says how many of how many
-  went out, and pressing it again once the unit is unlocked sends the rest; a self-test keeps what
+  what it had not sent back to the unit's values at once; Write to device says how many writes
+  the unit took, and pressing it again once the unit is unlocked sends the rest; a self-test keeps what
   it read before the run, says the unit is not restored, and the operator runs the restore alone from
   the Device menu once the unit is unlocked. The rest of the self-test is not resumed, and quitting
   the app drops what it kept.

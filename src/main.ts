@@ -5968,35 +5968,26 @@ if (!DEMO) {
           // a retry that stops before sending anything still stands on what an earlier attempt sent.
           let sentSoFar = 0;
           const unconfirmedSoFar: string[] = [];
-          // How many the operation has set out to send: what the attempts before the one in flight
-          // sent, and what that one diffed. Null until the first attempt has diffed.
-          let operationTotal: number | null = null;
           // What a stopped write says: a cancel, Console Lock, or the loss of the connection's
-          // notifications, the last two with how much of the write went out — or the stop alone, when
-          // it came before the write knew how much it was to send.
-          const stoppedLine = (): string => {
-            const lost = stoppedByNotificationsLost(signal);
-            const locked = !lost && stoppedByConsoleLock(signal);
-            if (operationTotal === null)
-              return lost
-                ? connectFailureStatus(signal.reason, t().status.writeError)
-                : locked
-                  ? t().status.consoleLockedStopped
-                  : t().status.canceled;
-            return lost
-              ? t().status.writeLost(sentSoFar, operationTotal)
-              : locked
-                ? t().status.writeLocked(sentSoFar, operationTotal)
+          // notifications, the last two with how many writes the unit took: a count of sends, which a
+          // converge's re-sends and a group's members are among, so it has no total of diff items.
+          const stoppedLine = (): string =>
+            stoppedByNotificationsLost(signal)
+              ? t().status.writeLost(sentSoFar)
+              : stoppedByConsoleLock(signal)
+                ? t().status.writeLocked(sentSoFar)
                 : t().status.canceled;
-          };
+          // Every line the write ends on goes through here: once the write has stopped, the stop and
+          // what it sent are what the line says, whatever the step it was on came back with.
+          const ended = (line: string): void => setStatus(signal.aborted ? stoppedLine() + adoptedNote() : line);
           // A read that fails once something has gone out is a read-back the write could not
           // confirm; before anything has, it is the read the write stops on.
           const readFailed = (reads: string[]): void => {
             if (sentSoFar) {
-              setStatus(t().status.writeUnconfirmed(sentSoFar, reads.length) + adoptedNote());
+              ended(t().status.writeUnconfirmed(sentSoFar, reads.length) + adoptedNote());
               saveReport([], [], reads, { wrote: true, unconfirmed: unconfirmedSoFar });
             } else {
-              setStatus(t().status.writeReadFailed(reads.length) + adoptedNote());
+              ended(t().status.writeReadFailed(reads.length) + adoptedNote());
               saveReport([], [], reads);
             }
           };
@@ -6021,7 +6012,6 @@ if (!DEMO) {
               return null;
             }
             const total = diffs.length + nameWrites.length;
-            operationTotal = sentBefore + total;
             // From the EMITTED list, not from `diffs`: a survivor that already
             // matches the device is not a diff, and the owner it displaced would
             // then go unmentioned — including when the only pending change is that
@@ -6036,7 +6026,7 @@ if (!DEMO) {
               const nothing = unnamed.length
                 ? t().status.writeNamesNotSent(unnamedLabels, unnamed.length)
                 : t().status.writeNoChanges;
-              setStatus((sharedNote ? `${nothing} ${sharedNote}` : nothing) + adoptedNote());
+              ended((sharedNote ? `${nothing} ${sharedNote}` : nothing) + adoptedNote());
               return null;
             }
             const renaming = new Set(nameWrites.filter((w) => w.name === undefined).map((w) => w.node));
@@ -6054,7 +6044,7 @@ if (!DEMO) {
                 .filter(Boolean)
                 .join("\n\n");
             if (confirmFirst && !(await askWhileWriting(signal, () => confirmDialog(ask())))) {
-              setStatus(t().status.canceled + adoptedNote());
+              ended(t().status.canceled + adoptedNote());
               return null;
             }
             // Held here rather than read off the result, for the same reason `onSent` below
@@ -6204,15 +6194,15 @@ if (!DEMO) {
             if (presetStop) {
               const renames = nameWrites.filter((w) => w.name === undefined).length;
               const notSent = presetStop.notSent + renames;
-              setStatus(t().status.writeStopped(sent, notSent) + note);
+              ended(t().status.writeStopped(sent, notSent) + note);
               return { sent, notSent };
             }
             if (!skipped && !failed.length && convergeErrors.length) {
-              setStatus(t().status.writeUnconfirmed(sentSoFar, convergeErrors.length) + note);
+              ended(t().status.writeUnconfirmed(sentSoFar, convergeErrors.length) + note);
               return { sent: sentSoFar, notSent: 0, unread: convergeErrors.length };
             }
             if (!skipped) {
-              setStatus(
+              ended(
                 (failed.length
                   ? t().status.writePartial(total - failed.length, failed.length)
                   : residual.length
@@ -6226,7 +6216,7 @@ if (!DEMO) {
             // denominator. A stopped numeric phase never sent the names, so they are
             // all not-sent too.
             const notSent = skipped + nameWrites.length;
-            setStatus(t().status.writeStopped(sent, notSent) + note);
+            ended(t().status.writeStopped(sent, notSent) + note);
             return { sent, notSent };
           };
 
