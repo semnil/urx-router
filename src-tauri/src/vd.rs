@@ -2010,7 +2010,7 @@ mod imp {
             link_failure_text, request_text, worker_at, Route, Runs, BROKER_UNRESPONSIVE,
             CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, NOT_SENT, WRITES_HELD,
         };
-        use crate::vd::package::{Call, Floor, Method};
+        use crate::vd::package::{Call, Method};
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
@@ -3258,12 +3258,14 @@ mod imp {
         fn a_package_result_keeps_the_wire_slot_until_the_page_adopts_it() {
             let (tx, unit, _) = connected(plain);
             let link = package();
-            let read = link.request(
-                1,
-                "request-1",
-                Floor::default(),
-                package_call(Method::GetNumeric, 1.0, None),
-            );
+            let read = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&read).unwrap(),
                 json!({ "record": { "kind": "success", "value": "7", "evidence": { "state": "read" } } })
@@ -3279,12 +3281,14 @@ mod imp {
             );
             assert!(link.adopt("request-1"));
             assert_eq!(worker.join().unwrap(), Ok(7));
-            let write = link.request(
-                1,
-                "request-2",
-                Floor::default(),
-                package_call(Method::SetNumeric, 1.0, Some("5")),
-            );
+            let write = link
+                .request(
+                    1,
+                    "request-2",
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&write).unwrap(),
                 json!({ "record": { "kind": "success", "value": null, "evidence": { "state": "accepted" } } })
@@ -3317,9 +3321,10 @@ mod imp {
                     link.request(
                         1,
                         "request-1",
-                        Floor::default(),
+                        0,
                         package_call(Method::SetNumeric, 1.0, Some("5")),
                     )
+                    .unwrap()
                 })
             };
             let first = write(Arc::clone(&link));
@@ -3338,9 +3343,10 @@ mod imp {
                 link.request(
                     1,
                     "request-1",
-                    Floor::default(),
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5"))
-                ),
+                )
+                .unwrap(),
                 first,
                 "a resend after the reply"
             );
@@ -3350,13 +3356,109 @@ mod imp {
                 link.request(
                     1,
                     "request-1",
-                    Floor::default(),
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5"))
                 ),
-                first,
-                "a resend after the adoption"
+                Err(crate::vd::package::FINISHED.to_string()),
+                "a late resend after the adoption is rejected, with no evidence"
             );
             assert_eq!(writes_to(&unit, 1), 1, "the unit took it once");
+        }
+
+        // A report or terminate that reaches the shell ahead of its own request — two commands of the
+        // page's racing through the IPC — leaves the ticket ended: the request that arrives after it
+        // is rejected and sends nothing, and nothing waits behind a slot.
+        #[test]
+        fn a_package_request_arriving_after_its_own_terminate_is_not_sent() {
+            let (tx, unit, _) = connected(plain);
+            let link = package();
+            assert!(link.terminate("request-1"), "an unseen ticket");
+            assert!(!link.fail_delivery("request-2"), "an unseen ticket");
+            for ticket in ["request-1", "request-2"] {
+                assert_eq!(
+                    link.request(
+                        1,
+                        ticket,
+                        0,
+                        package_call(Method::SetNumeric, 1.0, Some("5"))
+                    ),
+                    Err(crate::vd::package::FINISHED.to_string()),
+                    "{ticket}"
+                );
+            }
+            assert_eq!(writes_to(&unit, 1), 0);
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Ok(7),
+                "nothing waits behind a slot"
+            );
+        }
+
+        // A ticket the page's floor passes while the shell still holds its result unsettled is one
+        // the page gave up — its adoption, report and terminate never arrived — so the connection
+        // ends with its slot rather than leaving a slot nobody can release; so does one the floor
+        // passes while its result is still on its way, as that result arrives.
+        #[test]
+        fn a_package_ticket_the_page_gave_up_ends_the_connection_with_its_slot() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                1,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            let after = link
+                .request(
+                    1,
+                    "request-2",
+                    2,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
+                "the connection closed before the request was sent"
+            );
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string())
+            );
+
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let on_its_way = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        1,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            let passed = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-2",
+                        2,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            on_its_way.join().unwrap().unwrap();
+            let _ = passed.join().unwrap();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "the given-up result ended the connection as it arrived"
+            );
         }
 
         // A report that a result could not be delivered, made while that result is still on its
@@ -3371,9 +3473,10 @@ mod imp {
                     link.request(
                         1,
                         "request-1",
-                        Floor::default(),
+                        0,
                         package_call(Method::GetNumeric, 1.0, None),
                     )
+                    .unwrap()
                 })
             };
             thread::sleep(Duration::from_millis(30));
@@ -3386,6 +3489,47 @@ mod imp {
             );
         }
 
+        // A session let go while a package request is still on its way ends as well: its reply
+        // arrives after the teardown, and the worker waiting behind it still reaches its shutdown.
+        #[test]
+        fn a_session_let_go_while_a_package_request_is_on_its_way_still_shuts_down() {
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(150)));
+            let link = package();
+            let reading = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        0,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            let (params, _seen) = subscriber();
+            let registering = {
+                let tx = tx.clone();
+                thread::spawn(move || params_subscribe(tx, vec![(1, 0, 0)], params))
+            };
+            thread::sleep(Duration::from_millis(30));
+            link.tear_down();
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + Duration::from_secs(3))),
+            })
+            .unwrap();
+            assert!(
+                closed.recv_timeout(Duration::from_secs(3)).is_ok(),
+                "the worker reaches its shutdown"
+            );
+            let _ = reading.join();
+            assert!(
+                registering.join().unwrap().is_err(),
+                "the teardown started the close: the registration waiting behind the request is not sent"
+            );
+        }
+
         // A session let go while a worker's registration waits behind a slot the page will never
         // adopt still ends: the teardown closes the connection outside the worker's queue.
         #[test]
@@ -3395,9 +3539,10 @@ mod imp {
             link.request(
                 1,
                 "request-1",
-                Floor::default(),
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
-            );
+            )
+            .unwrap();
             let (params, _seen) = subscriber();
             let registering = {
                 let tx = tx.clone();
@@ -3419,12 +3564,14 @@ mod imp {
                 "the worker reaches its shutdown"
             );
             let _ = registering.join();
-            let after = link.request(
-                2,
-                "request-2",
-                Floor::default(),
-                package_call(Method::GetNumeric, 1.0, None),
-            );
+            let after = link
+                .request(
+                    2,
+                    "request-2",
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&after.record).unwrap()["failure"],
                 json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
@@ -3440,12 +3587,14 @@ mod imp {
                 vec![json!({ "method": "post", "uri": uri, "data": { "response_code": 403 } })]
             });
             let link = package();
-            let reply = link.request(
-                1,
-                "request-1",
-                Floor::default(),
-                package_call(Method::SetText, 1.0, Some("a")),
-            );
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    package_call(Method::SetText, 1.0, Some("a")),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&reply.record).unwrap(),
                 json!({
@@ -3479,12 +3628,14 @@ mod imp {
                 );
                 thread::sleep(Duration::from_millis(1));
             }
-            let reply = package().request(
-                1,
-                "request-1",
-                Floor::default(),
-                package_call(Method::SetNumeric, 1.0, Some("5")),
-            );
+            let reply = package()
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&reply).unwrap(),
                 json!({
@@ -3501,12 +3652,14 @@ mod imp {
                 0,
                 "nothing was sent for the held write"
             );
-            let read = package().request(
-                1,
-                "request-2",
-                Floor::default(),
-                package_call(Method::GetNumeric, 1.0, None),
-            );
+            let read = package()
+                .request(
+                    1,
+                    "request-2",
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
             assert_eq!(read.held, None, "a read is not held");
         }
 
@@ -3519,9 +3672,10 @@ mod imp {
             link.request(
                 1,
                 "request-1",
-                Floor::default(),
+                0,
                 package_call(Method::GetNumeric, -1.0, None),
-            );
+            )
+            .unwrap();
             assert!(link.fail_delivery("request-1"));
             assert_eq!(
                 get(tx.clone(), 2, 0, 0),
@@ -3534,9 +3688,10 @@ mod imp {
             link.request(
                 1,
                 "request-2",
-                Floor::default(),
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
-            );
+            )
+            .unwrap();
             assert!(link.fail_delivery("request-2"));
             assert_eq!(
                 next(&events),
@@ -3549,12 +3704,14 @@ mod imp {
                 "every later command fails with the same end"
             );
             assert!(!link.adopt("request-2"), "the slot went with the end");
-            let after = link.request(
-                2,
-                "request-3",
-                Floor::default(),
-                package_call(Method::GetNumeric, 1.0, None),
-            );
+            let after = link
+                .request(
+                    2,
+                    "request-3",
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&after.record).unwrap(),
                 json!({
@@ -3574,9 +3731,10 @@ mod imp {
             link.request(
                 1,
                 "request-1",
-                Floor::default(),
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
-            );
+            )
+            .unwrap();
             assert!(link.adopt("request-1"));
             assert!(
                 link.terminate("request-1"),
@@ -3586,9 +3744,10 @@ mod imp {
             link.request(
                 1,
                 "request-2",
-                Floor::default(),
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
-            );
+            )
+            .unwrap();
             assert!(link.terminate("request-2"));
             assert_eq!(
                 get(tx.clone(), 2, 0, 0),
@@ -3603,12 +3762,14 @@ mod imp {
             let (_tx, unit, _) = connected(plain);
             let link = package();
             link.cancel(1);
-            let cancelled = link.request(
-                1,
-                "request-1",
-                Floor::default(),
-                package_call(Method::SetNumeric, 1.0, Some("5")),
-            );
+            let cancelled = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&cancelled.record).unwrap(),
                 json!({
@@ -3618,12 +3779,14 @@ mod imp {
                 })
             );
             link.finish(2);
-            let finished = link.request(
-                2,
-                "request-2",
-                Floor::default(),
-                package_call(Method::SetNumeric, 1.0, Some("5")),
-            );
+            let finished = link
+                .request(
+                    2,
+                    "request-2",
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&finished.record).unwrap()["failure"],
                 json!({ "kind": "cause", "code": "not_connected", "phase": "admission" })
@@ -3637,12 +3800,14 @@ mod imp {
         fn a_package_request_past_its_deadline_is_on_the_ledger() {
             let (_tx, _unit, counters) = connected(|_: &Value| vec![]);
             let link = package();
-            let reply = link.request(
-                1,
-                "request-1",
-                Floor::default(),
-                package_call(Method::GetNumeric, 1.0, None),
-            );
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
             assert_eq!(
                 serde_json::to_value(&reply.record).unwrap()["failure"],
                 json!({ "kind": "cause", "code": "response_timeout", "phase": "response" })
