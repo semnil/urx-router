@@ -40,22 +40,16 @@ const refusedHere = (): unknown => ({
 });
 
 // Operation owners and request tickets are numbered for the page's lifetime, so no two on one
-// connection share a number, whichever transport made them. The ones the page may still name are
-// kept, so each request can tell the shell the oldest of them (`floors`): the shell keeps its records
-// of tickets and owners from there, and answers a resend of any call from them.
+// connection share a number, whichever transport made them. The tickets the page may still name are
+// kept, so each request can tell the shell the oldest of them (`ticketFloor`): a ticket below it the
+// shell still holds unsettled is one the page gave up, and the shell ends the connection with its
+// slot rather than keep a slot nobody will release.
 let nextOperation = 0;
 let nextTicket = 0;
-const liveOperations = new Set<number>();
 const liveTickets = new Set<number>();
 
-/** The oldest of `live`, or the next number to be issued when there is none. */
-const oldest = (live: ReadonlySet<number>, next: number): number => (live.size ? Math.min(...live) : next + 1);
-
-/** The oldest ticket and owner the page may still name (vd/package.rs `Floor`). */
-const floors = (): { ticketFloor: number; operationFloor: number } => ({
-  ticketFloor: oldest(liveTickets, nextTicket),
-  operationFloor: oldest(liveOperations, nextOperation),
-});
+/** The oldest ticket the page may still name, or the next to be issued when none is live. */
+const ticketFloor = (): number => (liveTickets.size ? Math.min(...liveTickets) : nextTicket + 1);
 
 /** The number of a ticket this module issued (`request-<n>`). */
 const ticketNumber = (ticket: RequestTicket): number => Number(ticket.slice("request-".length));
@@ -80,7 +74,6 @@ class ShellOperation implements TransportOperation {
   }
 
   finish(): void {
-    liveOperations.delete(this.id);
     invoke<void>("vd_package_finish", { epoch: this.epoch, operation: this.id }).catch(() => {});
   }
 }
@@ -106,7 +99,6 @@ class ShellTransport implements Transport {
 
   createOperation(): TransportOperation {
     const operation = new ShellOperation(this.#epoch, ++nextOperation);
-    liveOperations.add(operation.id);
     this.#operations.add(operation);
     return operation;
   }
@@ -199,7 +191,7 @@ class ShellTransport implements Transport {
       epoch: this.#epoch,
       operation: operation.id,
       ticket: requestTicket,
-      ...floors(),
+      ticketFloor: ticketFloor(),
       method,
       paramId: address.paramId,
       x: address.x,

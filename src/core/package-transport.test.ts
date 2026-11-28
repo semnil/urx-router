@@ -93,7 +93,6 @@ describe("the control package's transport", () => {
       operation: expect.any(Number),
       ticket: expect.stringMatching(/^request-\d+$/),
       ticketFloor: expect.any(Number),
-      operationFloor: expect.any(Number),
       method: "getNumeric",
       paramId: 101,
       x: "2",
@@ -120,37 +119,35 @@ describe("the control package's transport", () => {
     ]);
   });
 
-  it("tells the shell the oldest ticket and owner the page may still name", async () => {
+  it("tells the shell the oldest ticket the page may still name", async () => {
+    let adopt = true;
     const shell = installShell({
       vd_package_request: () => ({ record: read("7") }),
-      vd_package_adopt: () => true,
+      vd_package_adopt: () => adopt,
+      vd_package_fail_delivery: () => false,
+      vd_package_terminate: () => Promise.reject(new Error("lost")),
       vd_package_finish: () => undefined,
     });
     const requests = () => shell.calls.filter(([cmd]) => cmd === "vd_package_request").map(([, args]) => args);
-    // A fresh module, so no owner or ticket an earlier case left live is the oldest.
+    const ticketOf = (args: Args | undefined) => Number(String(args?.ticket).slice("request-".length));
+    // A fresh module, so no ticket an earlier case left live is the oldest.
     vi.resetModules();
     const { packageTransport: fresh } = await import("./package-transport");
-    const open = new OperationContext(fresh(), "URX44V");
-    await open.getNumeric(ADDRESS);
-    const done = new OperationContext(fresh(), "URX44V");
-    await done.getNumeric(ADDRESS);
-    done.finish();
-    const last = new OperationContext(fresh(), "URX44V");
-    await last.getNumeric(ADDRESS);
-    const [first, second, third] = requests();
-    const ticketOf = (args: Args | undefined) => Number(String(args?.ticket).slice("request-".length));
+    const context = new OperationContext(fresh(), "URX44V");
+    await context.getNumeric(ADDRESS);
+    await context.getNumeric(ADDRESS);
+    const [first, second] = requests();
     expect(first?.ticketFloor, "nothing older is live").toBe(ticketOf(first));
     expect(second?.ticketFloor, "the first was adopted").toBe(ticketOf(second));
-    expect(third?.operationFloor, "the first owner is not finished").toBe(first?.operation);
-    expect(third?.operation).not.toBe(first?.operation);
-    open.finish();
-    const after = new OperationContext(fresh(), "URX44V");
-    await after.getNumeric(ADDRESS);
-    expect(requests()[3]?.operationFloor, "the first owner finished, so the oldest live one is the third's").toBe(
-      third?.operation,
-    );
-    after.finish();
-    last.finish();
+    // A ticket whose adoption, report and terminate all fail is given up all the same: the next
+    // request's floor passes it, so the shell can end the connection with the slot it holds.
+    adopt = false;
+    await context.getNumeric(ADDRESS);
+    adopt = true;
+    await context.getNumeric(ADDRESS);
+    const [, , third, fourth] = requests();
+    expect(fourth?.ticketFloor, "the given-up ticket is behind the floor").toBeGreaterThan(ticketOf(third));
+    context.finish();
   });
 
   it("passes a held write on at once once its connection is no longer the one followed", async () => {
