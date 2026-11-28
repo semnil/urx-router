@@ -243,6 +243,15 @@ const OUTBOX_UPDATES: usize = 8192;
 const LOCK_HAND_ON_WAIT: Duration = Duration::from_secs(5);
 
 impl Outbox {
+    /// Whether the unit's last announcement of Console Lock the transport received was on: what
+    /// a write's send gate asks just before its first byte (`Session::set`).
+    fn heard_locked(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .heard_locked
+    }
+
     /// The transport received an announcement of Console Lock, `on` or off (its receipt
     /// observer, `open_observed`): it holds the next write at once, whatever the batch that
     /// carries it is waiting for.
@@ -898,7 +907,7 @@ mod imp {
     use tauri::ipc::Channel;
     use urx_device_transport::connection::{
         open_observed, CloseOutcome, Connection, ConnectionOptions, LinkFailure, LinkLoss,
-        NotificationHandler, ReceiptObserver, Subscription,
+        NotificationHandler, ReceiptObserver, SendGate, Subscription,
     };
     use urx_device_transport::delivery::NotificationBatch;
     use urx_device_transport::discovery::{discover, DiscoveryOptions, SystemFirmware};
@@ -1225,8 +1234,9 @@ mod imp {
         }
     }
 
-    /// One request, waited for, its result adopted at once.
-    fn request(connection: &Connection, request: Request) -> Outcome {
+    /// One request, waited for, its result adopted at once; with `gate`, asked just before its
+    /// first byte whether it may go out (`Connection::submit_gated`).
+    fn request(connection: &Connection, request: Request, gate: Option<SendGate>) -> Outcome {
         let operation = match connection.create_operation() {
             Ok(operation) => operation,
             Err(failure) => {
@@ -1237,10 +1247,14 @@ mod imp {
             }
         };
         let (tx, rx) = mpsc::channel();
-        connection.submit(&operation, request, move |outcome, adoption| {
+        let done = move |outcome, adoption: urx_device_transport::connection::ResultAdoption| {
             adoption.adopt();
             let _ = tx.send(outcome);
-        });
+        };
+        match gate {
+            Some(gate) => connection.submit_gated(&operation, request, gate, done),
+            None => connection.submit(&operation, request, done),
+        }
         rx.recv().unwrap_or(Outcome::Failure {
             failure: RequestFailure::Cause {
                 code: RequestCause::InternalError,
@@ -1280,10 +1294,35 @@ mod imp {
         /// command it refused before sending — the session already over included — is
         /// worded by the session's end (`request_text`).
         fn run(&mut self, req: Request, at: &str) -> Result<Option<ReadValue>, String> {
+            self.run_with(req, at, None)
+        }
+
+        /// `run`, with a send gate when `gate` is given: a request the gate held fails as the
+        /// write the unit's Console Lock holds (`held`).
+        fn run_with(
+            &mut self,
+            req: Request,
+            at: &str,
+            gate: Option<SendGate>,
+        ) -> Result<Option<ReadValue>, String> {
             let write = matches!(req, Request::SetNumeric(..) | Request::SetText(..));
-            match request(&self.connection, req) {
+            let gated = gate.is_some();
+            match request(&self.connection, req, gate) {
                 Outcome::Success { value, .. } => Ok(value),
                 Outcome::Failure { failure, evidence } => {
+                    if gated
+                        && evidence == Evidence::NotSent
+                        && matches!(
+                            failure,
+                            RequestFailure::Cause {
+                                code: RequestCause::PreconditionFailed,
+                                ..
+                            }
+                        )
+                        && self.outbox.heard_locked()
+                    {
+                        return Err(self.held());
+                    }
                     if matches!(
                         failure,
                         RequestFailure::Cause {
@@ -1325,21 +1364,27 @@ mod imp {
             }
         }
 
-        /// A write, refused before it is sent from the transport's receipt of the unit's
+        /// A write, refused before its first byte from the transport's receipt of the unit's
         /// announcement of Console Lock to its receipt of the lock off: the page holds its
         /// writes once it has the lock, and a write it handed over before then would reach a
-        /// locked unit. The refusal names the fetch that hands the page the announcement,
-        /// once that is known (`Outbox::lock_hold`).
+        /// locked unit. The transport asks the hold just before the first byte would go out
+        /// (`Connection::submit_gated`), under the gate it takes each announcement under, so a
+        /// lock received at any point before that byte holds the write (`held`).
         fn set(&mut self, req: Request, at: String) -> Result<(), String> {
-            if let Some(fetch) = self.outbox.lock_hold(LOCK_HAND_ON_WAIT) {
-                return Err(match fetch {
-                    Some(fetch) => {
-                        format!("{WRITES_HELD}: the unit announced Console Lock (fetch {fetch})")
-                    }
-                    None => format!("{WRITES_HELD}: the unit announced Console Lock"),
-                });
+            let outbox = Arc::clone(&self.outbox);
+            let gate: SendGate = Box::new(move || !outbox.heard_locked());
+            self.run_with(req, &at, Some(gate)).map(|_| ())
+        }
+
+        /// A write the unit's Console Lock held: refused with `writes-held` and the number of the
+        /// fetch that hands the page the announcement, once that is known (`Outbox::lock_hold`).
+        fn held(&self) -> String {
+            match self.outbox.lock_hold(LOCK_HAND_ON_WAIT) {
+                Some(Some(fetch)) => {
+                    format!("{WRITES_HELD}: the unit announced Console Lock (fetch {fetch})")
+                }
+                _ => format!("{WRITES_HELD}: the unit announced Console Lock"),
             }
-            self.run(req, &at).map(|_| ())
         }
 
         /// Replaces one subscription: a new token for `addresses`, switched to, then the
