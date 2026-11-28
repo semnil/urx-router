@@ -92,6 +92,8 @@ describe("the control package's transport", () => {
       epoch: 0,
       operation: expect.any(Number),
       ticket: expect.stringMatching(/^request-\d+$/),
+      ticketFloor: expect.any(Number),
+      operationFloor: expect.any(Number),
       method: "getNumeric",
       paramId: 101,
       x: "2",
@@ -116,6 +118,39 @@ describe("the control package's transport", () => {
       ["setNumeric", "-9223372036854775808"],
       ["setText", ""],
     ]);
+  });
+
+  it("tells the shell the oldest ticket and owner the page may still name", async () => {
+    const shell = installShell({
+      vd_package_request: () => ({ record: read("7") }),
+      vd_package_adopt: () => true,
+      vd_package_finish: () => undefined,
+    });
+    const requests = () => shell.calls.filter(([cmd]) => cmd === "vd_package_request").map(([, args]) => args);
+    // A fresh module, so no owner or ticket an earlier case left live is the oldest.
+    vi.resetModules();
+    const { packageTransport: fresh } = await import("./package-transport");
+    const open = new OperationContext(fresh(), "URX44V");
+    await open.getNumeric(ADDRESS);
+    const done = new OperationContext(fresh(), "URX44V");
+    await done.getNumeric(ADDRESS);
+    done.finish();
+    const last = new OperationContext(fresh(), "URX44V");
+    await last.getNumeric(ADDRESS);
+    const [first, second, third] = requests();
+    const ticketOf = (args: Args | undefined) => Number(String(args?.ticket).slice("request-".length));
+    expect(first?.ticketFloor, "nothing older is live").toBe(ticketOf(first));
+    expect(second?.ticketFloor, "the first was adopted").toBe(ticketOf(second));
+    expect(third?.operationFloor, "the first owner is not finished").toBe(first?.operation);
+    expect(third?.operation).not.toBe(first?.operation);
+    open.finish();
+    const after = new OperationContext(fresh(), "URX44V");
+    await after.getNumeric(ADDRESS);
+    expect(requests()[3]?.operationFloor, "the first owner finished, so the oldest live one is the third's").toBe(
+      third?.operation,
+    );
+    after.finish();
+    last.finish();
   });
 
   it("refuses a write the page holds before it reaches the shell, and holds no slot for it", async () => {

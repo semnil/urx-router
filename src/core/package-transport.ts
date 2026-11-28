@@ -40,9 +40,30 @@ const refusedHere = (): unknown => ({
 });
 
 // Operation owners and request tickets are numbered for the page's lifetime, so no two on one
-// connection share a number, whichever transport made them.
+// connection share a number, whichever transport made them. The ones the page may still name are
+// kept, so each request can tell the shell the oldest of them (`floors`): the shell keeps its records
+// of tickets and owners from there, and answers a resend of any call from them.
 let nextOperation = 0;
 let nextTicket = 0;
+const liveOperations = new Set<number>();
+const liveTickets = new Set<number>();
+
+/** The oldest of `live`, or the next number to be issued when there is none. */
+const oldest = (live: ReadonlySet<number>, next: number): number => (live.size ? Math.min(...live) : next + 1);
+
+/** The oldest ticket and owner the page may still name (vd/package.rs `Floor`). */
+const floors = (): { ticketFloor: number; operationFloor: number } => ({
+  ticketFloor: oldest(liveTickets, nextTicket),
+  operationFloor: oldest(liveOperations, nextOperation),
+});
+
+/** The number of a ticket this module issued (`request-<n>`). */
+const ticketNumber = (ticket: RequestTicket): number => Number(ticket.slice("request-".length));
+
+/** The page is done with `ticket`: no call names it again. */
+const settleTicket = (ticket: RequestTicket): void => {
+  liveTickets.delete(ticketNumber(ticket));
+};
 
 /** One operation owner on the connection of generation `epoch`; the shell makes its own on first use. */
 class ShellOperation implements TransportOperation {
@@ -59,6 +80,7 @@ class ShellOperation implements TransportOperation {
   }
 
   finish(): void {
+    liveOperations.delete(this.id);
     invoke<void>("vd_package_finish", { epoch: this.epoch, operation: this.id }).catch(() => {});
   }
 }
@@ -84,12 +106,14 @@ class ShellTransport implements Transport {
 
   createOperation(): TransportOperation {
     const operation = new ShellOperation(this.#epoch, ++nextOperation);
+    liveOperations.add(operation.id);
     this.#operations.add(operation);
     return operation;
   }
 
   newRequestTicket(): RequestTicket {
-    return `request-${++nextTicket}`;
+    liveTickets.add(++nextTicket);
+    return `request-${nextTicket}`;
   }
 
   getNumeric(address: ParameterAddress, request: TransportRequest): Promise<unknown> {
@@ -125,21 +149,31 @@ class ShellTransport implements Transport {
     throw new OperationFailureError({ code: "precondition_failed", phase: "admission", progress: null });
   }
 
+  // A ticket is settled once a call on it has done what it asks: an adoption or a report that
+  // succeeded, or a terminate, which is the last call the context makes. A failed adoption or report
+  // leaves it live, since the context goes on to the next.
+
   async adoptResult(requestTicket: RequestTicket): Promise<void> {
-    if (this.#local.delete(requestTicket)) return;
+    if (this.#local.delete(requestTicket)) return settleTicket(requestTicket);
     const adopted = await invoke<boolean>("vd_package_adopt", { epoch: this.#epoch, ticket: requestTicket });
     if (!adopted) throw new Error("the result's slot could not be released");
+    settleTicket(requestTicket);
   }
 
   async failDelivery(requestTicket: RequestTicket): Promise<void> {
-    if (this.#local.delete(requestTicket)) return;
+    if (this.#local.delete(requestTicket)) return settleTicket(requestTicket);
     const reported = await invoke<boolean>("vd_package_fail_delivery", { epoch: this.#epoch, ticket: requestTicket });
     if (!reported) throw new Error("the undelivered result could not be reported");
+    settleTicket(requestTicket);
   }
 
   async terminate(requestTicket: RequestTicket): Promise<void> {
-    if (this.#local.delete(requestTicket)) return;
-    await invoke<boolean>("vd_package_terminate", { epoch: this.#epoch, ticket: requestTicket });
+    try {
+      if (this.#local.delete(requestTicket)) return;
+      await invoke<boolean>("vd_package_terminate", { epoch: this.#epoch, ticket: requestTicket });
+    } finally {
+      settleTicket(requestTicket);
+    }
   }
 
   /**
@@ -165,6 +199,7 @@ class ShellTransport implements Transport {
       epoch: this.#epoch,
       operation: operation.id,
       ticket: requestTicket,
+      ...floors(),
       method,
       paramId: address.paramId,
       x: address.x,
