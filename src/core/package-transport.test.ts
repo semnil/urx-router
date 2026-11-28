@@ -93,6 +93,7 @@ describe("the control package's transport", () => {
       operation: expect.any(Number),
       ticket: expect.stringMatching(/^request-\d+$/),
       ticketFloor: expect.any(Number),
+      operationFloor: expect.any(Number),
       method: "getNumeric",
       paramId: 101,
       x: "2",
@@ -148,6 +149,38 @@ describe("the control package's transport", () => {
     const [, , third, fourth] = requests();
     expect(fourth?.ticketFloor, "the given-up ticket is behind the floor").toBeGreaterThan(ticketOf(third));
     context.finish();
+  });
+
+  it("tells the shell the oldest owner the page has not finished, whether or not a finish arrived", async () => {
+    const shell = installShell({
+      vd_package_request: () => ({ record: read("7") }),
+      vd_package_adopt: () => true,
+      vd_package_finish: () => Promise.reject(new Error("lost")),
+    });
+    const requests = () => shell.calls.filter(([cmd]) => cmd === "vd_package_request").map(([, args]) => args);
+    // A fresh module, so no owner an earlier case left live is the oldest.
+    vi.resetModules();
+    const { packageTransport: fresh } = await import("./package-transport");
+    const transport = fresh();
+    const open = new OperationContext(transport, "URX44V");
+    await open.getNumeric(ADDRESS);
+    const first = requests()[0];
+    expect(first?.operationFloor, "nothing older is live").toBe(first?.operation);
+    for (let n = 0; n < 3; n++) {
+      const context = new OperationContext(transport, "URX44V");
+      await context.getNumeric(ADDRESS);
+      context.finish();
+    }
+    open.finish();
+    const after = new OperationContext(transport, "URX44V");
+    await after.getNumeric(ADDRESS);
+    after.finish();
+    const all = requests();
+    expect(
+      all.slice(1, 4).map((args) => args.operationFloor),
+      "an owner left open keeps the floor",
+    ).toEqual([first?.operation, first?.operation, first?.operation]);
+    expect(all.at(-1)?.operationFloor, "every earlier owner finished, its finish lost").toBe(all.at(-1)?.operation);
   });
 
   it("passes a held write on at once once its connection is no longer the one followed", async () => {

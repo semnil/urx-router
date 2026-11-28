@@ -888,7 +888,8 @@ async fn vd_notifications(
 // installed is refused unsent; a method the transport does not have is a binding fault and
 // rejects, as does a request on a ticket the page has finished with (`vd::package::FINISHED`),
 // which sends nothing. `ticket_floor` is the oldest ticket the page may still name: one it never
-// settled below it is one it gave up, which ends the connection with its slot.
+// settled below it is one it gave up, which ends the connection with its slot. `operation_floor` is
+// the oldest owner the page has not finished: the shell keeps nothing below either floor.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn vd_package_request(
@@ -897,6 +898,7 @@ async fn vd_package_request(
     operation: u64,
     ticket: String,
     ticket_floor: u64,
+    operation_floor: u64,
     method: String,
     param_id: f64,
     x: String,
@@ -913,6 +915,7 @@ async fn vd_package_request(
             operation,
             &ticket,
             ticket_floor,
+            operation_floor,
             vd::package::Call {
                 method: named,
                 param_id,

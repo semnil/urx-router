@@ -40,16 +40,21 @@ const refusedHere = (): unknown => ({
 });
 
 // Operation owners and request tickets are numbered for the page's lifetime, so no two on one
-// connection share a number, whichever transport made them. The tickets the page may still name are
-// kept, so each request can tell the shell the oldest of them (`ticketFloor`): a ticket below it the
-// shell still holds unsettled is one the page gave up, and the shell ends the connection with its
+// connection share a number, whichever transport made them. The tickets the page may still name and
+// the owners it has not finished are kept, so each request can tell the shell the oldest of each
+// (`ticketFloor`, `operationFloor`): the shell keeps no record below either, and a ticket below the
+// floor it still holds unsettled is one the page gave up, so the shell ends the connection with its
 // slot rather than keep a slot nobody will release.
 let nextOperation = 0;
 let nextTicket = 0;
 const liveTickets = new Set<number>();
+const liveOperations = new Set<number>();
 
 /** The oldest ticket the page may still name, or the next to be issued when none is live. */
 const ticketFloor = (): number => (liveTickets.size ? Math.min(...liveTickets) : nextTicket + 1);
+
+/** The oldest owner the page has not finished, or the next to be made when none is live. */
+const operationFloor = (): number => (liveOperations.size ? Math.min(...liveOperations) : nextOperation + 1);
 
 /** The number of a ticket this module issued (`request-<n>`). */
 const ticketNumber = (ticket: RequestTicket): number => Number(ticket.slice("request-".length));
@@ -73,7 +78,10 @@ class ShellOperation implements TransportOperation {
     invoke<void>("vd_package_cancel", { epoch: this.epoch, operation: this.id }).catch(() => {});
   }
 
+  // The page is done with the owner whether or not the shell hears of it: the next request's
+  // floor passes it.
   finish(): void {
+    liveOperations.delete(this.id);
     invoke<void>("vd_package_finish", { epoch: this.epoch, operation: this.id }).catch(() => {});
   }
 }
@@ -99,6 +107,7 @@ class ShellTransport implements Transport {
 
   createOperation(): TransportOperation {
     const operation = new ShellOperation(this.#epoch, ++nextOperation);
+    liveOperations.add(operation.id);
     this.#operations.add(operation);
     return operation;
   }
@@ -192,6 +201,7 @@ class ShellTransport implements Transport {
       operation: operation.id,
       ticket: requestTicket,
       ticketFloor: ticketFloor(),
+      operationFloor: operationFloor(),
       method,
       paramId: address.paramId,
       x: address.x,

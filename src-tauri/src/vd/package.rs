@@ -10,10 +10,10 @@
 //! the end.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use urx_device_transport::connection::{Connection, Operation, ResultAdoption};
@@ -28,6 +28,12 @@ use super::{LinkCounters, Outbox, LOCK_HAND_ON_WAIT};
 /// How long ending the connection for an undeliverable result waits for its close: the session's
 /// own close deadline.
 const FATAL_TEARDOWN: Duration = Duration::from_secs(2);
+
+/// How long a result may hold the connection's wire slot with neither an adoption nor a report
+/// from the page: the request deadline every get and set has (`imp::REQUEST_DEADLINE`). Past it
+/// the connection ends with the slot, as a report would end it, so a result whose page went quiet
+/// stops the session's other requests no longer than one of them waits for its response.
+pub const HOLD_DEADLINE: Duration = Duration::from_secs(3);
 
 /// What the session's end is told with once a result the page could not take has ended the
 /// connection (`PackageLink::fail_delivery`): a fault of the app's own, which K34 reports as
@@ -362,6 +368,21 @@ impl Ranges {
         self.0.insert(start, end);
     }
 
+    /// Forgets every number below `floor`: the floor answers for them now.
+    fn cut_below(&mut self, floor: u64) {
+        let below: Vec<(u64, u64)> = self
+            .0
+            .range(..floor)
+            .map(|(&start, &end)| (start, end))
+            .collect();
+        for (start, end) in below {
+            self.0.remove(&start);
+            if end >= floor {
+                self.0.insert(floor, end);
+            }
+        }
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.0.len()
@@ -374,13 +395,17 @@ impl Ranges {
 struct Ticket {
     reply: Option<Reply>,
     slot: Option<ResultAdoption>,
+    /// Since when the result has held its slot, once its reply is recorded: past `HOLD_DEADLINE`
+    /// with no adoption or report, the connection ends with it (`watch`).
+    held_since: Option<Instant>,
     /// The page gave the ticket up while its result was still on its way — its floor passed it — so
     /// the slot that result holds ends the connection, as a report would.
     abandoned: bool,
 }
 
 /// What the link knows of the page's tickets and owners: the open ones one by one, the settled and
-/// finished ones as ranges.
+/// finished ones at or above the page's floors as ranges. Below a floor nothing is kept: the floor
+/// answers for every number there.
 #[derive(Default)]
 struct Book {
     open: BTreeMap<u64, Ticket>,
@@ -390,6 +415,8 @@ struct Book {
     floor: u64,
     owners: HashMap<u64, Arc<Operation>>,
     finished: Ranges,
+    /// The oldest operation owner the page has not finished, as it last said.
+    owner_floor: u64,
     torn_down: bool,
 }
 
@@ -417,14 +444,81 @@ impl Book {
                 held.push(slot);
             }
             self.open.remove(&n);
-            self.ended.insert(n);
         }
+        self.adopted.cut_below(floor);
+        self.ended.cut_below(floor);
         held
     }
 
-    /// Whether the page has settled ticket `n` with the shell.
+    /// The page's owner floor rose to `floor`: an owner below it is one the page finished, though
+    /// its finish may not have arrived, and nothing below it is kept.
+    fn advance_owners(&mut self, floor: u64) {
+        if floor <= self.owner_floor {
+            return;
+        }
+        self.owner_floor = floor;
+        self.owners.retain(|&id, _| id >= floor);
+        self.finished.cut_below(floor);
+    }
+
+    /// Whether the page has settled ticket `n` with the shell: below its floor, or recorded so.
     fn settled(&self, n: u64) -> bool {
-        self.adopted.contains(n) || self.ended.contains(n)
+        (n < self.floor && !self.open.contains_key(&n))
+            || self.adopted.contains(n)
+            || self.ended.contains(n)
+    }
+}
+
+/// Ends the connection for a result that holds its slot past the link's hold deadline with no
+/// adoption or report: the page that would release it has gone quiet, and the slot would stop the
+/// session's other requests. Runs until the session's teardown, or until the link is gone.
+fn watch(link: &Weak<PackageLink>, book: &Arc<(Mutex<Book>, Condvar)>) {
+    let mut guard = lock(&book.0);
+    loop {
+        if guard.torn_down {
+            return;
+        }
+        let Some(hold) = link.upgrade().map(|link| link.hold()) else {
+            return;
+        };
+        let now = Instant::now();
+        let expired: Vec<u64> = guard
+            .open
+            .iter()
+            .filter(|(_, ticket)| ticket.slot.is_some())
+            .filter(|(_, ticket)| ticket.held_since.is_some_and(|at| now >= at + hold))
+            .map(|(&n, _)| n)
+            .collect();
+        if !expired.is_empty() {
+            let mut held = Vec::new();
+            for n in expired {
+                if let Some(ticket) = guard.open.remove(&n) {
+                    held.extend(ticket.slot);
+                    guard.ended.insert(n);
+                }
+            }
+            drop(guard);
+            match link.upgrade() {
+                Some(link) => link.end_with(held),
+                None => return,
+            }
+            guard = lock(&book.0);
+            continue;
+        }
+        // Until the oldest held result's deadline; with none held, a while, so a link that is
+        // gone lets the thread go.
+        let wait = guard
+            .open
+            .values()
+            .filter(|ticket| ticket.slot.is_some())
+            .filter_map(|ticket| ticket.held_since)
+            .min()
+            .map_or(hold, |at| (at + hold).saturating_duration_since(now));
+        guard = book
+            .1
+            .wait_timeout(guard, wait.max(Duration::from_millis(1)))
+            .map(|(guard, _)| guard)
+            .unwrap_or_else(|p| p.into_inner().0);
     }
 }
 
@@ -450,6 +544,8 @@ pub struct PackageLink {
     connection: OnceLock<Arc<Connection>>,
     /// A result the page could not take has ended the connection.
     ended: AtomicBool,
+    /// `HOLD_DEADLINE` in milliseconds, which a case may shorten.
+    hold_ms: AtomicU64,
     book: Arc<(Mutex<Book>, Condvar)>,
     counters: Arc<LinkCounters>,
     outbox: Arc<Outbox>,
@@ -461,15 +557,38 @@ impl PackageLink {
         PackageLink {
             connection: OnceLock::new(),
             ended: AtomicBool::new(false),
+            hold_ms: AtomicU64::new(HOLD_DEADLINE.as_millis() as u64),
             book: Arc::new((Mutex::new(Book::default()), Condvar::new())),
             counters,
             outbox,
         }
     }
 
-    /// The session's connection, once it is open: until then every request is refused unsent.
-    pub fn attach(&self, connection: Arc<Connection>) {
-        let _ = self.connection.set(connection);
+    /// The session's connection, once it is open: until then every request is refused unsent. From
+    /// then on a thread of the link's own ends the connection for a result that holds its slot past
+    /// `HOLD_DEADLINE` (`watch`); where that thread cannot start, a slot is released only by the
+    /// page's calls, as before the deadline existed.
+    pub fn attach(self: &Arc<Self>, connection: Arc<Connection>) {
+        if self.connection.set(connection).is_err() {
+            return;
+        }
+        let link = Arc::downgrade(self);
+        let book = Arc::clone(&self.book);
+        let _ = std::thread::Builder::new()
+            .name("vd-package-hold".to_owned())
+            .spawn(move || watch(&link, &book));
+    }
+
+    /// Shortens `HOLD_DEADLINE` for a case.
+    #[cfg(test)]
+    pub fn hold_for(&self, hold: Duration) {
+        self.hold_ms
+            .store(hold.as_millis() as u64, Ordering::SeqCst);
+        self.book.1.notify_all();
+    }
+
+    fn hold(&self) -> Duration {
+        Duration::from_millis(self.hold_ms.load(Ordering::SeqCst))
     }
 
     /// Whether a result the page could not take has ended the connection (`ENDED`).
@@ -498,7 +617,7 @@ impl PackageLink {
     /// The owner `id`, made on first use: a cancel or a request may come first. None once finished,
     /// or once the session is being torn down.
     fn owner(&self, book: &mut Book, id: u64) -> Option<Arc<Operation>> {
-        if book.torn_down || book.finished.contains(id) {
+        if book.torn_down || id < book.owner_floor || book.finished.contains(id) {
             return None;
         }
         if let Some(operation) = book.owners.get(&id) {
@@ -534,7 +653,9 @@ impl PackageLink {
     pub fn finish(&self, id: u64) {
         let mut book = self.book();
         book.owners.remove(&id);
-        book.finished.insert(id);
+        if id >= book.owner_floor {
+            book.finished.insert(id);
+        }
     }
 
     /// Submits `call` for owner `operation` under `ticket` and waits for its outcome: the record,
@@ -542,12 +663,15 @@ impl PackageLink {
     /// gate, as every write of the session does. A resend of the ticket — Tauri sends a request
     /// again when the page could not read its reply — waits for the first one's reply and answers
     /// it, and sends nothing. `floor` is the oldest ticket the page may still name; a ticket below
-    /// it, or one the page has settled, is rejected (`FINISHED`) and sends nothing.
+    /// it, or one the page has settled, is rejected (`FINISHED`) and sends nothing. `owner_floor`
+    /// is the oldest owner the page has not finished: one below it is finished, and its request is
+    /// refused unsent.
     pub fn request(
         &self,
         operation: u64,
         ticket: &str,
         floor: u64,
+        owner_floor: u64,
         call: Call<'_>,
     ) -> Result<Reply, String> {
         let method = call.method;
@@ -563,12 +687,14 @@ impl PackageLink {
         };
         let mut book = self.book();
         let given_up = book.advance(floor);
+        book.advance_owners(owner_floor);
         let entry = if book.settled(number) || number < book.floor {
             Err(())
         } else if let std::collections::btree_map::Entry::Vacant(vacant) = book.open.entry(number) {
             vacant.insert(Ticket {
                 reply: None,
                 slot: None,
+                held_since: None,
                 abandoned: false,
             });
             Ok(Some(self.owner(&mut book, operation)))
@@ -691,6 +817,7 @@ impl PackageLink {
                 }
             } else {
                 ticket.reply = Some(reply.clone());
+                ticket.held_since = ticket.slot.is_some().then(Instant::now);
             }
         }
         drop(book);
@@ -728,7 +855,9 @@ impl PackageLink {
             return false;
         };
         let mut book = self.book();
-        if book.adopted.contains(number) {
+        if book.adopted.contains(number)
+            || (number < book.floor && !book.open.contains_key(&number))
+        {
             return true;
         }
         let completed = matches!(
@@ -812,6 +941,7 @@ impl PackageLink {
     /// lets its slot go (`complete`). Where no thread can be started, the held slots are let go
     /// instead, which frees the worker the same way.
     pub fn tear_down(&self) {
+        self.book.1.notify_all();
         let (held, waiting): (Vec<ResultAdoption>, bool) = {
             let mut book = self.book();
             book.torn_down = true;
@@ -1126,7 +1256,13 @@ mod tests {
     fn a_request_before_the_connection_opens_is_refused_unsent_and_holds_no_slot() {
         let link = unattached();
         let reply = link
-            .request(1, "request-1", 0, call(Method::GetNumeric, 1.0, "0", None))
+            .request(
+                1,
+                "request-1",
+                0,
+                0,
+                call(Method::GetNumeric, 1.0, "0", None),
+            )
             .unwrap();
         assert_eq!(
             json_of(reply.record),
@@ -1153,20 +1289,44 @@ mod tests {
     fn a_resent_ticket_is_answered_with_its_first_reply() {
         let link = unattached();
         let first = link
-            .request(1, "request-1", 0, call(Method::GetNumeric, 1.0, "0", None))
+            .request(
+                1,
+                "request-1",
+                0,
+                0,
+                call(Method::GetNumeric, 1.0, "0", None),
+            )
             .unwrap();
         let again = link
-            .request(1, "request-1", 0, call(Method::GetNumeric, 2.0, "0", None))
+            .request(
+                1,
+                "request-1",
+                0,
+                0,
+                call(Method::GetNumeric, 2.0, "0", None),
+            )
             .unwrap();
         assert_eq!(again, first, "the record is the first call's");
         assert!(link.adopt("request-1"));
         assert_eq!(
-            link.request(1, "request-1", 0, call(Method::GetNumeric, 1.0, "0", None)),
+            link.request(
+                1,
+                "request-1",
+                0,
+                0,
+                call(Method::GetNumeric, 1.0, "0", None)
+            ),
             Err(FINISHED.to_string()),
             "once adopted, a late resend is rejected and sends nothing"
         );
         assert_eq!(
-            link.request(1, "request-1", 2, call(Method::GetNumeric, 1.0, "0", None)),
+            link.request(
+                1,
+                "request-1",
+                2,
+                0,
+                call(Method::GetNumeric, 1.0, "0", None)
+            ),
             Err(FINISHED.to_string()),
             "and so below the page's floor"
         );
@@ -1184,7 +1344,7 @@ mod tests {
             "request-1x",
         ] {
             let reply = link
-                .request(1, ticket, 0, call(Method::GetNumeric, 1.0, "0", None))
+                .request(1, ticket, 0, 0, call(Method::GetNumeric, 1.0, "0", None))
                 .unwrap();
             assert_eq!(
                 json_of(reply.record)["failure"],
@@ -1199,11 +1359,12 @@ mod tests {
     // owners are ranges, so one owner or one ticket left open keeps only itself.
     #[test]
     fn what_the_link_keeps_does_not_grow_with_the_operations_run() {
-        let read = |link: &PackageLink, op: u64, n: u64, floor: u64| {
+        let read = |link: &PackageLink, op: u64, n: u64, floor: u64, owners: u64| {
             link.request(
                 op,
                 &format!("request-{n}"),
                 floor,
+                owners,
                 call(Method::GetNumeric, 1.0, "0", None),
             )
             .unwrap()
@@ -1211,16 +1372,16 @@ mod tests {
         // One by one, each adopted and finished.
         let link = unattached();
         for n in 1..=100u64 {
-            read(&link, n, n, n);
+            read(&link, n, n, n, 0);
             assert!(link.adopt(&format!("request-{n}")));
             link.finish(n);
         }
         assert_eq!(link.kept(), (1, 1));
         // One owner and one ticket left open ahead of 100 others.
         let link = unattached();
-        read(&link, 1, 1, 1);
+        read(&link, 1, 1, 1, 0);
         for n in 2..=101u64 {
-            read(&link, n, n, 1);
+            read(&link, n, n, 1, 0);
             assert!(link.adopt(&format!("request-{n}")));
             link.finish(n);
         }
@@ -1237,12 +1398,56 @@ mod tests {
         assert_eq!(link.kept(), (0, 1));
         // A request of a finished owner, or on a settled ticket, sends nothing.
         let finished = link
-            .request(7, "request-1", 0, call(Method::GetNumeric, 1.0, "0", None))
+            .request(
+                7,
+                "request-1",
+                0,
+                0,
+                call(Method::GetNumeric, 1.0, "0", None),
+            )
             .unwrap();
         assert_eq!(
             json_of(finished.record)["failure"],
             json!({ "kind": "cause", "code": "not_connected", "phase": "admission" })
         );
+        // Tickets the page refused itself, which never reach the shell, and owners of another
+        // connection leave gaps: the page's floors close them.
+        let link = unattached();
+        for n in (1..=200u64).step_by(2) {
+            read(&link, n, n, n, n);
+            assert!(link.adopt(&format!("request-{n}")));
+            link.finish(n);
+        }
+        assert_eq!(link.kept(), (1, 1));
+        // Owners whose finish was lost are gone once the page's owner floor passes them.
+        let link = unattached();
+        for n in 1..=100u64 {
+            read(&link, n, n, n, n);
+            assert!(link.adopt(&format!("request-{n}")));
+            if n % 2 == 0 {
+                link.finish(n);
+            }
+        }
+        assert_eq!(link.kept(), (1, 1));
+        let below = read(&link, 99, 101, 101, 100);
+        assert_eq!(
+            json_of(below.record)["failure"],
+            json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
+            "an owner below the floor is finished"
+        );
+        assert_eq!(
+            link.request(
+                1,
+                "request-50",
+                101,
+                100,
+                call(Method::GetNumeric, 1.0, "0", None)
+            ),
+            Err(FINISHED.to_string()),
+            "a ticket below the floor is finished, with nothing kept of it"
+        );
+        assert!(link.adopt("request-50") && link.terminate("request-50"));
+        assert_eq!(link.kept(), (1, 1), "and a late call on it keeps nothing");
     }
 
     #[test]
@@ -1257,6 +1462,20 @@ mod tests {
         assert!(ranges.contains(u64::MAX) && ranges.contains(u64::MAX - 1));
         ranges.insert(3);
         assert_eq!(ranges.len(), 2, "an insert of a member changes nothing");
+    }
+
+    #[test]
+    fn ranges_forget_what_is_below_a_floor() {
+        let mut ranges = Ranges::default();
+        for n in [1, 2, 3, 5, 7, 8, 9] {
+            ranges.insert(n);
+        }
+        ranges.cut_below(8);
+        assert_eq!(ranges.len(), 1);
+        assert!(!(1..8).any(|n| ranges.contains(n)));
+        assert!(ranges.contains(8) && ranges.contains(9));
+        ranges.cut_below(u64::MAX);
+        assert_eq!(ranges.len(), 0);
     }
 
     #[test]

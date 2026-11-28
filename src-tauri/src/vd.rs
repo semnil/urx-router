@@ -3263,6 +3263,7 @@ mod imp {
                     1,
                     "request-1",
                     0,
+                    0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
                 .unwrap();
@@ -3286,6 +3287,7 @@ mod imp {
                     1,
                     "request-2",
                     0,
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5")),
                 )
                 .unwrap();
@@ -3299,6 +3301,67 @@ mod imp {
                 "a resend of the adoption is answered alike"
             );
             assert_eq!(writes_to(&unit, 1), 1);
+        }
+
+        // A held result waits for the page no longer than a request waits for its response.
+        #[test]
+        fn the_hold_deadline_is_the_request_deadline() {
+            assert_eq!(crate::vd::package::HOLD_DEADLINE, super::REQUEST_DEADLINE);
+        }
+
+        // A result the page leaves with neither an adoption nor a report holds the slot no longer
+        // than the hold deadline: the connection then ends with it, the worker's request waiting
+        // behind it is told the end, and the page's late adoption finds the slot gone. One adopted
+        // in time keeps the connection.
+        #[test]
+        fn a_result_the_page_leaves_unadopted_ends_the_connection_at_the_hold_deadline() {
+            // Shorter than the worker's own response deadline in these cases, so the end is the
+            // hold's and not the deadline's.
+            let hold = Duration::from_millis(80);
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.hold_for(hold);
+            link.request(
+                1,
+                "request-1",
+                1,
+                1,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            let started = std::time::Instant::now();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string())
+            );
+            let waited = started.elapsed();
+            assert!(
+                waited >= hold - Duration::from_millis(20) && waited < Duration::from_secs(2),
+                "{waited:?}"
+            );
+            assert!(
+                !link.adopt("request-1"),
+                "the slot went with the connection"
+            );
+
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.hold_for(hold);
+            link.request(
+                1,
+                "request-1",
+                1,
+                1,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            assert!(link.adopt("request-1"));
+            thread::sleep(hold * 2);
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Ok(7),
+                "adopted in time, it ends nothing"
+            );
         }
 
         /// `plain`, each reply sent `after` the request arrives.
@@ -3322,6 +3385,7 @@ mod imp {
                         1,
                         "request-1",
                         0,
+                        0,
                         package_call(Method::SetNumeric, 1.0, Some("5")),
                     )
                     .unwrap()
@@ -3344,6 +3408,7 @@ mod imp {
                     1,
                     "request-1",
                     0,
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5"))
                 )
                 .unwrap(),
@@ -3356,6 +3421,7 @@ mod imp {
                 link.request(
                     1,
                     "request-1",
+                    0,
                     0,
                     package_call(Method::SetNumeric, 1.0, Some("5"))
                 ),
@@ -3379,6 +3445,7 @@ mod imp {
                     link.request(
                         1,
                         ticket,
+                        0,
                         0,
                         package_call(Method::SetNumeric, 1.0, Some("5"))
                     ),
@@ -3406,6 +3473,7 @@ mod imp {
                 1,
                 "request-1",
                 1,
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
             )
             .unwrap();
@@ -3414,6 +3482,7 @@ mod imp {
                     1,
                     "request-2",
                     2,
+                    0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
                 .unwrap();
@@ -3436,6 +3505,7 @@ mod imp {
                         1,
                         "request-1",
                         1,
+                        0,
                         package_call(Method::GetNumeric, 1.0, None),
                     )
                 })
@@ -3448,6 +3518,7 @@ mod imp {
                         1,
                         "request-2",
                         2,
+                        0,
                         package_call(Method::GetNumeric, 1.0, None),
                     )
                 })
@@ -3473,6 +3544,7 @@ mod imp {
                     link.request(
                         1,
                         "request-1",
+                        0,
                         0,
                         package_call(Method::GetNumeric, 1.0, None),
                     )
@@ -3501,6 +3573,7 @@ mod imp {
                     link.request(
                         1,
                         "request-1",
+                        0,
                         0,
                         package_call(Method::GetNumeric, 1.0, None),
                     )
@@ -3540,6 +3613,7 @@ mod imp {
                 1,
                 "request-1",
                 0,
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
             )
             .unwrap();
@@ -3569,6 +3643,7 @@ mod imp {
                     2,
                     "request-2",
                     0,
+                    0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
                 .unwrap();
@@ -3591,6 +3666,7 @@ mod imp {
                 .request(
                     1,
                     "request-1",
+                    0,
                     0,
                     package_call(Method::SetText, 1.0, Some("a")),
                 )
@@ -3633,6 +3709,7 @@ mod imp {
                     1,
                     "request-1",
                     0,
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5")),
                 )
                 .unwrap();
@@ -3657,6 +3734,7 @@ mod imp {
                     1,
                     "request-2",
                     0,
+                    0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
                 .unwrap();
@@ -3673,6 +3751,7 @@ mod imp {
                 1,
                 "request-1",
                 0,
+                0,
                 package_call(Method::GetNumeric, -1.0, None),
             )
             .unwrap();
@@ -3688,6 +3767,7 @@ mod imp {
             link.request(
                 1,
                 "request-2",
+                0,
                 0,
                 package_call(Method::GetNumeric, 1.0, None),
             )
@@ -3708,6 +3788,7 @@ mod imp {
                 .request(
                     2,
                     "request-3",
+                    0,
                     0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
@@ -3732,6 +3813,7 @@ mod imp {
                 1,
                 "request-1",
                 0,
+                0,
                 package_call(Method::GetNumeric, 1.0, None),
             )
             .unwrap();
@@ -3744,6 +3826,7 @@ mod imp {
             link.request(
                 1,
                 "request-2",
+                0,
                 0,
                 package_call(Method::GetNumeric, 1.0, None),
             )
@@ -3767,6 +3850,7 @@ mod imp {
                     1,
                     "request-1",
                     0,
+                    0,
                     package_call(Method::SetNumeric, 1.0, Some("5")),
                 )
                 .unwrap();
@@ -3783,6 +3867,7 @@ mod imp {
                 .request(
                     2,
                     "request-2",
+                    0,
                     0,
                     package_call(Method::SetNumeric, 1.0, Some("5")),
                 )
@@ -3804,6 +3889,7 @@ mod imp {
                 .request(
                     1,
                     "request-1",
+                    0,
                     0,
                     package_call(Method::GetNumeric, 1.0, None),
                 )
