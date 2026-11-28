@@ -680,6 +680,30 @@ describe("notification fetch", () => {
     expect(outbox.fetches, "passed on as the fetch it named was handed on").toHaveLength(2);
   });
 
+  // The fetch a refusal names is one of the connection the write went out on: once the page follows
+  // another, that connection's fetches carry nothing of it, and the refusal is passed on at once.
+  it("passes a write the shell held on at once once its connection is no longer the one followed", async () => {
+    const { harness } = await connected();
+    await platform.vdParamsSubscribe([[895, 0, 0]], vi.fn());
+    await settle();
+    let refuse: (error: Error) => void = () => {};
+    harness.answers.vd_set = () => new Promise((_, reject) => (refuse = reject));
+    let settled: unknown;
+    void platform.vdSet(1, 0, 0, 5).then(
+      () => (settled = "written"),
+      (error: unknown) => (settled = error),
+    );
+    await settle();
+    // Another connection, fetching, before the shell's refusal comes back.
+    harness.answers.vd_connect = { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 2 };
+    await platform.vdConnect("URX44V");
+    await platform.vdParamsSubscribe([[895, 0, 0]], vi.fn());
+    await settle();
+    refuse(new Error(`${platform.WRITES_HELD}: the unit announced Console Lock (fetch 2)`));
+    await settle();
+    expect(String(settled), "its connection's fetch 2 is not the other one's").toContain(`${platform.WRITES_HELD}:`);
+  });
+
   it("passes a write the shell held on at once when nothing fetches", async () => {
     const harness = installInternals({
       vd_connect: { model: "URX44V", label: "URX44V", firmware: "1.5.0", epoch: 1 },

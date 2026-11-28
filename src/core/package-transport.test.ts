@@ -153,6 +153,42 @@ describe("the control package's transport", () => {
     last.finish();
   });
 
+  it("passes a held write on at once once its connection is no longer the one followed", async () => {
+    let answerHeld: (reply: unknown) => void = () => {};
+    let epoch = 7;
+    installShell({
+      vd_connect: () => ({ model: "URX44V", label: "URX44V", firmware: "", epoch: epoch++ }),
+      vd_params_subscribe: () => undefined,
+      vd_notifications: () => new Promise(() => {}),
+      vd_package_request: () => new Promise((resolve) => (answerHeld = resolve)),
+      vd_disconnect: () => undefined,
+    });
+    await platform.vdConnect("URX44V");
+    try {
+      await platform.vdParamsSubscribe([], () => {});
+      const context = new OperationContext(packageTransport(), "URX44V");
+      const write = context.setNumeric(ADDRESS, "1");
+      // The page follows another connection before the shell's refusal comes back.
+      await platform.vdConnect("URX44V");
+      await platform.vdParamsSubscribe([], () => {});
+      answerHeld({
+        record: {
+          kind: "failure",
+          failure: { kind: "cause", code: "precondition_failed", phase: "admission" },
+          evidence: { state: "not_sent" },
+        },
+        held: { fetch: 2 },
+      });
+      const settled = await Promise.race([
+        write.then(() => "settled"),
+        new Promise((resolve) => setTimeout(() => resolve("waiting"), 50)),
+      ]);
+      expect(settled, "the other connection's fetches carry nothing of it").toBe("settled");
+    } finally {
+      await platform.vdDisconnect(8).catch(() => {});
+    }
+  });
+
   it("refuses a write the page holds before it reaches the shell, and holds no slot for it", async () => {
     const shell = installShell({});
     platform.holdDeviceWrites(true);

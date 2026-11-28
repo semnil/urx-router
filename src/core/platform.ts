@@ -330,11 +330,14 @@ function releaseHandOns(handedOn: number): void {
   }
 }
 
-/** Settles once the fetch numbered `fetch` has been handed on to its handlers — at once if it already
- *  has, and without a number once one that starts after this call has — and at once when no loop is
- *  fetching; and when the loop stops. */
-function handedOn(fetch: number | undefined): Promise<void> {
-  if (fetching === null || (fetch !== undefined && fetch <= handedOnSeq)) return Promise.resolve();
+/** Settles once the fetch numbered `fetch` of the connection of generation `epoch` has been handed on
+ *  to its handlers — at once if it already has, and without a number once one that starts after this
+ *  call has — and at once when no loop is fetching, or when that connection is not the one followed:
+ *  another connection's fetches carry nothing of it. And when the loop stops. */
+function handedOn(fetch: number | undefined, epoch: number | null): Promise<void> {
+  if (epoch !== connectionEpoch || fetching === null || (fetch !== undefined && fetch <= handedOnSeq)) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => handOnWaiters.push({ after: fetch ?? fetchInFlight + 1, resolve }));
 }
 // The current session's link watch: a fetch that fails ends the session through it, as the shell's
@@ -530,11 +533,13 @@ const lostWrite = (): Promise<never> =>
  * (`heldWrite`).
  */
 function shellHeld<T>(write: Promise<T>): Promise<T> {
+  // The connection the write goes out on: the fetch the refusal names is one of its own.
+  const epoch = connectionEpoch;
   return write.catch(async (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith(`${WRITES_HELD}:`)) {
       const fetch = /\(fetch (\d+)\)$/.exec(message)?.[1];
-      await handedOn(fetch === undefined ? undefined : Number(fetch));
+      await handedOn(fetch === undefined ? undefined : Number(fetch), epoch);
     }
     throw error;
   });
@@ -555,13 +560,14 @@ export function deviceWritesRefused(): boolean {
 }
 
 /**
- * Settles once the page has handed on the fetch numbered `fetch` (`handedOn`): what a write the
- * shell held for Console Lock waits for before its refusal is passed on (`shellHeld`), so whoever
- * handles it finds the lock already taken. With no number, once a fetch that starts after this call
- * has been handed on.
+ * Settles once the page has handed on the fetch numbered `fetch` of the connection of generation
+ * `epoch` (`handedOn`): what a write the shell held for Console Lock waits for before its refusal is
+ * passed on (`shellHeld`), so whoever handles it finds the lock already taken. With no number, once a
+ * fetch that starts after this call has been handed on; at once once that connection is not the one
+ * followed.
  */
-export function untilHandedOn(fetch: number | undefined): Promise<void> {
-  return handedOn(fetch);
+export function untilHandedOn(fetch: number | undefined, epoch: number): Promise<void> {
+  return handedOn(fetch, epoch);
 }
 
 /** Set one parameter instance to an absolute broker value. */

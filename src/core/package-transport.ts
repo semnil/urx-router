@@ -206,7 +206,7 @@ class ShellTransport implements Transport {
       y: address.y,
       value: value ?? null,
     });
-    if (reply.held) await untilHandedOn(reply.held.fetch ?? undefined);
+    if (reply.held) await untilHandedOn(reply.held.fetch ?? undefined, this.#epoch);
     return reply.record;
   }
 }
