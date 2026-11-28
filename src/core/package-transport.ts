@@ -56,6 +56,12 @@ const ticketFloor = (): number => (liveTickets.size ? Math.min(...liveTickets) :
 /** The oldest owner the page has not finished, or the next to be made when none is live. */
 const operationFloor = (): number => (liveOperations.size ? Math.min(...liveOperations) : nextOperation + 1);
 
+/** Both floors, as every call to the shell carries them: it keeps nothing below either. */
+const floors = (): { ticketFloor: number; operationFloor: number } => ({
+  ticketFloor: ticketFloor(),
+  operationFloor: operationFloor(),
+});
+
 /** The number of a ticket this module issued (`request-<n>`). */
 const ticketNumber = (ticket: RequestTicket): number => Number(ticket.slice("request-".length));
 
@@ -75,14 +81,14 @@ class ShellOperation implements TransportOperation {
   // page sent it, so a request issued after it meets the cancelled owner. A rejection is the shell
   // being gone, where nothing more can be sent anyway.
   cancel(): void {
-    invoke<void>("vd_package_cancel", { epoch: this.epoch, operation: this.id }).catch(() => {});
+    invoke<void>("vd_package_cancel", { epoch: this.epoch, operation: this.id, ...floors() }).catch(() => {});
   }
 
   // The page is done with the owner whether or not the shell hears of it: the next request's
   // floor passes it.
   finish(): void {
     liveOperations.delete(this.id);
-    invoke<void>("vd_package_finish", { epoch: this.epoch, operation: this.id }).catch(() => {});
+    invoke<void>("vd_package_finish", { epoch: this.epoch, operation: this.id, ...floors() }).catch(() => {});
   }
 }
 
@@ -156,14 +162,22 @@ class ShellTransport implements Transport {
 
   async adoptResult(requestTicket: RequestTicket): Promise<void> {
     if (this.#local.delete(requestTicket)) return settleTicket(requestTicket);
-    const adopted = await invoke<boolean>("vd_package_adopt", { epoch: this.#epoch, ticket: requestTicket });
+    const adopted = await invoke<boolean>("vd_package_adopt", {
+      epoch: this.#epoch,
+      ticket: requestTicket,
+      ...floors(),
+    });
     if (!adopted) throw new Error("the result's slot could not be released");
     settleTicket(requestTicket);
   }
 
   async failDelivery(requestTicket: RequestTicket): Promise<void> {
     if (this.#local.delete(requestTicket)) return settleTicket(requestTicket);
-    const reported = await invoke<boolean>("vd_package_fail_delivery", { epoch: this.#epoch, ticket: requestTicket });
+    const reported = await invoke<boolean>("vd_package_fail_delivery", {
+      epoch: this.#epoch,
+      ticket: requestTicket,
+      ...floors(),
+    });
     if (!reported) throw new Error("the undelivered result could not be reported");
     settleTicket(requestTicket);
   }
@@ -171,7 +185,7 @@ class ShellTransport implements Transport {
   async terminate(requestTicket: RequestTicket): Promise<void> {
     try {
       if (this.#local.delete(requestTicket)) return;
-      await invoke<boolean>("vd_package_terminate", { epoch: this.#epoch, ticket: requestTicket });
+      await invoke<boolean>("vd_package_terminate", { epoch: this.#epoch, ticket: requestTicket, ...floors() });
     } finally {
       settleTicket(requestTicket);
     }
@@ -200,8 +214,7 @@ class ShellTransport implements Transport {
       epoch: this.#epoch,
       operation: operation.id,
       ticket: requestTicket,
-      ticketFloor: ticketFloor(),
-      operationFloor: operationFloor(),
+      ...floors(),
       method,
       paramId: address.paramId,
       x: address.x,

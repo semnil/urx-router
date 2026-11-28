@@ -100,9 +100,20 @@ describe("the control package's transport", () => {
       y: "-1",
       value: null,
     });
-    expect(adopt).toEqual(["vd_package_adopt", { epoch: 0, ticket: request?.[1].ticket }]);
+    expect(adopt).toEqual([
+      "vd_package_adopt",
+      { epoch: 0, ticket: request?.[1].ticket, ticketFloor: expect.any(Number), operationFloor: expect.any(Number) },
+    ]);
     await vi.waitFor(() =>
-      expect(shell.calls.at(-1)).toEqual(["vd_package_finish", { epoch: 0, operation: request?.[1].operation }]),
+      expect(shell.calls.at(-1)).toEqual([
+        "vd_package_finish",
+        {
+          epoch: 0,
+          operation: request?.[1].operation,
+          ticketFloor: expect.any(Number),
+          operationFloor: expect.any(Number),
+        },
+      ]),
     );
   });
 
@@ -181,6 +192,12 @@ describe("the control package's transport", () => {
       "an owner left open keeps the floor",
     ).toEqual([first?.operation, first?.operation, first?.operation]);
     expect(all.at(-1)?.operationFloor, "every earlier owner finished, its finish lost").toBe(all.at(-1)?.operation);
+    // Every call carries both floors, a finish its own owner already behind them.
+    const lastFinish = shell.calls.filter(([cmd]) => cmd === "vd_package_finish").at(-1)?.[1];
+    expect(lastFinish?.operationFloor).toBeGreaterThan(Number(lastFinish?.operation));
+    for (const [cmd, args] of shell.calls) {
+      expect(args, cmd).toMatchObject({ ticketFloor: expect.any(Number), operationFloor: expect.any(Number) });
+    }
   });
 
   it("passes a held write on at once once its connection is no longer the one followed", async () => {
@@ -311,7 +328,12 @@ describe("the control package's transport", () => {
       "vd_package_adopt",
       "vd_package_fail_delivery",
     ]);
-    expect(shell.calls[2]?.[1]).toEqual({ epoch: 0, ticket });
+    expect(shell.calls[2]?.[1]).toEqual({
+      epoch: 0,
+      ticket,
+      ticketFloor: expect.any(Number),
+      operationFloor: expect.any(Number),
+    });
   });
 
   it("ends the connection for a result it cannot report, through terminate", async () => {
@@ -355,8 +377,13 @@ describe("the control package's transport", () => {
     const [cancel, finish] = shell.calls;
     expect(cancel?.[0]).toBe("vd_package_cancel");
     expect(finish?.[0]).toBe("vd_package_finish");
-    expect(cancel?.[1]).toEqual(finish?.[1]);
-    expect(cancel?.[1]).toEqual({ epoch: 0, operation: expect.any(Number) });
+    expect(cancel?.[1].operation).toEqual(finish?.[1].operation);
+    expect(cancel?.[1]).toEqual({
+      epoch: 0,
+      operation: expect.any(Number),
+      ticketFloor: expect.any(Number),
+      operationFloor: expect.any(Number),
+    });
   });
 
   it("refuses a subscription's admission", () => {

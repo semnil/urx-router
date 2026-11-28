@@ -929,18 +929,34 @@ async fn vd_package_request(
     .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
 }
 
-// Stops the operation owner's unsent requests; idempotent, no reply.
+// Stops the operation owner's unsent requests; idempotent, no reply. This command and the four
+// after it carry the page's floors as a request does, so the shell keeps nothing below them
+// whichever call the page makes last (`PackageLink::note_floors`).
 #[tauri::command]
-fn vd_package_cancel(state: State<vd::VdState>, epoch: u64, operation: u64) {
+fn vd_package_cancel(
+    state: State<vd::VdState>,
+    epoch: u64,
+    operation: u64,
+    ticket_floor: u64,
+    operation_floor: u64,
+) {
     if let Some(link) = vd::package_link(&state, epoch) {
+        link.note_floors(ticket_floor, operation_floor);
         link.cancel(operation);
     }
 }
 
 // Releases the operation owner once its requests are consumed; no device I/O.
 #[tauri::command]
-fn vd_package_finish(state: State<vd::VdState>, epoch: u64, operation: u64) {
+fn vd_package_finish(
+    state: State<vd::VdState>,
+    epoch: u64,
+    operation: u64,
+    ticket_floor: u64,
+    operation_floor: u64,
+) {
     if let Some(link) = vd::package_link(&state, epoch) {
+        link.note_floors(ticket_floor, operation_floor);
         link.finish(operation);
     }
 }
@@ -949,8 +965,17 @@ fn vd_package_finish(state: State<vd::VdState>, epoch: u64, operation: u64) {
 // for a ticket with no completed result, or one already adopted or ended — and for a connection
 // that is not the one installed, whose end took every slot it had.
 #[tauri::command]
-fn vd_package_adopt(state: State<vd::VdState>, epoch: u64, ticket: String) -> bool {
-    vd::package_link(&state, epoch).is_some_and(|link| link.adopt(&ticket))
+fn vd_package_adopt(
+    state: State<vd::VdState>,
+    epoch: u64,
+    ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
+) -> bool {
+    vd::package_link(&state, epoch).is_some_and(|link| {
+        link.note_floors(ticket_floor, operation_floor);
+        link.adopt(&ticket)
+    })
 }
 
 // The page could not adopt `ticket`'s result: a result still holding the wire slot ends the
@@ -961,10 +986,13 @@ async fn vd_package_fail_delivery(
     state: State<'_, vd::VdState>,
     epoch: u64,
     ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
 ) -> Result<bool, String> {
     let Some(link) = vd::package_link(&state, epoch) else {
         return Ok(true);
     };
+    link.note_floors(ticket_floor, operation_floor);
     tauri::async_runtime::spawn_blocking(move || link.fail_delivery(&ticket))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())
@@ -976,10 +1004,13 @@ async fn vd_package_terminate(
     state: State<'_, vd::VdState>,
     epoch: u64,
     ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
 ) -> Result<bool, String> {
     let Some(link) = vd::package_link(&state, epoch) else {
         return Ok(true);
     };
+    link.note_floors(ticket_floor, operation_floor);
     tauri::async_runtime::spawn_blocking(move || link.terminate(&ticket))
         .await
         .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())

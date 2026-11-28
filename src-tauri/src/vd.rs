@@ -3303,6 +3303,35 @@ mod imp {
             assert_eq!(writes_to(&unit, 1), 1);
         }
 
+        // A link whose hold thread did not start sends no package request: refused unsent as the
+        // app's own fault, so no result can hold the slot unbounded. The worker's own requests go
+        // on as before.
+        #[test]
+        fn a_link_without_its_hold_thread_sends_no_package_request() {
+            let (tx, unit, _) = connected(plain);
+            let link = package();
+            link.as_if_unwatched();
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    1,
+                    1,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&reply.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cause", "code": "internal_error", "phase": "admission" },
+                    "evidence": { "state": "not_sent" },
+                })
+            );
+            assert_eq!(writes_to(&unit, 1), 0);
+            assert_eq!(get(tx.clone(), 2, 0, 0), Ok(7));
+        }
+
         // A held result waits for the page no longer than a request waits for its response.
         #[test]
         fn the_hold_deadline_is_the_request_deadline() {
@@ -3529,6 +3558,11 @@ mod imp {
                 get(tx.clone(), 2, 0, 0),
                 Err(crate::vd::package::ENDED.to_string()),
                 "the given-up result ended the connection as it arrived"
+            );
+            assert_eq!(
+                link.kept().0,
+                1,
+                "arriving below the floor, it is recorded nowhere: only the later ticket is kept"
             );
         }
 

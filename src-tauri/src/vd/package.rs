@@ -461,6 +461,13 @@ impl Book {
         self.finished.cut_below(floor);
     }
 
+    /// Records ticket `n` ended, unless the page's floor already answers for it.
+    fn end_ticket(&mut self, n: u64) {
+        if n >= self.floor {
+            self.ended.insert(n);
+        }
+    }
+
     /// Whether the page has settled ticket `n` with the shell: below its floor, or recorded so.
     fn settled(&self, n: u64) -> bool {
         (n < self.floor && !self.open.contains_key(&n))
@@ -494,7 +501,7 @@ fn watch(link: &Weak<PackageLink>, book: &Arc<(Mutex<Book>, Condvar)>) {
             for n in expired {
                 if let Some(ticket) = guard.open.remove(&n) {
                     held.extend(ticket.slot);
-                    guard.ended.insert(n);
+                    guard.end_ticket(n);
                 }
             }
             drop(guard);
@@ -546,6 +553,9 @@ pub struct PackageLink {
     ended: AtomicBool,
     /// `HOLD_DEADLINE` in milliseconds, which a case may shorten.
     hold_ms: AtomicU64,
+    /// The hold thread runs (`attach`): without it no request is sent, since a result could then
+    /// hold the slot past the deadline.
+    watched: AtomicBool,
     book: Arc<(Mutex<Book>, Condvar)>,
     counters: Arc<LinkCounters>,
     outbox: Arc<Outbox>,
@@ -558,6 +568,7 @@ impl PackageLink {
             connection: OnceLock::new(),
             ended: AtomicBool::new(false),
             hold_ms: AtomicU64::new(HOLD_DEADLINE.as_millis() as u64),
+            watched: AtomicBool::new(false),
             book: Arc::new((Mutex::new(Book::default()), Condvar::new())),
             counters,
             outbox,
@@ -566,17 +577,24 @@ impl PackageLink {
 
     /// The session's connection, once it is open: until then every request is refused unsent. From
     /// then on a thread of the link's own ends the connection for a result that holds its slot past
-    /// `HOLD_DEADLINE` (`watch`); where that thread cannot start, a slot is released only by the
-    /// page's calls, as before the deadline existed.
+    /// `HOLD_DEADLINE` (`watch`). Where that thread cannot start, every request is refused unsent
+    /// at admission as the app's own fault, so no result holds a slot nothing would bound.
     pub fn attach(self: &Arc<Self>, connection: Arc<Connection>) {
         if self.connection.set(connection).is_err() {
             return;
         }
         let link = Arc::downgrade(self);
         let book = Arc::clone(&self.book);
-        let _ = std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("vd-package-hold".to_owned())
             .spawn(move || watch(&link, &book));
+        self.watched.store(started.is_ok(), Ordering::SeqCst);
+    }
+
+    /// As if the hold thread had not started.
+    #[cfg(test)]
+    pub fn as_if_unwatched(&self) {
+        self.watched.store(false, Ordering::SeqCst);
     }
 
     /// Shortens `HOLD_DEADLINE` for a case.
@@ -612,6 +630,36 @@ impl PackageLink {
             connection.close(FATAL_TEARDOWN);
         }
         drop(held);
+    }
+
+    /// The page's floors as it sends them with every call (`ticketFloor`, `operationFloor`): the
+    /// link keeps nothing below them, and a ticket below the first it still holds unsettled is one
+    /// the page gave up, whose slot ends the connection, from a thread of its own so the call that
+    /// carried the floors answers at once.
+    pub fn note_floors(&self, tickets: u64, owners: u64) {
+        let given_up = {
+            let mut book = self.book();
+            let given_up = book.advance(tickets);
+            book.advance_owners(owners);
+            given_up
+        };
+        if given_up.is_empty() {
+            return;
+        }
+        self.ended.store(true, Ordering::SeqCst);
+        let Some(connection) = self.connection.get().cloned() else {
+            return;
+        };
+        let closing = Arc::clone(&connection);
+        let started = std::thread::Builder::new()
+            .name("vd-package-end".to_owned())
+            .spawn(move || {
+                closing.close(FATAL_TEARDOWN);
+                drop(given_up);
+            });
+        if started.is_err() {
+            connection.close(FATAL_TEARDOWN);
+        }
     }
 
     /// The owner `id`, made on first use: a cancel or a request may come first. None once finished,
@@ -729,6 +777,15 @@ impl PackageLink {
                 reply(refused(RequestCause::NotConnected, RequestPhase::Admission)),
             ));
         };
+        if !self.watched.load(Ordering::SeqCst) {
+            return Ok(self.complete(
+                number,
+                reply(refused(
+                    RequestCause::InternalError,
+                    RequestPhase::Admission,
+                )),
+            ));
+        }
         let (tx, rx) = mpsc::channel::<Outcome>();
         let book = Arc::clone(&self.book);
         let done = move |outcome: Outcome, adoption: ResultAdoption| {
@@ -809,7 +866,7 @@ impl PackageLink {
             if ticket.abandoned || torn_down {
                 let slot = ticket.slot.take();
                 book.open.remove(&number);
-                book.ended.insert(number);
+                book.end_ticket(number);
                 if torn_down {
                     released = slot;
                 } else {
@@ -906,7 +963,7 @@ impl PackageLink {
             }
             match book.open.get_mut(&number) {
                 None => {
-                    book.ended.insert(number);
+                    book.end_ticket(number);
                     return unknown_is_done;
                 }
                 // A result still on its way: the end has to take the slot it will hold. One the page
@@ -924,7 +981,7 @@ impl PackageLink {
                 Some(ticket) => {
                     let slot = ticket.slot.take();
                     book.open.remove(&number);
-                    book.ended.insert(number);
+                    book.end_ticket(number);
                     break slot;
                 }
             }
@@ -1448,6 +1505,17 @@ mod tests {
         );
         assert!(link.adopt("request-50") && link.terminate("request-50"));
         assert_eq!(link.kept(), (1, 1), "and a late call on it keeps nothing");
+        // Operations the page runs without a request — every write refused on the page — reach
+        // the shell only by their finish, half of which are lost: the floors the finishes carry
+        // keep the link bounded all the same.
+        let link = unattached();
+        for n in 1..=200u64 {
+            if n % 2 == 0 {
+                link.note_floors(1, n + 1);
+                link.finish(n);
+            }
+        }
+        assert_eq!(link.kept(), (0, 0));
     }
 
     #[test]
