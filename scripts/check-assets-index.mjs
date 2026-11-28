@@ -99,6 +99,10 @@ const PROSE_TOKENS = new Map([
   ["dist", "the build output directory, named as the thing ci.yml greps"],
   ["ci.yml", "named as the workflow that greps; the grep itself is asserted per handle"],
   ["ls scripts/", "an instruction to the reader, not a path"],
+  [
+    "UPDATE_PACKAGE_RECORDS=1 cargo test the_records_the_page",
+    "a cargo command run in src-tauri/, whose test pins the fixture it regenerates; the shapes above classify pnpm, node and python commands",
+  ],
   [".gitignore", "the file the ignore rules live in, named as itself"],
   [".git", "the directory or file git keeps at the top of a working tree, named as itself"],
   ["core.excludesFile", "a git configuration key, not a path"],
