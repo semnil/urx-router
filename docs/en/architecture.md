@@ -1869,14 +1869,20 @@ drag lands on the nearest.
   operation sends it, and a live session ends with that code — through its link watch, at once if the watch is
   registered after the loss. An operation running on the connection stops with that cause at its next command, as
   it stops on a Console Lock (its lock watch is told, `onNotificationsLost`): Write to device says how much it sent
-  and offers no retry on that connection, and a self-test that had written keeps what its restore needs for Restore
-  after self-test on a later connection. The next connection starts clean. A Console Lock the unit announced holds
-  the writes in the shell from that announcement to the announcement of the lock off: `vd.rs` keeps the last lock
-  state the unit announced and refuses a write meanwhile with `writes-held` and the number of the fetch that
-  carries the announcement, so a write the page handed over before it knew of the lock does not reach the locked
-  unit — a batch that carries a lock announcement does not wait on the cap of unfetched updates, so its state
-  holds the next write however many wait; the page passes that refusal on only once it has handed that fetch on, so whoever handles it finds the lock
-  already taken.
+  — numeric values, Sweet Spot presets and names counted alike — asks nothing more and acts on no answer to a
+  question it had open when the stop came (`askWhileWriting`), and offers no retry on that connection; a self-test
+  that may have written — a write accepted, or one whose answer was lost, and not one the page or the shell refused
+  before sending it (`refusedBeforeSending`) — keeps what its restore needs for Restore after self-test on a later
+  connection. The next connection starts clean. A Console Lock the unit announced holds the writes in the shell
+  from that announcement to the announcement of the lock off: `vd.rs` takes the lock state as the transport
+  receives each announcement — the transport shows it every notification as it queues it (`open_observed`), ahead
+  of the batch that carries it, which can wait behind others on the cap of unfetched updates — and refuses a write
+  meanwhile with `writes-held` and the number of the fetch that carries the announcement. To name that number it
+  waits for the announcement to reach the outbox, up to the page's own 5 s deadline, past which the refusal names
+  none. So a write the page handed over before it knew of the lock does not reach the locked unit, however many
+  updates wait; a batch that carries a lock announcement does not wait on the cap, so the next fetch hands it on.
+  The page passes the refusal on only once it has handed that fetch on — or, when the refusal names none, a fetch
+  that starts after it — so whoever handles it finds the lock already taken.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
