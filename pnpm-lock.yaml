@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@urx/device-control':
+        specifier: link:vendor/urx-device/packages/control
+        version: link:vendor/urx-device/packages/control
       urx-lcd-sim:
         specifier: link:vendor/urx-lcd-sim
         version: link:vendor/urx-lcd-sim

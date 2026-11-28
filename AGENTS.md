@@ -11,7 +11,7 @@ and Live sync are always enabled in the desktop build (vd protocol, `src/core/co
 
 - Tauri 2 (desktop shell; Windows 11 / Apple silicon macOS)
 - TypeScript + Vite (frontend)
-- Rendering is plain SVG. **Zero runtime external dependencies**: no npm packages or CDNs in the runtime from outside github.com/semnil. The web layer's one runtime dependency is semnil's own LCD simulator `urx-lcd-sim` (the SIM view), a git submodule at `vendor/urx-lcd-sim` that `package.json` links (`link:`) and Dependabot moves to the newest commit of its default branch. The shell's device link runs on semnil's own transport crate from `urx-device`, a git submodule at `vendor/urx-device` that `src-tauri/Cargo.toml` takes by path; it is pinned to a published release and moved only in a pull request a person opens (Dependabot and the auto-merge leave it alone)
+- Rendering is plain SVG. **Zero runtime external dependencies**: no npm packages or CDNs in the runtime from outside github.com/semnil. The web layer's runtime dependencies are semnil's own: the LCD simulator `urx-lcd-sim` (the SIM view), a git submodule at `vendor/urx-lcd-sim` that `package.json` links (`link:`) and Dependabot moves to the newest commit of its default branch, and urx-device's control package `@urx/device-control`, which `package.json` links from `vendor/urx-device/packages/control` and `pnpm build:common` builds into its `dist/` ahead of every build, dev and test script. The shell's device link runs on semnil's own transport crate from the same `urx-device`, a git submodule at `vendor/urx-device` that `src-tauri/Cargo.toml` takes by path; it is pinned to a published release and moved only in a pull request a person opens (Dependabot and the auto-merge leave it alone)
 
 ## Structure
 
@@ -38,6 +38,7 @@ and Live sync are always enabled in the desktop build (vd protocol, `src/core/co
 ```sh
 git submodule update --init   # vendor/urx-lcd-sim + vendor/urx-device — empty in a fresh clone or worktree; run before pnpm install and cargo
 pnpm install
+pnpm build:common # urx-device's control package into vendor/urx-device/packages/control/dist — every build, dev and test script below runs it first
 pnpm dev          # browser http://localhost:5173 (no Rust required)
 pnpm tauri dev    # desktop app (Rust required; install via rustup if missing)
 pnpm build        # tsc --noEmit + vite build

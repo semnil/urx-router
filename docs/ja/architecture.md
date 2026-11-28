@@ -181,7 +181,16 @@ flowchart TD
   しない — 実機読み戻しは生値を 100 で割るだけ、JSON / `?plan=` / `.urxf` の読み込みは有限性しか見ないので、
   プランは「このグリッドで呼べる最も近い値」ではなく実機やファイルが実際に持つ値を述べる) /
   `storage.ts` 保存 / 読み込み / 画像書き出し (PNG・PDF。PDF は自前の FlateDecode) /
-  `platform.ts` Tauri IPC とブラウザの実行時ブリッジ / `meters.ts` ライブレベルメーター (機種ごとのノード id →
+  `platform.ts` Tauri IPC とブラウザの実行時ブリッジ / `package-transport.ts` control パッケージの `Transport`
+  (urx-device の `packages/control`。`vendor/urx-device` から link でつなぎ、`pnpm build:common` がその `dist/` へ
+  組み立てる。ビルド・dev・テストの各スクリプトが最初にこれを走らせる): 要求はシェルの `vd_package_request` へ送り、
+  シェルが作った K34 の記録で解決する。urx-device の操作のコンテキストがそれを検査してから受け取る
+  (`vd_package_adopt`)。受け取れない結果は接続を終える (`vd_package_fail_delivery`・`vd_package_terminate`)。
+  書き込みは `vdSet` と同じく、まずページ自身の止めを通る。シェルが Console Lock で止めた書き込みは、その知らせを
+  運ぶ取得をページが渡し終えてから解決する。購読はまだ受け付けない: このアプリがパッケージ経由で走らせる操作に、
+  購読するものはまだ無い。`package-records.fixture.json` はシェルが作る記録の形の全部で、シェル自身のテストが
+  生成し (`UPDATE_PACKAGE_RECORDS=1 cargo test`)、`package-transport.test.ts` が urx-device の検査器で確かめる /
+  `meters.ts` ライブレベルメーター (機種ごとのノード id →
   ブローカーのメーターアドレス表 (`NODE_TAPS_URX22` / `NODE_TAPS_URX44`)、dBFS デコード、最新値ストア。
   ゲインリダクションのメーターは専用の表と専用のデコード (`grAddr(kind, node)` / `decodeGrDb`) を持つ —
   リダクションはレベルではないため — また `tapsFor` は CONSOLE のメーターポイント選択の契約も兼ねる。2 つの
@@ -752,7 +761,24 @@ flowchart TD
   その隣の MIDI トレースへ、`append_watch_log` はパラメータ監視のファイルへ複数行をまとめて追記する (どちらも dev
   バイナリ限定・それ以外では拒否する)。`--experimental`
   ゲート: `experimental_enabled` はセルフテスト・デバイスとの照合・`.urxf` の取り込み・SIM ビュー・接続の記録の表示を
-  開く起動フラグを答え、`self_test_requested` はセルフテストの自動実行だけを答える) + **セッションのテアダウン**
+  開く起動フラグを答え、`self_test_requested` はセルフテストの自動実行だけを答える) + control パッケージの要求
+  (`vd/package.rs`、`PackageLink`: `vd_package_request` はページの操作の持ち主の要求を 1 つ、ワーカーのものと並べて
+  セッションの接続へ出し、書き込みは同じ Console Lock の判定を通し、K34 の記録で答える。その結果は
+  `vd_package_adopt` まで接続のただ 1 つの送信の枠を持ち続けるので、ワーカー自身の要求はその後ろで待つ。
+  開いている要求番号の要求と返答を 1 つの記録にまとめるので、ページが返答を読めなかったときに Tauri が送り直す
+  要求には、その記録から答え、本体へ 2 度目は届かない。ページは全ての呼び出し (要求・受け取り確認・配達失敗の報告・
+  終了の求め・取り消し・終了) に、まだ名指すかもしれない最も古い要求番号と、まだ終えていない最も古い持ち主を添え、
+  シェルはどちらの下限より下の記録も持たない。下限より上の落ち着いた要求番号と
+  終えた持ち主は番号の範囲として持ち、ページが使い終えた番号や持ち主への要求は送らずに断る。要求より先に届いた配達失敗の
+  報告や終了の求めは、その番号を終えたものとして残す。シェルが下限より下でまだ落ち着いていない番号を持っていれば、
+  ページが手放したものとして、その枠ごと接続を終える。受け取り確認も報告も来ないまま、要求の応答の期限 (3 秒) の間
+  枠を持ち続けた結果も、この経路が自分で持つスレッドが、同じく接続を終える。ページが黙っても、ワーカーの要求が
+  止められるのは、その 1 つが応答を待つ長さまでになる。そのスレッドを起動できないときは、パッケージの要求を全て
+  送らずに断る。`vd_package_cancel`・`vd_package_finish` は
+  持ち主を止め、手放す。`vd_package_fail_delivery`・`vd_package_terminate` は、まだ枠を持つ結果のために接続を終え、
+  セッションのリンクの見張りとそれ以降の全コマンドは、その終わりを `control-worker-gone` として知らせる。close は
+  接続に終わりの理由を残さないため。セッションを手放すときは、先にこの経路を片付け、パッケージの要求が送信中か
+  枠を持っている間は、ワーカーのコマンド列の外から接続を閉じ始める。その後に終わった結果は自分の枠を手放す) + **セッションのテアダウン**
   (どの切れ方も 1 つのエピローグ、transport の `Connection::close` に着地する: セッションがまだ登録しているかも
   しれない全アドレスを解除し、それからソケットを閉じて接続のスレッドの終わりを待つ。どれも 1 つのテアダウンの
   持ち時間の中で行う — 置き換えられた接続、明示的な切断、落ちたチャンネル、既に終わったリンク、アプリの終了が
@@ -1503,7 +1529,8 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
   知らせが `Outbox` に入るのを、ページ自身の 5 秒の期限まで待ち、それを過ぎたら番号を付けずに断る。ページがロックを
   知る前にシェルへ渡した書き込みも、溜まっている更新の数に関係なく、ロック中の本体には届かない。ロックの知らせを
   含むまとまりは上限で待たないので、次の取得がそれを渡す。ページは、その取得 — 断りに番号が無いときは、断りの後に
-  始まった取得 — を受け手に渡し終えてから断りを渡すので、断りを扱う側は、もうロックを受け取っている。
+  始まった取得 — を受け手に渡し終えてから断りを渡すので、断りを扱う側は、もうロックを受け取っている。書き込みを
+  出した接続が、ページの追っている接続でなくなったら、すぐに渡す。別の接続の取得はそれを何も運ばないため。
   ライブ同期中は `core/control/follow.ts` の `DeviceFollow` が各通知を live snapshot のアドレス
   →ノード索引 (`live.lookup`) で分類する: ノードローカルなスカラ (フェーダー/PAN/ON/レベル。カタログで
   `follow: "direct"`) は読み戻しなしで値を直接 plan へ適用し (`applyDirect`)、その 1 アドレス分の snapshot も
@@ -1573,7 +1600,7 @@ CONSOLE のフェーダーとインスペクタの Level スライダー (バス
 ## SIM ビュー (本体の LCD)
 
 実験的起動では、GRAPH と CONSOLE の隣に 3 つ目のビューが加わる。本体の 4.3 インチ LCD を urx-lcd-sim
-(github.com/semnil/urx-lcd-sim。Web 層の唯一のランタイム依存で、`vendor/urx-lcd-sim` の git submodule を `package.json` がリンクする) が描き、
+(github.com/semnil/urx-lcd-sim。Web 層の 2 つのランタイム依存の 1 つで、どちらも semnil 自身のもの。`vendor/urx-lcd-sim` の git submodule を `package.json` がリンクする) が描き、
 その `mountSim()` でページに置く。タブと View メニューの SIM Scale は `data-experimental-only` で、実験的でない起動が
 覚えていた SIM ビューは GRAPH で開く。
 SETUP → Version は APP Version に、ビルドがバンドルする urx-lcd-sim のチェックアウトのコミットを短くしたものを出す。
@@ -5059,8 +5086,9 @@ macOS の `.dmg` はドラッグインストールで同意ページを持たな
 
 ## サードパーティライセンス
 
-Web 層はサードパーティのランタイム依存を持たない (唯一のランタイム依存は semnil 自身の urx-lcd-sim で、
-その書体 IBM Plex Sans の SIL Open Font License 1.1 は `src-tauri/about.hbs` の固定の項目で載せる) が、配布するデスクトップビルドは Tauri ランタイムと Rust クレート (semnil 自身の
+Web 層はサードパーティのランタイム依存を持たない (2 つのランタイム依存はどちらも semnil 自身のもので、urx-lcd-sim
+の書体 IBM Plex Sans の SIL Open Font License 1.1 は `src-tauri/about.hbs` の固定の項目で載せる。もう 1 つは urx-device
+の control パッケージ) が、配布するデスクトップビルドは Tauri ランタイムと Rust クレート (semnil 自身の
 `urx-device-transport` を含む) を静的リンクし、それらは各自のオープンソースライセンスを持つ。GPL/AGPL/LGPL は含まれず、許容的
 ライセンスとファイル単位の弱コピーレフト (MPL-2.0) のみで、いずれも通知の同梱で義務を満たせる。
 

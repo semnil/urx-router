@@ -1,0 +1,306 @@
+[
+  {
+    "case": "the smallest numeric read",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": "-9223372036854775808"
+    }
+  },
+  {
+    "case": "the largest numeric read",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": "9223372036854775807"
+    }
+  },
+  {
+    "case": "an empty text read",
+    "method": "getText",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": ""
+    }
+  },
+  {
+    "case": "a digit-only text read",
+    "method": "getText",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": "123"
+    }
+  },
+  {
+    "case": "a name read as text",
+    "method": "getName",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": {
+        "kind": "text",
+        "value": "Vocal"
+      }
+    }
+  },
+  {
+    "case": "a name read as an integer",
+    "method": "getName",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "kind": "success",
+      "value": {
+        "kind": "integer",
+        "value": "3"
+      }
+    }
+  },
+  {
+    "case": "an accepted numeric write",
+    "method": "setNumeric",
+    "record": {
+      "evidence": {
+        "state": "accepted"
+      },
+      "kind": "success",
+      "value": null
+    }
+  },
+  {
+    "case": "an accepted text write",
+    "method": "setText",
+    "record": {
+      "evidence": {
+        "state": "accepted"
+      },
+      "kind": "success",
+      "value": null
+    }
+  },
+  {
+    "case": "a write the unit refused",
+    "method": "setNumeric",
+    "record": {
+      "evidence": {
+        "responseCode": "500",
+        "state": "rejected"
+      },
+      "failure": {
+        "code": "device_rejected",
+        "kind": "cause",
+        "phase": "response"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a read the unit refused",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "responseCode": "404",
+        "state": "rejected"
+      },
+      "failure": {
+        "code": "device_rejected",
+        "kind": "cause",
+        "phase": "response"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "an argument refused at validation",
+    "method": "setText",
+    "record": {
+      "evidence": {
+        "state": "not_sent"
+      },
+      "failure": {
+        "code": "invalid_input",
+        "kind": "cause",
+        "phase": "validation"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a write held at admission",
+    "method": "setNumeric",
+    "record": {
+      "evidence": {
+        "state": "not_sent"
+      },
+      "failure": {
+        "code": "precondition_failed",
+        "kind": "cause",
+        "phase": "admission"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a request for no connection",
+    "method": "getName",
+    "record": {
+      "evidence": {
+        "state": "not_sent"
+      },
+      "failure": {
+        "code": "not_connected",
+        "kind": "cause",
+        "phase": "admission"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a send past its deadline",
+    "method": "setNumeric",
+    "record": {
+      "evidence": {
+        "state": "unconfirmed"
+      },
+      "failure": {
+        "code": "send_timeout",
+        "kind": "cause",
+        "phase": "send"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a response past its deadline",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "state": "unconfirmed"
+      },
+      "failure": {
+        "code": "response_timeout",
+        "kind": "cause",
+        "phase": "response"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a malformed verdict",
+    "method": "setText",
+    "record": {
+      "evidence": {
+        "state": "unconfirmed"
+      },
+      "failure": {
+        "code": "invalid_response",
+        "kind": "cause",
+        "phase": "response"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a link lost while sending",
+    "method": "getText",
+    "record": {
+      "evidence": {
+        "state": "unconfirmed"
+      },
+      "failure": {
+        "code": "connection_lost",
+        "kind": "cause",
+        "phase": "send"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a read lost at delivery",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "failure": {
+        "code": "connection_lost",
+        "kind": "cause",
+        "phase": "delivery"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "an accepted write overflowing at delivery",
+    "method": "setNumeric",
+    "record": {
+      "evidence": {
+        "state": "accepted"
+      },
+      "failure": {
+        "code": "notification_overflow",
+        "kind": "cause",
+        "phase": "delivery"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a value of another raw type",
+    "method": "getName",
+    "record": {
+      "evidence": {
+        "state": "read"
+      },
+      "failure": {
+        "code": "internal_error",
+        "kind": "cause",
+        "phase": "delivery"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a cancellation before sending",
+    "method": "setText",
+    "record": {
+      "evidence": {
+        "state": "not_sent"
+      },
+      "failure": {
+        "kind": "cancelled",
+        "phase": "admission"
+      },
+      "kind": "failure"
+    }
+  },
+  {
+    "case": "a cancellation while sending",
+    "method": "getNumeric",
+    "record": {
+      "evidence": {
+        "state": "unconfirmed"
+      },
+      "failure": {
+        "kind": "cancelled",
+        "phase": "send"
+      },
+      "kind": "failure"
+    }
+  }
+]

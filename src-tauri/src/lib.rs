@@ -705,16 +705,21 @@ async fn vd_connect(
     // — it finds nothing installed yet — so without the generation the session installed
     // under the same label afterwards, orphaned under the page that replaced it.
     let gen = state.page_gen(webview.label());
-    let (tx, device, counters, outbox) =
-        tauri::async_runtime::spawn_blocking(move || vd::open(model))
-            .await
-            .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
+    let vd::Opened {
+        tx,
+        device,
+        counters,
+        outbox,
+        package,
+    } = tauri::async_runtime::spawn_blocking(move || vd::open(model))
+        .await
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())??;
     // The epoch identifies this connection: the frontend hands it back to
     // vd_disconnect so a delayed teardown of an earlier session cannot close it.
     // The label identifies its OWNER, which is what decides whether a later page
     // load may tear it down (see the on_page_load hook in `run`).
     let epoch = state
-        .install_for_page(tx, counters, outbox, webview.label(), gen)
+        .install_for_page(tx, counters, outbox, package, webview.label(), gen)
         .ok_or_else(|| {
             "vd-page-gone: the page that asked for this connection reloaded".to_string()
         })?;
@@ -873,6 +878,142 @@ async fn vd_notifications(
     })
     .await
     .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
+}
+
+// The control package's requests (`vd::package`, src/core/package-transport.ts), on the
+// connection of generation `epoch` and no other: one request of the page's operation owner
+// `operation` under `ticket`, answered with its K34 record — and, for a write the unit's Console
+// Lock held, the fetch that carries the announcement. A result that reached the unit keeps the
+// connection's wire slot until `vd_package_adopt`. A request for a connection that is not the one
+// installed is refused unsent; a method the transport does not have is a binding fault and
+// rejects, as does a request on a ticket the page has finished with (`vd::package::FINISHED`),
+// which sends nothing. `ticket_floor` is the oldest ticket the page may still name: one it never
+// settled below it is one it gave up, which ends the connection with its slot. `operation_floor` is
+// the oldest owner the page has not finished: the shell keeps nothing below either floor.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn vd_package_request(
+    state: State<'_, vd::VdState>,
+    epoch: u64,
+    operation: u64,
+    ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
+    method: String,
+    param_id: f64,
+    x: String,
+    y: String,
+    value: Option<String>,
+) -> Result<vd::package::Reply, String> {
+    let named = vd::package::Method::named(&method)
+        .ok_or_else(|| format!("invalid-input: no request method {method}"))?;
+    let Some(link) = vd::package_link(&state, epoch) else {
+        return Ok(vd::package::Reply::not_connected(named));
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        link.request(
+            operation,
+            &ticket,
+            ticket_floor,
+            operation_floor,
+            vd::package::Call {
+                method: named,
+                param_id,
+                x: &x,
+                y: &y,
+                value: value.as_deref(),
+            },
+        )
+    })
+    .await
+    .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())?
+}
+
+// Stops the operation owner's unsent requests; idempotent, no reply. This command and the four
+// after it carry the page's floors as a request does, so the shell keeps nothing below them
+// whichever call the page makes last (`PackageLink::note_floors`).
+#[tauri::command]
+fn vd_package_cancel(
+    state: State<vd::VdState>,
+    epoch: u64,
+    operation: u64,
+    ticket_floor: u64,
+    operation_floor: u64,
+) {
+    if let Some(link) = vd::package_link(&state, epoch) {
+        link.note_floors(ticket_floor, operation_floor);
+        link.cancel(operation);
+    }
+}
+
+// Releases the operation owner once its requests are consumed; no device I/O.
+#[tauri::command]
+fn vd_package_finish(
+    state: State<vd::VdState>,
+    epoch: u64,
+    operation: u64,
+    ticket_floor: u64,
+    operation_floor: u64,
+) {
+    if let Some(link) = vd::package_link(&state, epoch) {
+        link.note_floors(ticket_floor, operation_floor);
+        link.finish(operation);
+    }
+}
+
+// Releases the wire slot of `ticket`'s result once the page has validated its record. False
+// for a ticket with no completed result, or one already adopted or ended — and for a connection
+// that is not the one installed, whose end took every slot it had.
+#[tauri::command]
+fn vd_package_adopt(
+    state: State<vd::VdState>,
+    epoch: u64,
+    ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
+) -> bool {
+    vd::package_link(&state, epoch).is_some_and(|link| {
+        link.note_floors(ticket_floor, operation_floor);
+        link.adopt(&ticket)
+    })
+}
+
+// The page could not adopt `ticket`'s result: a result still holding the wire slot ends the
+// connection. False for an unknown ticket; true for a connection that is not the one installed,
+// whose end already took every slot.
+#[tauri::command]
+async fn vd_package_fail_delivery(
+    state: State<'_, vd::VdState>,
+    epoch: u64,
+    ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
+) -> Result<bool, String> {
+    let Some(link) = vd::package_link(&state, epoch) else {
+        return Ok(true);
+    };
+    link.note_floors(ticket_floor, operation_floor);
+    tauri::async_runtime::spawn_blocking(move || link.fail_delivery(&ticket))
+        .await
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())
+}
+
+// Ends the connection if, and only if, `ticket` still owns a wire slot; true otherwise as well.
+#[tauri::command]
+async fn vd_package_terminate(
+    state: State<'_, vd::VdState>,
+    epoch: u64,
+    ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
+) -> Result<bool, String> {
+    let Some(link) = vd::package_link(&state, epoch) else {
+        return Ok(true);
+    };
+    link.note_floors(ticket_floor, operation_floor);
+    tauri::async_runtime::spawn_blocking(move || link.terminate(&ticket))
+        .await
+        .map_err(|_| vd::CONTROL_WORKER_GONE.to_string())
 }
 
 // Watch the held-open live connection: the worker pushes a single LinkEvent
@@ -1280,6 +1421,12 @@ pub fn run() {
             vd_params_unsubscribe,
             vd_probe_subscribe,
             vd_notifications,
+            vd_package_request,
+            vd_package_cancel,
+            vd_package_finish,
+            vd_package_adopt,
+            vd_package_fail_delivery,
+            vd_package_terminate,
             vd_watch_link,
             vd_disconnect,
             prepare_for_exit,

@@ -107,9 +107,12 @@ node <out>.mjs
 ## 新しい worktree の最初のビルド
 
 `vendor/urx-lcd-sim` と `vendor/urx-device` は git の submodule である: クローンと新しい worktree では
-空のまま始まる。`pnpm install` は `vendor/urx-lcd-sim` を、そのままつなぎ、`src-tauri/Cargo.toml` は
-transport の crate を `vendor/urx-device` から path で取る。だから `git submodule update --init` を
-`pnpm install` と cargo のコマンドの前に走らせる。
+空のまま始まる。`pnpm install` は `vendor/urx-lcd-sim` をそのまま、urx-device の control パッケージを
+`vendor/urx-device/packages/control` からつなぎ、`src-tauri/Cargo.toml` は transport の crate を
+`vendor/urx-device` から path で取る。だから `git submodule update --init` を `pnpm install` と cargo の
+コマンドの前に走らせる。control パッケージは組み立てたものを使う: `pnpm build:common` がそれを自分の `dist/`
+(その git が無視する) へコンパイルし、ビルド・dev・テストの各スクリプトが最初にそれを走らせるので、動いた
+submodule は次のどれかで組み立て直される。
 
 `src-tauri/tauri.conf.json` は、`src-tauri/THIRD_PARTY_LICENSES.html` をリソースとして同梱する。このファイルは git が無視する。
 新しい worktree にはこのファイルが無く、最初のビルドは、ビルドスクリプトの `resource path ... doesn't exist` で

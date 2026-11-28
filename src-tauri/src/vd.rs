@@ -18,7 +18,10 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::Channel;
-use urx_device_transport::connection::SentFrames;
+use urx_device_transport::connection::{SendGate, SentFrames};
+
+pub mod package;
+use package::PackageLink;
 
 // Every error this module returns is a stable kebab-case code, optionally followed
 // by ": " and a technical detail (an address, a URI, an OS message). The frontend
@@ -447,6 +450,18 @@ impl Outbox {
     }
 }
 
+/// A write's send gate for the unit's Console Lock, and the write's number in the outbox's record of
+/// held writes. As the gate refuses, the outbox records the write as held on the announcement it was
+/// refused on (`Outbox::hold_write`), so the refusal is worded from that verdict
+/// (`Outbox::lock_hold`) and not from whatever the unit announced after it. Every write of the
+/// session goes out through one: the worker's (`Session::set`) and the control package's
+/// (`package::PackageLink::request`).
+fn lock_gate(outbox: &Arc<Outbox>) -> (SendGate, u64) {
+    let id = outbox.hold_id();
+    let outbox = Arc::clone(outbox);
+    (Box::new(move || !outbox.hold_write(id)), id)
+}
+
 impl Run {
     fn len(&self) -> usize {
         match self {
@@ -599,6 +614,8 @@ struct Conn {
     counters: Arc<LinkCounters>,
     /// The runs the live worker has routed for the page to fetch (`notifications`).
     outbox: Arc<Outbox>,
+    /// The control package's requests on this session's connection (`package`).
+    package: Option<Arc<PackageLink>>,
     /// The webview that opened this session. A page load is a teardown for the page
     /// being replaced and for nothing else, and the app has more than one page — so
     /// the hold has to say whose it is rather than the teardown assuming.
@@ -657,21 +674,46 @@ impl VdState {
 /// blocking task — the handshake waits up to seconds and must not stall the UI.
 /// What `open` hands back: the worker's command channel, the unit, its ledger and the
 /// outbox its notifications go to.
-pub type Opened = (Sender<Cmd>, DeviceSummary, Arc<LinkCounters>, Arc<Outbox>);
+pub struct Opened {
+    pub tx: Sender<Cmd>,
+    pub device: DeviceSummary,
+    pub counters: Arc<LinkCounters>,
+    pub outbox: Arc<Outbox>,
+    /// The control package's requests on the opened connection.
+    pub package: Arc<PackageLink>,
+}
 
 pub fn open(preferred: String) -> Result<Opened, String> {
     let (tx, rx) = mpsc::channel::<Cmd>();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<DeviceSummary, String>>();
     let counters = Arc::new(LinkCounters::default());
     let outbox = Arc::new(Outbox::default());
-    let (worker_counters, worker_outbox) = (Arc::clone(&counters), Arc::clone(&outbox));
+    let package = Arc::new(PackageLink::new(Arc::clone(&counters), Arc::clone(&outbox)));
+    let (worker_counters, worker_outbox, worker_package) = (
+        Arc::clone(&counters),
+        Arc::clone(&outbox),
+        Arc::clone(&package),
+    );
     std::thread::spawn(move || {
-        imp::worker(rx, ready_tx, worker_counters, worker_outbox, &preferred)
+        imp::worker(
+            rx,
+            ready_tx,
+            worker_counters,
+            worker_outbox,
+            worker_package,
+            &preferred,
+        )
     });
-    let summary = ready_rx
+    let device = ready_rx
         .recv()
         .map_err(|_| CONTROL_WORKER_GONE.to_string())??;
-    Ok((tx, summary, counters, outbox))
+    Ok(Opened {
+        tx,
+        device,
+        counters,
+        outbox,
+        package,
+    })
 }
 
 impl VdState {
@@ -690,6 +732,7 @@ impl VdState {
         tx: Sender<Cmd>,
         counters: Arc<LinkCounters>,
         outbox: Arc<Outbox>,
+        package: Arc<PackageLink>,
         owner: &str,
         gen: u64,
     ) -> Option<u64> {
@@ -718,6 +761,7 @@ impl VdState {
         c.tx = Some(tx);
         c.counters = counters;
         c.outbox = outbox;
+        c.package = Some(package);
         c.owner = Some(owner.to_string());
         c.epoch += 1;
         Some(c.epoch)
@@ -728,6 +772,16 @@ impl VdState {
 pub fn outbox(state: &VdState, epoch: u64) -> Option<Arc<Outbox>> {
     let c = state.conn.lock().unwrap();
     (c.epoch == epoch && c.tx.is_some()).then(|| Arc::clone(&c.outbox))
+}
+
+/// The control package's requests on the connection of generation `epoch`, while it is the one
+/// installed.
+pub fn package_link(state: &VdState, epoch: u64) -> Option<Arc<PackageLink>> {
+    let c = state.conn.lock().unwrap();
+    if c.epoch != epoch || c.tx.is_none() {
+        return None;
+    }
+    c.package.clone()
 }
 
 /// This connection's ledger. Zeroed when nothing is connected, which is what the
@@ -947,6 +1001,11 @@ pub fn shutdown_blocking(state: &VdState) {
 /// another. Returns whether a live worker was actually told. Caller holds the lock.
 fn stop(c: &mut Conn, done: Option<(Sender<()>, Instant)>) -> bool {
     c.owner = None;
+    // Ahead of the worker's shutdown, which a worker waiting behind a slot the page will never
+    // adopt would not reach (`PackageLink::tear_down`).
+    if let Some(package) = c.package.take() {
+        package.tear_down();
+    }
     // A fetch waiting on this session's outbox is let go: the session is over for the page.
     c.outbox.end();
     let Some(tx) = c.tx.take() else { return false };
@@ -962,9 +1021,10 @@ mod imp {
     //! the delivery of what they announce. What stays here is the app's side of it: the
     //! `Cmd` queue the Tauri commands feed, the error codes the frontend localizes, the
     //! Tauri channels a notification goes out on, the link-lost event and the ledger.
+    use super::package;
     use super::{
-        Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, Outbox, ParamUpdate, Run,
-        BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, LOCK_HAND_ON_WAIT, NOT_SENT,
+        Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, Outbox, PackageLink, ParamUpdate,
+        Run, BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, LOCK_HAND_ON_WAIT, NOT_SENT,
         WRITES_HELD,
     };
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -1239,6 +1299,16 @@ mod imp {
         }
     }
 
+    /// The text of the session's end once it has ended, which every later command fails with
+    /// too: the connection's recorded end, or the control package's end of it for a result the
+    /// page could not take, whose close records none (`package::ENDED`).
+    fn session_end(connection: &Connection, package: &PackageLink) -> Option<String> {
+        match connection.terminal() {
+            Some(cause) => Some(ended_text(connection, cause)),
+            None => package.ended().then(|| package::ENDED.to_string()),
+        }
+    }
+
     /// The text of the cause that ended the connection, which every later command fails
     /// with too.
     fn ended_text(connection: &Connection, cause: RequestCause) -> String {
@@ -1264,6 +1334,7 @@ mod imp {
     /// The text one request's failure reaches its caller as. `at` names the address.
     fn request_text(
         connection: &Connection,
+        package: &PackageLink,
         failure: RequestFailure,
         evidence: Evidence,
         at: &str,
@@ -1281,9 +1352,9 @@ mod imp {
         if let (RequestCause::DeviceRejected, Evidence::Rejected(response)) = (code, &evidence) {
             return format!("broker-rejected: {at} response_code {response}");
         }
-        if let Some(ended) = connection.terminal() {
+        if let Some(ended) = session_end(connection, package) {
             // Whatever this request met, the connection's end is what the session died of.
-            return ended_text(connection, ended);
+            return ended;
         }
         match code {
             RequestCause::SendTimeout => format!("{BROKER_TIMEOUT_PREFIX}: sending {at}"),
@@ -1345,9 +1416,8 @@ mod imp {
     }
 
     impl LockGate {
-        fn new(outbox: Arc<Outbox>) -> Self {
-            let id = outbox.hold_id();
-            let gate: SendGate = Box::new(move || !outbox.hold_write(id));
+        fn new(outbox: &Arc<Outbox>) -> Self {
+            let (gate, id) = super::lock_gate(outbox);
             LockGate { gate, id }
         }
     }
@@ -1373,6 +1443,9 @@ mod imp {
         /// The page's notifications, whose Console Lock the shell holds the writes on
         /// until the page has it.
         outbox: Arc<Outbox>,
+        /// The control package's requests on the same connection, whose end for a result the
+        /// page could not take is the session's (`session_end`).
+        package: Arc<PackageLink>,
         meters: Option<Held>,
         params: Option<Held>,
         probe: Option<Held>,
@@ -1428,7 +1501,7 @@ mod imp {
                     ) {
                         self.counters.note_deadline();
                     }
-                    let text = request_text(&self.connection, failure, evidence, at);
+                    let text = request_text(&self.connection, &self.package, failure, evidence, at);
                     // A write the transport never sent says so, whatever its cause.
                     Err(if write && evidence == Evidence::NotSent {
                         format!("{NOT_SENT}: {text}")
@@ -1467,7 +1540,7 @@ mod imp {
         /// (`Connection::submit_gated`), under the gate it takes each announcement under, so a
         /// lock received at any point before that byte holds the write (`held_text`).
         fn set(&mut self, req: Request, at: String) -> Result<(), String> {
-            let gate = LockGate::new(Arc::clone(&self.outbox));
+            let gate = LockGate::new(&self.outbox);
             self.run_with(req, &at, Some(gate)).map(|_| ())
         }
 
@@ -1489,12 +1562,13 @@ mod imp {
             addresses: Vec<SubscriptionAddress>,
             install: impl FnOnce(&mut Routes, TokenId),
         ) -> Result<(), String> {
-            if let Some(ended) = self.connection.terminal() {
-                return Err(ended_text(&self.connection, ended));
+            if let Some(ended) = session_end(&self.connection, &self.package) {
+                return Err(ended);
             }
             let operation = self.connection.create_operation().map_err(|failure| {
                 request_text(
                     &self.connection,
+                    &self.package,
                     failure,
                     Evidence::NotSent,
                     "a registration",
@@ -1595,8 +1669,8 @@ mod imp {
             {
                 return lifecycle_text(&failure.failure);
             }
-            if let Some(ended) = self.connection.terminal() {
-                return ended_text(&self.connection, ended);
+            if let Some(ended) = session_end(&self.connection, &self.package) {
+                return ended;
             }
             lifecycle_text(&failure.failure)
         }
@@ -1643,6 +1717,7 @@ mod imp {
         ready: Sender<Result<DeviceSummary, String>>,
         counters: Arc<LinkCounters>,
         outbox: Arc<Outbox>,
+        package: Arc<PackageLink>,
         preferred: &str,
     ) {
         worker_at(
@@ -1652,12 +1727,14 @@ mod imp {
             ready,
             counters,
             outbox,
+            package,
             preferred,
         )
     }
 
     /// The worker, against a device list on `list_port` (Device Center's own outside
     /// tests), with `deadline` as each request's send and response deadline.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn worker_at(
         list_port: u16,
         deadline: Duration,
@@ -1665,6 +1742,7 @@ mod imp {
         ready: Sender<Result<DeviceSummary, String>>,
         counters: Arc<LinkCounters>,
         outbox: Arc<Outbox>,
+        package: Arc<PackageLink>,
         preferred: &str,
     ) {
         let control = Control::new();
@@ -1732,6 +1810,7 @@ mod imp {
                 }
             };
         let _ = slot.set(Arc::clone(&connection));
+        package.attach(Arc::clone(&connection));
         let summary = DeviceSummary {
             // The device list carries no label, and a unit's label and model name are the
             // same, so the model stands in for it.
@@ -1761,6 +1840,7 @@ mod imp {
             routes,
             counters,
             outbox: Arc::clone(&outbox),
+            package,
             meters: None,
             params: None,
             probe: None,
@@ -1879,8 +1959,7 @@ mod imp {
             // The link ending while nothing asks: the event goes out once, with the code
             // every later command then fails with.
             if ended.is_none() {
-                if let Some(cause) = session.connection.terminal() {
-                    let reason = ended_text(&session.connection, cause);
+                if let Some(reason) = session_end(&session.connection, &session.package) {
                     eprintln!("vd: {reason}; the session is lost until a reconnect");
                     ended = Some(reason);
                 }
@@ -1924,12 +2003,14 @@ mod imp {
         // peer's timing.
         use super::super::{
             get, get_str, meters_subscribe, params_subscribe, params_unsubscribe, probe_subscribe,
-            set, set_str, watch_link, Cmd, DeviceSummary, LinkCounters, Outbox, BULK_CHANGE,
+            set, set_str, watch_link, Cmd, DeviceSummary, LinkCounters, Outbox, PackageLink,
+            BULK_CHANGE,
         };
         use super::{
             link_failure_text, request_text, worker_at, Route, Runs, BROKER_UNRESPONSIVE,
             CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, NOT_SENT, WRITES_HELD,
         };
+        use crate::vd::package::{Call, Method};
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
@@ -2142,6 +2223,8 @@ mod imp {
             let counters = Arc::new(LinkCounters::default());
             let outbox = Arc::new(Outbox::default());
             OUTBOX.with(|current| *current.borrow_mut() = Some(Arc::clone(&outbox)));
+            let package = Arc::new(PackageLink::new(Arc::clone(&counters), Arc::clone(&outbox)));
+            PACKAGE.with(|current| *current.borrow_mut() = Some(Arc::clone(&package)));
             FETCHED.with(|next| next.set(0));
             let (worker_counters, preferred) = (Arc::clone(&counters), preferred.to_string());
             thread::spawn(move || {
@@ -2152,6 +2235,7 @@ mod imp {
                     ready_tx,
                     worker_counters,
                     outbox,
+                    package,
                     &preferred,
                 )
             });
@@ -2174,6 +2258,8 @@ mod imp {
         thread_local! {
             /// The outbox of the session this case started last, which its subscribers read.
             static OUTBOX: std::cell::RefCell<Option<Arc<Outbox>>> = const { std::cell::RefCell::new(None) };
+            /// The control package's requests on the session this case started last.
+            static PACKAGE: std::cell::RefCell<Option<Arc<PackageLink>>> = const { std::cell::RefCell::new(None) };
             /// Runs fetched from it that belong to a handler not yet read.
             static HELD: std::cell::RefCell<Vec<Value>> = const { std::cell::RefCell::new(Vec::new()) };
             static NEXT_HANDLER: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
@@ -3144,6 +3230,711 @@ mod imp {
             assert_eq!(writes, 0, "nothing was sent for the held write");
         }
 
+        /// The control package's requests on the session this case started last.
+        fn package() -> Arc<PackageLink> {
+            PACKAGE.with(|current| current.borrow().clone()).unwrap()
+        }
+
+        /// A control-package call at parameter `param_id` (0, 0).
+        fn package_call(method: Method, param_id: f64, value: Option<&str>) -> Call<'_> {
+            Call {
+                method,
+                param_id,
+                x: "0",
+                y: "0",
+                value,
+            }
+        }
+
+        fn writes_to(unit: &Unit, param_id: u32) -> usize {
+            let uri = format!("/vd/parameters/{param_id}:0:0?operation=value");
+            unit.seen().iter().filter(|seen| **seen == uri).count()
+        }
+
+        // A control-package read and write come back as their K34 records, and each result keeps
+        // the connection's wire slot until the page adopts it: the worker's own request after it
+        // waits for the adoption.
+        #[test]
+        fn a_package_result_keeps_the_wire_slot_until_the_page_adopts_it() {
+            let (tx, unit, _) = connected(plain);
+            let link = package();
+            let read = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&read).unwrap(),
+                json!({ "record": { "kind": "success", "value": "7", "evidence": { "state": "read" } } })
+            );
+            let worker = {
+                let tx = tx.clone();
+                thread::spawn(move || get(tx, 2, 0, 0))
+            };
+            thread::sleep(Duration::from_millis(50));
+            assert!(
+                !worker.is_finished(),
+                "the worker's request waits for the slot"
+            );
+            assert!(link.adopt("request-1"));
+            assert_eq!(worker.join().unwrap(), Ok(7));
+            let write = link
+                .request(
+                    1,
+                    "request-2",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&write).unwrap(),
+                json!({ "record": { "kind": "success", "value": null, "evidence": { "state": "accepted" } } })
+            );
+            assert!(link.adopt("request-2"));
+            assert!(
+                link.adopt("request-2"),
+                "a resend of the adoption is answered alike"
+            );
+            assert_eq!(writes_to(&unit, 1), 1);
+        }
+
+        // A link whose hold thread did not start sends no package request: refused unsent as the
+        // app's own fault, so no result can hold the slot unbounded. The worker's own requests go
+        // on as before.
+        #[test]
+        fn a_link_without_its_hold_thread_sends_no_package_request() {
+            let (tx, unit, _) = connected(plain);
+            let link = package();
+            link.as_if_unwatched();
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    1,
+                    1,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&reply.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cause", "code": "internal_error", "phase": "admission" },
+                    "evidence": { "state": "not_sent" },
+                })
+            );
+            assert_eq!(writes_to(&unit, 1), 0);
+            assert_eq!(get(tx.clone(), 2, 0, 0), Ok(7));
+        }
+
+        // A held result waits for the page no longer than a request waits for its response.
+        #[test]
+        fn the_hold_deadline_is_the_request_deadline() {
+            assert_eq!(crate::vd::package::HOLD_DEADLINE, super::REQUEST_DEADLINE);
+        }
+
+        // A result the page leaves with neither an adoption nor a report holds the slot no longer
+        // than the hold deadline: the connection then ends with it, the worker's request waiting
+        // behind it is told the end, and the page's late adoption finds the slot gone. One adopted
+        // in time keeps the connection.
+        #[test]
+        fn a_result_the_page_leaves_unadopted_ends_the_connection_at_the_hold_deadline() {
+            // Shorter than the worker's own response deadline in these cases, so the end is the
+            // hold's and not the deadline's.
+            let hold = Duration::from_millis(80);
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.hold_for(hold);
+            link.request(
+                1,
+                "request-1",
+                1,
+                1,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            let started = std::time::Instant::now();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string())
+            );
+            let waited = started.elapsed();
+            assert!(
+                waited >= hold - Duration::from_millis(20) && waited < Duration::from_secs(2),
+                "{waited:?}"
+            );
+            assert!(
+                !link.adopt("request-1"),
+                "the slot went with the connection"
+            );
+
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.hold_for(hold);
+            link.request(
+                1,
+                "request-1",
+                1,
+                1,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            assert!(link.adopt("request-1"));
+            thread::sleep(hold * 2);
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Ok(7),
+                "adopted in time, it ends nothing"
+            );
+        }
+
+        /// `plain`, each reply sent `after` the request arrives.
+        fn slow(after: Duration) -> impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static {
+            move |request: &Value| {
+                thread::sleep(after);
+                plain(request)
+            }
+        }
+
+        // A resend of a request — Tauri sends one again when the page could not read its reply —
+        // reaches the unit at most once, and is answered with the first call's record: while the
+        // first is out, once it is in, and once the page has adopted it.
+        #[test]
+        fn a_resent_package_request_reaches_the_unit_once_and_keeps_its_record() {
+            let (_tx, unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let write = |link: Arc<PackageLink>| {
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        0,
+                        0,
+                        package_call(Method::SetNumeric, 1.0, Some("5")),
+                    )
+                    .unwrap()
+                })
+            };
+            let first = write(Arc::clone(&link));
+            thread::sleep(Duration::from_millis(30));
+            let resent = write(Arc::clone(&link));
+            let (first, resent) = (first.join().unwrap(), resent.join().unwrap());
+            assert_eq!(
+                resent, first,
+                "the resend waits for the first and answers it"
+            );
+            assert_eq!(
+                serde_json::to_value(&first.record).unwrap()["evidence"],
+                json!({ "state": "accepted" })
+            );
+            assert_eq!(
+                link.request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5"))
+                )
+                .unwrap(),
+                first,
+                "a resend after the reply"
+            );
+            assert!(link.adopt("request-1"));
+            assert!(link.adopt("request-1"), "the adoption's own resend");
+            assert_eq!(
+                link.request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5"))
+                ),
+                Err(crate::vd::package::FINISHED.to_string()),
+                "a late resend after the adoption is rejected, with no evidence"
+            );
+            assert_eq!(writes_to(&unit, 1), 1, "the unit took it once");
+        }
+
+        // A report or terminate that reaches the shell ahead of its own request — two commands of the
+        // page's racing through the IPC — leaves the ticket ended: the request that arrives after it
+        // is rejected and sends nothing, and nothing waits behind a slot.
+        #[test]
+        fn a_package_request_arriving_after_its_own_terminate_is_not_sent() {
+            let (tx, unit, _) = connected(plain);
+            let link = package();
+            assert!(link.terminate("request-1"), "an unseen ticket");
+            assert!(!link.fail_delivery("request-2"), "an unseen ticket");
+            for ticket in ["request-1", "request-2"] {
+                assert_eq!(
+                    link.request(
+                        1,
+                        ticket,
+                        0,
+                        0,
+                        package_call(Method::SetNumeric, 1.0, Some("5"))
+                    ),
+                    Err(crate::vd::package::FINISHED.to_string()),
+                    "{ticket}"
+                );
+            }
+            assert_eq!(writes_to(&unit, 1), 0);
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Ok(7),
+                "nothing waits behind a slot"
+            );
+        }
+
+        // A ticket the page's floor passes while the shell still holds its result unsettled is one
+        // the page gave up — its adoption, report and terminate never arrived — so the connection
+        // ends with its slot rather than leaving a slot nobody can release; so does one the floor
+        // passes while its result is still on its way, as that result arrives.
+        #[test]
+        fn a_package_ticket_the_page_gave_up_ends_the_connection_with_its_slot() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                1,
+                0,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            let after = link
+                .request(
+                    1,
+                    "request-2",
+                    2,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
+                "the connection closed before the request was sent"
+            );
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string())
+            );
+
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let on_its_way = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        1,
+                        0,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            let passed = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-2",
+                        2,
+                        0,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            on_its_way.join().unwrap().unwrap();
+            let _ = passed.join().unwrap();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "the given-up result ended the connection as it arrived"
+            );
+            assert_eq!(
+                link.kept().0,
+                1,
+                "arriving below the floor, it is recorded nowhere: only the later ticket is kept"
+            );
+        }
+
+        // A report that a result could not be delivered, made while that result is still on its
+        // way, waits for it and ends the connection with the slot it holds.
+        #[test]
+        fn a_package_result_reported_undelivered_while_on_its_way_ends_the_connection() {
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let reading = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        0,
+                        0,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                    .unwrap()
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            assert!(link.fail_delivery("request-1"));
+            reading.join().unwrap();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "the connection has ended, with nothing waiting behind the slot"
+            );
+        }
+
+        // A session let go while a package request is still on its way ends as well: its reply
+        // arrives after the teardown, and the worker waiting behind it still reaches its shutdown.
+        #[test]
+        fn a_session_let_go_while_a_package_request_is_on_its_way_still_shuts_down() {
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(150)));
+            let link = package();
+            let reading = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        0,
+                        0,
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            let (params, _seen) = subscriber();
+            let registering = {
+                let tx = tx.clone();
+                thread::spawn(move || params_subscribe(tx, vec![(1, 0, 0)], params))
+            };
+            thread::sleep(Duration::from_millis(30));
+            link.tear_down();
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + Duration::from_secs(3))),
+            })
+            .unwrap();
+            assert!(
+                closed.recv_timeout(Duration::from_secs(3)).is_ok(),
+                "the worker reaches its shutdown"
+            );
+            let _ = reading.join();
+            assert!(
+                registering.join().unwrap().is_err(),
+                "the teardown started the close: the registration waiting behind the request is not sent"
+            );
+        }
+
+        // A session let go while a worker's registration waits behind a slot the page will never
+        // adopt still ends: the teardown closes the connection outside the worker's queue.
+        #[test]
+        fn a_session_let_go_behind_an_unadopted_slot_still_shuts_down() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                0,
+                0,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            let (params, _seen) = subscriber();
+            let registering = {
+                let tx = tx.clone();
+                thread::spawn(move || params_subscribe(tx, vec![(1, 0, 0)], params))
+            };
+            thread::sleep(Duration::from_millis(50));
+            assert!(
+                !registering.is_finished(),
+                "the premise: the registration waits behind the slot"
+            );
+            link.tear_down();
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + Duration::from_secs(3))),
+            })
+            .unwrap();
+            assert!(
+                closed.recv_timeout(Duration::from_secs(3)).is_ok(),
+                "the worker reaches its shutdown"
+            );
+            let _ = registering.join();
+            let after = link
+                .request(
+                    2,
+                    "request-2",
+                    0,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
+                "nothing is submitted once the link is torn down"
+            );
+        }
+
+        // The unit's refusal keeps its response code.
+        #[test]
+        fn a_package_write_the_unit_refuses_keeps_its_response_code() {
+            let (_tx, _unit, _) = connected(|request: &Value| {
+                let uri = request["vdp"]["uri"].as_str().unwrap();
+                vec![json!({ "method": "post", "uri": uri, "data": { "response_code": 403 } })]
+            });
+            let link = package();
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::SetText, 1.0, Some("a")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&reply.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cause", "code": "device_rejected", "phase": "response" },
+                    "evidence": { "state": "rejected", "responseCode": "403" },
+                })
+            );
+            assert!(link.adopt("request-1"));
+        }
+
+        // A control-package write goes through the unit's Console Lock gate as the worker's do: held,
+        // it is refused unsent, and the reply names the fetch that carries the lock.
+        #[test]
+        fn a_package_write_the_lock_holds_is_refused_unsent_with_its_lock_s_fetch() {
+            let (tx, unit, _) = connected(plain);
+            let (params, _seen) = subscriber();
+            params_subscribe(tx.clone(), vec![(CONSOLE_LOCK_PARAM, 0, 0)], params).unwrap();
+            let outbox = OUTBOX.with(|current| current.borrow().clone()).unwrap();
+            let first = FETCHED.with(|next| next.get());
+            unit.push(json!({
+                "method": "notify",
+                "uri": format!("/vd/parameters/{CONSOLE_LOCK_PARAM}:0:0"),
+                "data": { "current_value": 1 },
+            }));
+            let until = Instant::now() + Duration::from_secs(5);
+            while !(outbox.lock_heard().is_some() && put_all(&outbox)) {
+                assert!(
+                    Instant::now() < until,
+                    "the announcement reaches the outbox"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            let reply = package()
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&reply).unwrap(),
+                json!({
+                    "record": {
+                        "kind": "failure",
+                        "failure": { "kind": "cause", "code": "precondition_failed", "phase": "admission" },
+                        "evidence": { "state": "not_sent" },
+                    },
+                    "held": { "fetch": first },
+                })
+            );
+            assert_eq!(
+                writes_to(&unit, 1),
+                0,
+                "nothing was sent for the held write"
+            );
+            let read = package()
+                .request(
+                    1,
+                    "request-2",
+                    0,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(read.held, None, "a read is not held");
+        }
+
+        // A result the page cannot adopt ends the connection with its slot held, and the session's
+        // link watch reports the end; one that holds no slot ends nothing.
+        #[test]
+        fn a_package_result_the_page_cannot_adopt_ends_the_connection() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                0,
+                0,
+                package_call(Method::GetNumeric, -1.0, None),
+            )
+            .unwrap();
+            assert!(link.fail_delivery("request-1"));
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Ok(7),
+                "an unsent result ends nothing"
+            );
+            assert!(!link.fail_delivery("request-9"), "an unknown ticket");
+            let (channel, events) = capture();
+            watch_link(tx.clone(), channel).unwrap();
+            link.request(
+                1,
+                "request-2",
+                0,
+                0,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            assert!(link.fail_delivery("request-2"));
+            assert_eq!(
+                next(&events),
+                json!({ "reason": crate::vd::package::ENDED }),
+                "the link watch reports the end"
+            );
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "every later command fails with the same end"
+            );
+            assert!(!link.adopt("request-2"), "the slot went with the end");
+            let after = link
+                .request(
+                    2,
+                    "request-3",
+                    0,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cause", "code": "not_connected", "phase": "admission" },
+                    "evidence": { "state": "not_sent" },
+                }),
+                "the connection is closed: a later request is refused before it is sent"
+            );
+        }
+
+        // Terminate ends the connection only for a result still holding its slot.
+        #[test]
+        fn a_package_terminate_ends_the_connection_only_for_a_held_slot() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                0,
+                0,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            assert!(link.adopt("request-1"));
+            assert!(
+                link.terminate("request-1"),
+                "an adopted result owns no slot"
+            );
+            assert_eq!(get(tx.clone(), 2, 0, 0), Ok(7), "the connection goes on");
+            link.request(
+                1,
+                "request-2",
+                0,
+                0,
+                package_call(Method::GetNumeric, 1.0, None),
+            )
+            .unwrap();
+            assert!(link.terminate("request-2"));
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "the connection has ended"
+            );
+        }
+
+        // An owner the page cancelled or finished submits nothing.
+        #[test]
+        fn a_cancelled_or_finished_package_owner_sends_nothing() {
+            let (_tx, unit, _) = connected(plain);
+            let link = package();
+            link.cancel(1);
+            let cancelled = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&cancelled.record).unwrap(),
+                json!({
+                    "kind": "failure",
+                    "failure": { "kind": "cancelled", "phase": "admission" },
+                    "evidence": { "state": "not_sent" },
+                })
+            );
+            link.finish(2);
+            let finished = link
+                .request(
+                    2,
+                    "request-2",
+                    0,
+                    0,
+                    package_call(Method::SetNumeric, 1.0, Some("5")),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&finished.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "not_connected", "phase": "admission" })
+            );
+            assert_eq!(writes_to(&unit, 1), 0);
+            assert!(link.adopt("request-1") && link.adopt("request-2"));
+        }
+
+        // A control-package request's missed deadline is on the ledger, as the worker's are.
+        #[test]
+        fn a_package_request_past_its_deadline_is_on_the_ledger() {
+            let (_tx, _unit, counters) = connected(|_: &Value| vec![]);
+            let link = package();
+            let reply = link
+                .request(
+                    1,
+                    "request-1",
+                    0,
+                    0,
+                    package_call(Method::GetNumeric, 1.0, None),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&reply.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "response_timeout", "phase": "response" })
+            );
+            assert_eq!(counters.read().deadlines, 1);
+        }
+
         // The unit's own refusal settles the request it answers: an end of the link that
         // comes after the reply, before the error is worded, is the next request's to report.
         #[test]
@@ -3163,12 +3954,19 @@ mod imp {
                 assert!(Instant::now() < ended, "the push ends the connection");
                 thread::sleep(Duration::from_millis(5));
             }
+            let unattached = PackageLink::new(Arc::default(), Arc::default());
             let rejected = RequestFailure::Cause {
                 code: RequestCause::DeviceRejected,
                 phase: RequestPhase::Response,
             };
             assert_eq!(
-                request_text(&connection, rejected, Evidence::Rejected(400), "1:0:0"),
+                request_text(
+                    &connection,
+                    &unattached,
+                    rejected,
+                    Evidence::Rejected(400),
+                    "1:0:0"
+                ),
                 "broker-rejected: 1:0:0 response_code 400"
             );
             let lost = RequestFailure::Cause {
@@ -3176,8 +3974,14 @@ mod imp {
                 phase: RequestPhase::Response,
             };
             assert!(
-                request_text(&connection, lost, Evidence::Unconfirmed, "1:0:0")
-                    .starts_with(DEVICE_LOST_PREFIX),
+                request_text(
+                    &connection,
+                    &unattached,
+                    lost,
+                    Evidence::Unconfirmed,
+                    "1:0:0"
+                )
+                .starts_with(DEVICE_LOST_PREFIX),
                 "a request the end met is told by the end"
             );
         }
@@ -3858,7 +4662,7 @@ mod tests {
     // the meantime. These drive VdState's install/sender/disconnect directly with
     // dummy worker channels, so they reproduce the exact interleaving deterministi-
     // cally on any host (no broker, no websocket, no threads).
-    use super::{disconnect, sender, shutdown_owned_by, Cmd, LinkCounters, VdState};
+    use super::{disconnect, sender, shutdown_owned_by, Cmd, LinkCounters, PackageLink, VdState};
     use std::sync::mpsc::{self, Sender};
     use std::sync::Arc;
 
@@ -3876,10 +4680,43 @@ mod tests {
                 tx,
                 Arc::new(LinkCounters::default()),
                 Arc::default(),
+                Arc::new(PackageLink::new(Arc::default(), Arc::default())),
                 "main",
                 gen,
             )
             .expect("a page that has not reloaded installs")
+    }
+
+    // Every way a session is let go tears its control-package link down first, ahead of the
+    // worker's shutdown: a disconnect, a page load, a replacement and the app's quit
+    // (`PackageLink::tear_down`, `stop`).
+    #[test]
+    fn letting_a_session_go_tears_its_package_link_down() {
+        let installed = |state: &VdState, label: &str| {
+            let (tx, rx) = mpsc::channel::<Cmd>();
+            let link = Arc::new(PackageLink::new(Arc::default(), Arc::default()));
+            let epoch = state
+                .install_for_page(
+                    tx,
+                    Arc::new(LinkCounters::default()),
+                    Arc::default(),
+                    Arc::clone(&link),
+                    label,
+                    state.page_gen(label),
+                )
+                .expect("installs");
+            (epoch, link, rx)
+        };
+        let state = VdState::default();
+        let (epoch, link, _rx) = installed(&state, "main");
+        disconnect(&state, epoch);
+        assert!(link.torn_down(), "a disconnect");
+        let (_, link, _rx) = installed(&state, "main");
+        shutdown_owned_by(&state, "main");
+        assert!(link.torn_down(), "the page's load");
+        let (_, replaced, _rx) = installed(&state, "main");
+        let (_, _, _rx2) = installed(&state, "main");
+        assert!(replaced.torn_down(), "a replacement");
     }
 
     // A page load ends what THAT page holds. The app has two webviews, and the second
@@ -3985,6 +4822,7 @@ mod tests {
             tx,
             Arc::new(LinkCounters::default()),
             Arc::default(),
+            Arc::new(PackageLink::new(Arc::default(), Arc::default())),
             "main",
             gen,
         );
@@ -4004,6 +4842,7 @@ mod tests {
                 tx2,
                 Arc::new(LinkCounters::default()),
                 Arc::default(),
+                Arc::new(PackageLink::new(Arc::default(), Arc::default())),
                 "main",
                 gen
             )

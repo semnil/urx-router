@@ -110,9 +110,12 @@ node <out>.mjs
 ## The first build in a new worktree
 
 `vendor/urx-lcd-sim` and `vendor/urx-device` are git submodules: a clone and a new worktree start with
-them empty. `pnpm install` links `vendor/urx-lcd-sim` as it is, and `src-tauri/Cargo.toml` takes the
-transport crate from `vendor/urx-device` by path, so `git submodule update --init` runs before
-`pnpm install` and before any cargo command.
+them empty. `pnpm install` links `vendor/urx-lcd-sim` as it is and urx-device's control package from
+`vendor/urx-device/packages/control`, and `src-tauri/Cargo.toml` takes the transport crate from
+`vendor/urx-device` by path, so `git submodule update --init` runs before `pnpm install` and before any
+cargo command. The control package is consumed as built: `pnpm build:common` compiles it into its own
+`dist/`, which its git ignores, and every build, dev and test script runs that first, so a moved submodule
+is rebuilt by the next of them.
 
 `src-tauri/tauri.conf.json` bundles `src-tauri/THIRD_PARTY_LICENSES.html` as a resource, and the
 file is ignored by git. A new worktree therefore has none, and its first build fails in the build script
