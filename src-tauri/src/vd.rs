@@ -1001,7 +1001,11 @@ pub fn shutdown_blocking(state: &VdState) {
 /// another. Returns whether a live worker was actually told. Caller holds the lock.
 fn stop(c: &mut Conn, done: Option<(Sender<()>, Instant)>) -> bool {
     c.owner = None;
-    c.package = None;
+    // Ahead of the worker's shutdown, which a worker waiting behind a slot the page will never
+    // adopt would not reach (`PackageLink::tear_down`).
+    if let Some(package) = c.package.take() {
+        package.tear_down();
+    }
     // A fetch waiting on this session's outbox is let go: the session is over for the page.
     c.outbox.end();
     let Some(tx) = c.tx.take() else { return false };
@@ -2006,7 +2010,7 @@ mod imp {
             link_failure_text, request_text, worker_at, Route, Runs, BROKER_UNRESPONSIVE,
             CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, NOT_SENT, WRITES_HELD,
         };
-        use crate::vd::package::{Call, Method};
+        use crate::vd::package::{Call, Floor, Method};
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
         use std::net::{TcpListener, TcpStream};
@@ -3254,7 +3258,12 @@ mod imp {
         fn a_package_result_keeps_the_wire_slot_until_the_page_adopts_it() {
             let (tx, unit, _) = connected(plain);
             let link = package();
-            let read = link.request(1, "request-1", package_call(Method::GetNumeric, 1.0, None));
+            let read = link.request(
+                1,
+                "request-1",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert_eq!(
                 serde_json::to_value(&read).unwrap(),
                 json!({ "record": { "kind": "success", "value": "7", "evidence": { "state": "read" } } })
@@ -3273,6 +3282,7 @@ mod imp {
             let write = link.request(
                 1,
                 "request-2",
+                Floor::default(),
                 package_call(Method::SetNumeric, 1.0, Some("5")),
             );
             assert_eq!(
@@ -3280,8 +3290,146 @@ mod imp {
                 json!({ "record": { "kind": "success", "value": null, "evidence": { "state": "accepted" } } })
             );
             assert!(link.adopt("request-2"));
-            assert!(!link.adopt("request-2"), "once");
+            assert!(
+                link.adopt("request-2"),
+                "a resend of the adoption is answered alike"
+            );
             assert_eq!(writes_to(&unit, 1), 1);
+        }
+
+        /// `plain`, each reply sent `after` the request arrives.
+        fn slow(after: Duration) -> impl Fn(&Value) -> Vec<Value> + Send + Sync + 'static {
+            move |request: &Value| {
+                thread::sleep(after);
+                plain(request)
+            }
+        }
+
+        // A resend of a request — Tauri sends one again when the page could not read its reply —
+        // reaches the unit at most once, and is answered with the first call's record: while the
+        // first is out, once it is in, and once the page has adopted it.
+        #[test]
+        fn a_resent_package_request_reaches_the_unit_once_and_keeps_its_record() {
+            let (_tx, unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let write = |link: Arc<PackageLink>| {
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        Floor::default(),
+                        package_call(Method::SetNumeric, 1.0, Some("5")),
+                    )
+                })
+            };
+            let first = write(Arc::clone(&link));
+            thread::sleep(Duration::from_millis(30));
+            let resent = write(Arc::clone(&link));
+            let (first, resent) = (first.join().unwrap(), resent.join().unwrap());
+            assert_eq!(
+                resent, first,
+                "the resend waits for the first and answers it"
+            );
+            assert_eq!(
+                serde_json::to_value(&first.record).unwrap()["evidence"],
+                json!({ "state": "accepted" })
+            );
+            assert_eq!(
+                link.request(
+                    1,
+                    "request-1",
+                    Floor::default(),
+                    package_call(Method::SetNumeric, 1.0, Some("5"))
+                ),
+                first,
+                "a resend after the reply"
+            );
+            assert!(link.adopt("request-1"));
+            assert!(link.adopt("request-1"), "the adoption's own resend");
+            assert_eq!(
+                link.request(
+                    1,
+                    "request-1",
+                    Floor::default(),
+                    package_call(Method::SetNumeric, 1.0, Some("5"))
+                ),
+                first,
+                "a resend after the adoption"
+            );
+            assert_eq!(writes_to(&unit, 1), 1, "the unit took it once");
+        }
+
+        // A report that a result could not be delivered, made while that result is still on its
+        // way, waits for it and ends the connection with the slot it holds.
+        #[test]
+        fn a_package_result_reported_undelivered_while_on_its_way_ends_the_connection() {
+            let (tx, _unit, _) = connected(slow(Duration::from_millis(100)));
+            let link = package();
+            let reading = {
+                let link = Arc::clone(&link);
+                thread::spawn(move || {
+                    link.request(
+                        1,
+                        "request-1",
+                        Floor::default(),
+                        package_call(Method::GetNumeric, 1.0, None),
+                    )
+                })
+            };
+            thread::sleep(Duration::from_millis(30));
+            assert!(link.fail_delivery("request-1"));
+            reading.join().unwrap();
+            assert_eq!(
+                get(tx.clone(), 2, 0, 0),
+                Err(crate::vd::package::ENDED.to_string()),
+                "the connection has ended, with nothing waiting behind the slot"
+            );
+        }
+
+        // A session let go while a worker's registration waits behind a slot the page will never
+        // adopt still ends: the teardown closes the connection outside the worker's queue.
+        #[test]
+        fn a_session_let_go_behind_an_unadopted_slot_still_shuts_down() {
+            let (tx, _unit, _) = connected(plain);
+            let link = package();
+            link.request(
+                1,
+                "request-1",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
+            let (params, _seen) = subscriber();
+            let registering = {
+                let tx = tx.clone();
+                thread::spawn(move || params_subscribe(tx, vec![(1, 0, 0)], params))
+            };
+            thread::sleep(Duration::from_millis(50));
+            assert!(
+                !registering.is_finished(),
+                "the premise: the registration waits behind the slot"
+            );
+            link.tear_down();
+            let (done, closed) = mpsc::channel();
+            tx.send(Cmd::Shutdown {
+                done: Some((done, Instant::now() + Duration::from_secs(3))),
+            })
+            .unwrap();
+            assert!(
+                closed.recv_timeout(Duration::from_secs(3)).is_ok(),
+                "the worker reaches its shutdown"
+            );
+            let _ = registering.join();
+            let after = link.request(
+                2,
+                "request-2",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
+            assert_eq!(
+                serde_json::to_value(&after.record).unwrap()["failure"],
+                json!({ "kind": "cause", "code": "not_connected", "phase": "admission" }),
+                "nothing is submitted once the link is torn down"
+            );
         }
 
         // The unit's refusal keeps its response code.
@@ -3295,6 +3443,7 @@ mod imp {
             let reply = link.request(
                 1,
                 "request-1",
+                Floor::default(),
                 package_call(Method::SetText, 1.0, Some("a")),
             );
             assert_eq!(
@@ -3333,6 +3482,7 @@ mod imp {
             let reply = package().request(
                 1,
                 "request-1",
+                Floor::default(),
                 package_call(Method::SetNumeric, 1.0, Some("5")),
             );
             assert_eq!(
@@ -3351,8 +3501,12 @@ mod imp {
                 0,
                 "nothing was sent for the held write"
             );
-            let read =
-                package().request(1, "request-2", package_call(Method::GetNumeric, 1.0, None));
+            let read = package().request(
+                1,
+                "request-2",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert_eq!(read.held, None, "a read is not held");
         }
 
@@ -3362,7 +3516,12 @@ mod imp {
         fn a_package_result_the_page_cannot_adopt_ends_the_connection() {
             let (tx, _unit, _) = connected(plain);
             let link = package();
-            link.request(1, "request-1", package_call(Method::GetNumeric, -1.0, None));
+            link.request(
+                1,
+                "request-1",
+                Floor::default(),
+                package_call(Method::GetNumeric, -1.0, None),
+            );
             assert!(link.fail_delivery("request-1"));
             assert_eq!(
                 get(tx.clone(), 2, 0, 0),
@@ -3372,7 +3531,12 @@ mod imp {
             assert!(!link.fail_delivery("request-9"), "an unknown ticket");
             let (channel, events) = capture();
             watch_link(tx.clone(), channel).unwrap();
-            link.request(1, "request-2", package_call(Method::GetNumeric, 1.0, None));
+            link.request(
+                1,
+                "request-2",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert!(link.fail_delivery("request-2"));
             assert_eq!(
                 next(&events),
@@ -3385,7 +3549,12 @@ mod imp {
                 "every later command fails with the same end"
             );
             assert!(!link.adopt("request-2"), "the slot went with the end");
-            let after = link.request(2, "request-3", package_call(Method::GetNumeric, 1.0, None));
+            let after = link.request(
+                2,
+                "request-3",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert_eq!(
                 serde_json::to_value(&after.record).unwrap(),
                 json!({
@@ -3402,14 +3571,24 @@ mod imp {
         fn a_package_terminate_ends_the_connection_only_for_a_held_slot() {
             let (tx, _unit, _) = connected(plain);
             let link = package();
-            link.request(1, "request-1", package_call(Method::GetNumeric, 1.0, None));
+            link.request(
+                1,
+                "request-1",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert!(link.adopt("request-1"));
             assert!(
                 link.terminate("request-1"),
                 "an adopted result owns no slot"
             );
             assert_eq!(get(tx.clone(), 2, 0, 0), Ok(7), "the connection goes on");
-            link.request(1, "request-2", package_call(Method::GetNumeric, 1.0, None));
+            link.request(
+                1,
+                "request-2",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert!(link.terminate("request-2"));
             assert_eq!(
                 get(tx.clone(), 2, 0, 0),
@@ -3427,6 +3606,7 @@ mod imp {
             let cancelled = link.request(
                 1,
                 "request-1",
+                Floor::default(),
                 package_call(Method::SetNumeric, 1.0, Some("5")),
             );
             assert_eq!(
@@ -3441,6 +3621,7 @@ mod imp {
             let finished = link.request(
                 2,
                 "request-2",
+                Floor::default(),
                 package_call(Method::SetNumeric, 1.0, Some("5")),
             );
             assert_eq!(
@@ -3456,7 +3637,12 @@ mod imp {
         fn a_package_request_past_its_deadline_is_on_the_ledger() {
             let (_tx, _unit, counters) = connected(|_: &Value| vec![]);
             let link = package();
-            let reply = link.request(1, "request-1", package_call(Method::GetNumeric, 1.0, None));
+            let reply = link.request(
+                1,
+                "request-1",
+                Floor::default(),
+                package_call(Method::GetNumeric, 1.0, None),
+            );
             assert_eq!(
                 serde_json::to_value(&reply.record).unwrap()["failure"],
                 json!({ "kind": "cause", "code": "response_timeout", "phase": "response" })
@@ -4214,6 +4400,38 @@ mod tests {
                 gen,
             )
             .expect("a page that has not reloaded installs")
+    }
+
+    // Every way a session is let go tears its control-package link down first, ahead of the
+    // worker's shutdown: a disconnect, a page load, a replacement and the app's quit
+    // (`PackageLink::tear_down`, `stop`).
+    #[test]
+    fn letting_a_session_go_tears_its_package_link_down() {
+        let installed = |state: &VdState, label: &str| {
+            let (tx, rx) = mpsc::channel::<Cmd>();
+            let link = Arc::new(PackageLink::new(Arc::default(), Arc::default()));
+            let epoch = state
+                .install_for_page(
+                    tx,
+                    Arc::new(LinkCounters::default()),
+                    Arc::default(),
+                    Arc::clone(&link),
+                    label,
+                    state.page_gen(label),
+                )
+                .expect("installs");
+            (epoch, link, rx)
+        };
+        let state = VdState::default();
+        let (epoch, link, _rx) = installed(&state, "main");
+        disconnect(&state, epoch);
+        assert!(link.torn_down(), "a disconnect");
+        let (_, link, _rx) = installed(&state, "main");
+        shutdown_owned_by(&state, "main");
+        assert!(link.torn_down(), "the page's load");
+        let (_, replaced, _rx) = installed(&state, "main");
+        let (_, _, _rx2) = installed(&state, "main");
+        assert!(replaced.torn_down(), "a replacement");
     }
 
     // A page load ends what THAT page holds. The app has two webviews, and the second

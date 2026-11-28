@@ -9,10 +9,10 @@
 //! with the slot still held (`fail_delivery`, `terminate`), and the session's link watch reports
 //! the end.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -337,24 +337,62 @@ enum Owner {
     Done,
 }
 
-/// Each submitted request's completion slot, by its request ticket: pending until its outcome
-/// arrives, then held until the page adopts it. A held `None` is an outcome that keeps no slot:
-/// refused here or reported unsent.
-#[derive(Default)]
-struct Slots {
-    pending: HashSet<String>,
-    held: HashMap<String, Option<ResultAdoption>>,
+/// How the page finished with a ticket's result, which answers a resend of that call alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Settled {
+    Adopted,
+    Ended,
 }
 
-impl Slots {
-    fn reserve(&mut self, ticket: &str) -> bool {
-        !self.held.contains_key(ticket) && self.pending.insert(ticket.to_owned())
-    }
+/// One request ticket's record: its reply once its outcome arrives, the completion slot that reply
+/// holds until the page adopts it (none for an outcome that keeps no slot: refused here or reported
+/// unsent), and how the page finished with it. A resend of any call on the ticket is answered from
+/// here, so none reaches the unit.
+struct Ticket {
+    reply: Option<Reply>,
+    slot: Option<ResultAdoption>,
+    settled: Option<Settled>,
+}
 
-    fn complete(&mut self, ticket: &str, adoption: Option<ResultAdoption>) {
-        self.pending.remove(ticket);
-        self.held.insert(ticket.to_owned(), adoption);
+/// The oldest request ticket and operation owner the page may still name, which it sends with each
+/// request (`Floor`): everything below them the page has finished with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Floor {
+    pub ticket: u64,
+    pub operation: u64,
+}
+
+/// The tickets and owners at or above the page's floor, and whether the session is being torn down.
+#[derive(Default)]
+struct Book {
+    tickets: BTreeMap<u64, Ticket>,
+    owners: BTreeMap<u64, Owner>,
+    floor: Floor,
+    torn_down: bool,
+}
+
+impl Book {
+    /// Forgets what the page has finished with: the floor only rises.
+    fn advance(&mut self, floor: Floor) {
+        if floor.ticket > self.floor.ticket {
+            self.floor.ticket = floor.ticket;
+            self.tickets = self.tickets.split_off(&floor.ticket);
+        }
+        if floor.operation > self.floor.operation {
+            self.floor.operation = floor.operation;
+            self.owners = self.owners.split_off(&floor.operation);
+        }
     }
+}
+
+/// The number of a ticket the page issued (`request-<n>`, package-transport.ts), or none for any
+/// other text.
+fn ticket_number(ticket: &str) -> Option<u64> {
+    let digits = ticket.strip_prefix("request-")?;
+    let canonical = !digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && (digits == "0" || !digits.starts_with('0'));
+    canonical.then(|| digits.parse().ok()).flatten()
 }
 
 /// The control package's request side of one session (module doc).
@@ -362,8 +400,7 @@ pub struct PackageLink {
     connection: OnceLock<Arc<Connection>>,
     /// A result the page could not take has ended the connection.
     ended: AtomicBool,
-    operations: Mutex<HashMap<u64, Owner>>,
-    slots: Arc<Mutex<Slots>>,
+    book: Arc<(Mutex<Book>, Condvar)>,
     counters: Arc<LinkCounters>,
     outbox: Arc<Outbox>,
 }
@@ -374,8 +411,7 @@ impl PackageLink {
         PackageLink {
             connection: OnceLock::new(),
             ended: AtomicBool::new(false),
-            operations: Mutex::new(HashMap::new()),
-            slots: Arc::new(Mutex::new(Slots::default())),
+            book: Arc::new((Mutex::new(Book::default()), Condvar::new())),
             counters,
             outbox,
         }
@@ -391,10 +427,17 @@ impl PackageLink {
         self.ended.load(Ordering::SeqCst)
     }
 
-    /// The owner `id`, made on first use: a cancel or a request may come first.
-    fn owner(&self, id: u64) -> Option<Arc<Operation>> {
-        let mut operations = lock(&self.operations);
-        if let Some(owner) = operations.get(&id) {
+    fn book(&self) -> MutexGuard<'_, Book> {
+        lock(&self.book.0)
+    }
+
+    /// The owner `id`, made on first use: a cancel or a request may come first. None below the
+    /// page's floor, once finished, or once the session is being torn down.
+    fn owner(&self, book: &mut Book, id: u64) -> Option<Arc<Operation>> {
+        if id < book.floor.operation || book.torn_down {
+            return None;
+        }
+        if let Some(owner) = book.owners.get(&id) {
             return match owner {
                 Owner::Live(operation) => Some(Arc::clone(operation)),
                 Owner::Done => None,
@@ -409,13 +452,17 @@ impl PackageLink {
             Some(operation) => Owner::Live(Arc::clone(operation)),
             None => Owner::Done,
         };
-        operations.insert(id, owner);
+        book.owners.insert(id, owner);
         made
     }
 
     /// Idempotent: stops owner `id`'s unsent requests; sent ones settle under their deadlines.
     pub fn cancel(&self, id: u64) {
-        if let Some(operation) = self.owner(id) {
+        let operation = {
+            let mut book = self.book();
+            self.owner(&mut book, id)
+        };
+        if let Some(operation) = operation {
             operation.cancel();
         }
     }
@@ -423,39 +470,61 @@ impl PackageLink {
     /// Releases owner `id` once its requests are consumed; no device I/O. A later request of it is
     /// refused unsent.
     pub fn finish(&self, id: u64) {
-        lock(&self.operations).insert(id, Owner::Done);
+        let mut book = self.book();
+        if id >= book.floor.operation {
+            book.owners.insert(id, Owner::Done);
+        }
     }
 
     /// Submits `call` for owner `operation` under `ticket` and waits for its outcome: the record,
     /// with the result's slot held until `adopt`. A write goes out through the unit's Console Lock
-    /// gate, as every write of the session does.
-    pub fn request(&self, operation: u64, ticket: &str, call: Call<'_>) -> Reply {
+    /// gate, as every write of the session does. A resend of the ticket — Tauri sends a request
+    /// again when the page could not read its reply — waits for the first one's reply and answers
+    /// it, and sends nothing; so does one after the page has adopted it. A ticket below the page's
+    /// floor names a request the page finished with, and sends nothing either.
+    pub fn request(&self, operation: u64, ticket: &str, floor: Floor, call: Call<'_>) -> Reply {
         let method = call.method;
         let reply = |outcome| Reply {
             record: Record::of(method, outcome),
             held: None,
         };
-        if !lock(&self.slots).reserve(ticket) {
-            // A ticket already in use owns another call's slot: refuse without touching it.
+        let Some(number) = ticket_number(ticket) else {
             return reply(refused(
-                RequestCause::InternalError,
-                RequestPhase::Admission,
+                RequestCause::InvalidInput,
+                RequestPhase::Validation,
             ));
-        }
+        };
+        let owner = {
+            let mut book = self.book();
+            book.advance(floor);
+            if number < book.floor.ticket {
+                return stray(method);
+            }
+            if book.tickets.contains_key(&number) {
+                return self.reply_of(book, number, method);
+            }
+            book.tickets.insert(
+                number,
+                Ticket {
+                    reply: None,
+                    slot: None,
+                    settled: None,
+                },
+            );
+            self.owner(&mut book, operation)
+        };
         let request = match call.request() {
             Ok(request) => request,
-            Err(outcome) => {
-                lock(&self.slots).complete(ticket, None);
-                return reply(outcome);
-            }
+            Err(outcome) => return self.complete(number, reply(outcome)),
         };
-        let (Some(connection), Some(owner)) = (self.connection.get(), self.owner(operation)) else {
-            lock(&self.slots).complete(ticket, None);
-            return reply(refused(RequestCause::NotConnected, RequestPhase::Admission));
+        let (Some(connection), Some(owner)) = (self.connection.get(), owner) else {
+            return self.complete(
+                number,
+                reply(refused(RequestCause::NotConnected, RequestPhase::Admission)),
+            );
         };
         let (tx, rx) = mpsc::channel::<Outcome>();
-        let slots = Arc::clone(&self.slots);
-        let held_ticket = ticket.to_owned();
+        let book = Arc::clone(&self.book);
         let done = move |outcome: Outcome, adoption: ResultAdoption| {
             // Recorded before the record goes back, so the page can adopt the slot as soon as it
             // has the record. An unsent outcome holds none.
@@ -466,11 +535,19 @@ impl PackageLink {
                     ..
                 }
             );
-            lock(&slots).complete(&held_ticket, (!unsent).then_some(adoption));
+            if !unsent {
+                if let Some(ticket) = lock(&book.0).tickets.get_mut(&number) {
+                    ticket.slot = Some(adoption);
+                }
+            }
             if tx.send(outcome).is_err() {
                 // Nobody waits for the record: its slot is let go at once, so it cannot hold up
                 // the connection's later requests.
-                if let Some(Some(adoption)) = lock(&slots).held.remove(&held_ticket) {
+                let taken = lock(&book.0)
+                    .tickets
+                    .get_mut(&number)
+                    .and_then(|ticket| ticket.slot.take());
+                if let Some(adoption) = taken {
                     adoption.adopt();
                 }
             }
@@ -505,23 +582,65 @@ impl PackageLink {
         let held = hold
             .and_then(|id| self.outbox.lock_hold(id, LOCK_HAND_ON_WAIT))
             .map(|fetch| Held { fetch });
-        Reply {
-            record: Record::of(method, outcome),
-            held,
+        self.complete(
+            number,
+            Reply {
+                record: Record::of(method, outcome),
+                held,
+            },
+        )
+    }
+
+    /// Records `reply` as ticket `number`'s and wakes a resend waiting for it.
+    fn complete(&self, number: u64, reply: Reply) -> Reply {
+        let mut book = self.book();
+        if let Some(ticket) = book.tickets.get_mut(&number) {
+            ticket.reply = Some(reply.clone());
+        }
+        drop(book);
+        self.book.1.notify_all();
+        reply
+    }
+
+    /// The reply of ticket `number`, once it has one: what a resend answers.
+    fn reply_of(&self, mut book: MutexGuard<'_, Book>, number: u64, method: Method) -> Reply {
+        loop {
+            match book.tickets.get(&number) {
+                None => return stray(method),
+                Some(Ticket {
+                    reply: Some(reply), ..
+                }) => return reply.clone(),
+                Some(_) => {}
+            }
+            book = self.book.1.wait(book).unwrap_or_else(|p| p.into_inner());
         }
     }
 
     /// Releases the completion slot of `ticket`'s result once the page has validated it; no device
     /// I/O. True for any completed result: one that held no slot (refused, unsent, expired or
-    /// ended) has nothing to release. False for a ticket with no completed result, or one already
-    /// adopted, reported or ended.
+    /// ended) has nothing to release, and a resend of an adoption is answered as the adoption was.
+    /// False for a ticket with no completed result, or one the page reported or that ended.
     pub fn adopt(&self, ticket: &str) -> bool {
-        let taken = lock(&self.slots).held.remove(ticket);
-        match taken {
-            None => false,
-            Some(None) => true,
-            Some(Some(adoption)) => {
-                adoption.adopt();
+        let Some(number) = ticket_number(ticket) else {
+            return false;
+        };
+        let mut book = self.book();
+        let Some(record) = book.tickets.get_mut(&number) else {
+            return false;
+        };
+        if record.reply.is_none() {
+            return false;
+        }
+        match record.settled {
+            Some(Settled::Adopted) => true,
+            Some(Settled::Ended) => false,
+            None => {
+                record.settled = Some(Settled::Adopted);
+                let slot = record.slot.take();
+                drop(book);
+                if let Some(adoption) = slot {
+                    adoption.adopt();
+                }
                 true
             }
         }
@@ -529,7 +648,8 @@ impl PackageLink {
 
     /// The page could not adopt `ticket`'s result: when it still holds a slot, the connection ends
     /// with the slot held, since an unadopted slot would stop every later request, and the
-    /// session's link watch reports the end. False for an unknown ticket.
+    /// session's link watch reports the end. A result still on its way is waited for first. False
+    /// for an unknown ticket.
     pub fn fail_delivery(&self, ticket: &str) -> bool {
         self.end_for(ticket, false)
     }
@@ -541,21 +661,108 @@ impl PackageLink {
     }
 
     fn end_for(&self, ticket: &str, unknown_is_done: bool) -> bool {
-        let taken = lock(&self.slots).held.remove(ticket);
-        match taken {
-            None => unknown_is_done,
-            Some(None) => true,
-            Some(Some(held)) => {
-                // Recorded first, so whatever the close makes fail is told by this end. The
-                // connection closes with the result still held; only then is it let go.
-                self.ended.store(true, Ordering::SeqCst);
-                if let Some(connection) = self.connection.get() {
-                    connection.close(FATAL_TEARDOWN);
+        let Some(number) = ticket_number(ticket) else {
+            return unknown_is_done;
+        };
+        let mut book = self.book();
+        let held = loop {
+            match book.tickets.get_mut(&number) {
+                None => return unknown_is_done,
+                // A result still on its way: the end has to take the slot it will hold.
+                Some(Ticket { reply: None, .. }) => {
+                    book = self.book.1.wait(book).unwrap_or_else(|p| p.into_inner());
                 }
-                drop(held);
-                true
+                Some(record) => {
+                    if record.settled.is_some() {
+                        return true;
+                    }
+                    record.settled = Some(Settled::Ended);
+                    break record.slot.take();
+                }
+            }
+        };
+        drop(book);
+        if let Some(held) = held {
+            // Recorded first, so whatever the close makes fail is told by this end. The
+            // connection closes with the result still held; only then is it let go.
+            self.ended.store(true, Ordering::SeqCst);
+            if let Some(connection) = self.connection.get() {
+                connection.close(FATAL_TEARDOWN);
+            }
+            drop(held);
+        }
+        true
+    }
+
+    /// The session is being let go (`super::stop`): nothing more is submitted, and a result still
+    /// holding the wire slot — which the page that would adopt it no longer will — is ended by
+    /// closing the connection from a thread of its own, outside the worker's queue, so a worker
+    /// waiting behind the slot reaches its shutdown. Where no thread can be started, the slots are
+    /// let go instead, which frees the worker the same way.
+    pub fn tear_down(&self) {
+        let held: Vec<ResultAdoption> = {
+            let mut book = self.book();
+            book.torn_down = true;
+            book.tickets
+                .values_mut()
+                .filter(|ticket| ticket.settled.is_none())
+                .filter_map(|ticket| {
+                    let slot = ticket.slot.take()?;
+                    ticket.settled = Some(Settled::Ended);
+                    Some(slot)
+                })
+                .collect()
+        };
+        if held.is_empty() {
+            return;
+        }
+        let Some(connection) = self.connection.get().cloned() else {
+            return;
+        };
+        let held = Arc::new(Mutex::new(Some(held)));
+        let closing = Arc::clone(&held);
+        let started = std::thread::Builder::new()
+            .name("vd-package-teardown".to_owned())
+            .spawn(move || {
+                connection.close(FATAL_TEARDOWN);
+                drop(lock(&closing).take());
+            });
+        if started.is_err() {
+            for adoption in lock(&held).take().into_iter().flatten() {
+                adoption.adopt();
             }
         }
+    }
+
+    /// How many tickets and owners the link keeps: what the page's floor bounds.
+    #[cfg(test)]
+    pub fn kept(&self) -> (usize, usize) {
+        let book = self.book();
+        (book.tickets.len(), book.owners.len())
+    }
+
+    /// Whether the session's teardown has reached the link.
+    #[cfg(test)]
+    pub fn torn_down(&self) -> bool {
+        self.book().torn_down
+    }
+}
+
+/// The reply to a ticket below the page's floor, which names a request the page finished with: it
+/// is not sent again, and nothing is known of it here any more.
+fn stray(method: Method) -> Reply {
+    Reply {
+        record: Record::of(
+            method,
+            Outcome::Failure {
+                failure: RequestFailure::Cause {
+                    code: RequestCause::InternalError,
+                    phase: RequestPhase::Admission,
+                },
+                evidence: Evidence::Unconfirmed,
+            },
+        ),
+        held: None,
     }
 }
 
@@ -815,7 +1022,12 @@ mod tests {
     #[test]
     fn a_request_before_the_connection_opens_is_refused_unsent_and_holds_no_slot() {
         let link = unattached();
-        let reply = link.request(1, "request-1", call(Method::GetNumeric, 1.0, "0", None));
+        let reply = link.request(
+            1,
+            "request-1",
+            Floor::default(),
+            call(Method::GetNumeric, 1.0, "0", None),
+        );
         assert_eq!(
             json_of(reply.record),
             json!({
@@ -826,7 +1038,10 @@ mod tests {
         );
         assert_eq!(reply.held, None);
         assert!(link.adopt("request-1"), "a completed result is adoptable");
-        assert!(!link.adopt("request-1"), "once");
+        assert!(
+            link.adopt("request-1"),
+            "a resend of the adoption is answered alike"
+        );
         assert!(!link.fail_delivery("request-2"), "an unknown ticket");
         assert!(
             link.terminate("request-2"),
@@ -835,17 +1050,96 @@ mod tests {
     }
 
     #[test]
-    fn a_ticket_in_use_is_refused_without_touching_its_slot() {
+    fn a_resent_ticket_is_answered_with_its_first_reply() {
         let link = unattached();
-        link.request(1, "request-1", call(Method::GetNumeric, 1.0, "0", None));
-        let again = link.request(1, "request-1", call(Method::GetNumeric, 1.0, "0", None));
-        assert_eq!(
-            json_of(again.record)["failure"],
-            json!({ "kind": "cause", "code": "internal_error", "phase": "admission" })
+        let first = link.request(
+            1,
+            "request-1",
+            Floor::default(),
+            call(Method::GetNumeric, 1.0, "0", None),
         );
+        let again = link.request(
+            1,
+            "request-1",
+            Floor::default(),
+            call(Method::GetNumeric, 2.0, "0", None),
+        );
+        assert_eq!(again, first, "the record is the first call's");
+        assert!(link.adopt("request-1"));
+        let after = link.request(
+            1,
+            "request-1",
+            Floor::default(),
+            call(Method::GetNumeric, 1.0, "0", None),
+        );
+        assert_eq!(after, first, "and so after its adoption");
+    }
+
+    #[test]
+    fn a_ticket_the_page_did_not_issue_is_refused_unsent_and_recorded_nowhere() {
+        let link = unattached();
+        for ticket in [
+            "",
+            "request-",
+            "request-01",
+            "request--1",
+            "ticket-1",
+            "request-1x",
+        ] {
+            let reply = link.request(
+                1,
+                ticket,
+                Floor::default(),
+                call(Method::GetNumeric, 1.0, "0", None),
+            );
+            assert_eq!(
+                json_of(reply.record)["failure"],
+                json!({ "kind": "cause", "code": "invalid_input", "phase": "validation" }),
+                "{ticket:?}"
+            );
+        }
+        assert_eq!(link.kept(), (0, 0));
+    }
+
+    #[test]
+    fn the_page_s_floor_bounds_what_the_link_keeps() {
+        let link = unattached();
+        for n in 1..=100u64 {
+            let floor = Floor {
+                ticket: n,
+                operation: n,
+            };
+            link.request(
+                n,
+                &format!("request-{n}"),
+                floor,
+                call(Method::GetNumeric, 1.0, "0", None),
+            );
+            assert!(link.adopt(&format!("request-{n}")));
+            link.finish(n);
+        }
+        let (tickets, owners) = link.kept();
         assert!(
-            link.adopt("request-1"),
-            "the first call's slot is still there"
+            tickets <= 1 && owners <= 1,
+            "{tickets} tickets, {owners} owners"
+        );
+        let below = link.request(
+            7,
+            "request-3",
+            Floor {
+                ticket: 100,
+                operation: 100,
+            },
+            call(Method::SetNumeric, 1.0, "0", Some("1")),
+        );
+        assert_eq!(
+            json_of(below.record),
+            json!({
+                "kind": "failure",
+                "failure": { "kind": "cause", "code": "internal_error", "phase": "admission" },
+                "evidence": { "state": "unconfirmed" },
+            }),
+            "a ticket below the floor is a request the page finished with"
         );
     }
 

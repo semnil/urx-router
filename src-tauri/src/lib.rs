@@ -886,7 +886,8 @@ async fn vd_notifications(
 // Lock held, the fetch that carries the announcement. A result that reached the unit keeps the
 // connection's wire slot until `vd_package_adopt`. A request for a connection that is not the one
 // installed is refused unsent; a method the transport does not have is a binding fault and
-// rejects.
+// rejects. `ticket_floor` and `operation_floor` are the oldest ticket and owner the page may still
+// name: the shell keeps its records from there (`vd::package::Floor`).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 async fn vd_package_request(
@@ -894,6 +895,8 @@ async fn vd_package_request(
     epoch: u64,
     operation: u64,
     ticket: String,
+    ticket_floor: u64,
+    operation_floor: u64,
     method: String,
     param_id: f64,
     x: String,
@@ -909,6 +912,10 @@ async fn vd_package_request(
         link.request(
             operation,
             &ticket,
+            vd::package::Floor {
+                ticket: ticket_floor,
+                operation: operation_floor,
+            },
             vd::package::Call {
                 method: named,
                 param_id,
