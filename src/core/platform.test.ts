@@ -621,6 +621,26 @@ describe("notification fetch", () => {
     await platform.vdDisconnect(2);
   });
 
+  // The shell says when the transport never sent a write (vd.rs `NOT_SENT`): the page takes the
+  // prefix off, so the message reads as it did, and marks the error as a write that did not leave.
+  it("marks a write the transport never sent, with the shell's prefix taken off", async () => {
+    const { harness } = await connected();
+    harness.answers.vd_set = () => {
+      throw new Error(`${platform.NOT_SENT}: device-lost: the unit went offline`);
+    };
+    harness.answers.vd_set_str = () => {
+      throw new Error("device-lost: the unit went offline");
+    };
+    const unsent = await platform.vdSet(1, 0, 0, 5).catch((error: unknown) => error);
+    expect((unsent as Error).message).toBe("device-lost: the unit went offline");
+    expect(platform.refusedBeforeSending(unsent)).toBe(true);
+    const maybeSent = await platform.vdSetStr(1, 0, 0, "name").catch((error: unknown) => error);
+    expect((maybeSent as Error).message).toBe("device-lost: the unit went offline");
+    expect(platform.refusedBeforeSending(maybeSent), "without the prefix it may have landed").toBe(false);
+    expect(platform.refusedBeforeSending(new Error("writes-held: locked"))).toBe(true);
+    await platform.vdDisconnect(1);
+  });
+
   it("reports a loss to a link watch registered after it", async () => {
     const { outbox } = await connected();
     const drops: string[] = [];

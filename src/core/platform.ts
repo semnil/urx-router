@@ -410,12 +410,28 @@ export function stoppedByNotificationsLost(cause: unknown): boolean {
   return message.startsWith(`${NOTIFICATIONS_LOST}:`);
 }
 
-/** Whether `cause` — a write's error or its message — is a refusal the page or the shell gave the
- *  write before sending it: the unit's Console Lock (`WRITES_HELD`), or the connection's lost
- *  notifications (`NOTIFICATIONS_LOST`). Such a write did not reach the unit. */
+/** The prefix the shell puts on the failure of a write the transport never sent (vd.rs
+ *  `NOT_SENT`). `vdSet` and `vdSetStr` take it off and mark the error (`notSent`), so the message
+ *  reads as it did. */
+export const NOT_SENT = "not-sent";
+
+/** Whether `cause` — a write's error or its message — is a write that did not reach the unit: one
+ *  the transport never sent (marked `notSent`), or one the page or the shell refused before sending
+ *  it, for the unit's Console Lock (`WRITES_HELD`) or the connection's lost notifications
+ *  (`NOTIFICATIONS_LOST`). */
 export function refusedBeforeSending(cause: unknown): boolean {
+  if (cause instanceof Error && (cause as { notSent?: unknown }).notSent === true) return true;
   const message = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
   return message.startsWith(`${WRITES_HELD}:`) || message.startsWith(`${NOTIFICATIONS_LOST}:`);
+}
+
+/** A write's failure with the shell's `NOT_SENT` taken off its message and marked `notSent`. */
+function markUnsent<T>(write: Promise<T>): Promise<T> {
+  return write.catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.startsWith(`${NOT_SENT}: `)) throw error;
+    throw Object.assign(new Error(message.slice(NOT_SENT.length + 2)), { notSent: true });
+  });
 }
 
 /** Rejects with `NOTIFICATIONS_LOST` once `NOTIFICATION_FETCH_DEADLINE_MS` has passed. */
@@ -528,7 +544,7 @@ function shellHeld<T>(write: Promise<T>): Promise<T> {
 export function vdSet(paramId: number, x: number, y: number, value: number): Promise<void> {
   if (writesLost()) return lostWrite();
   if (writesHeld) return heldWrite();
-  return shellHeld(invoke<void>("vd_set", { paramId, x, y, value }));
+  return shellHeld(markUnsent(invoke<void>("vd_set", { paramId, x, y, value })));
 }
 
 /** Read one parameter instance's current absolute broker value. */
@@ -540,7 +556,7 @@ export function vdGet(paramId: number, x: number, y: number): Promise<number> {
 export function vdSetStr(paramId: number, x: number, y: number, value: string): Promise<void> {
   if (writesLost()) return lostWrite();
   if (writesHeld) return heldWrite();
-  return shellHeld(invoke<void>("vd_set_str", { paramId, x, y, value }));
+  return shellHeld(markUnsent(invoke<void>("vd_set_str", { paramId, x, y, value })));
 }
 
 /** Read one string-valued parameter instance (empty when it holds no string). */

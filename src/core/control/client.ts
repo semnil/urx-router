@@ -288,9 +288,12 @@ export interface SendOutcome {
   /** What became of it (see SendResult). `ok` and `skipped` are this field's two boolean
    *  faces and are written from it here, so no reader can be told two different things. */
   result: SendResult;
+  /** True when it failed without leaving: the page or the shell refused it, or the transport did
+   *  not send it (`refusedBeforeSending`). It cannot have moved the unit. */
+  unsent?: boolean;
 }
 
-const outcomeOf = (command: VdCommand, result: SendResult, error?: string): SendOutcome => ({
+const outcomeOf = (command: VdCommand, result: SendResult, error?: string, unsent = false): SendOutcome => ({
   command,
   result,
   ok: result === "accepted",
@@ -298,6 +301,7 @@ const outcomeOf = (command: VdCommand, result: SendResult, error?: string): Send
   // reader of a whole outcome compares against.
   ...(result === "skipped" ? { skipped: true } : {}),
   ...(error === undefined ? {} : { error }),
+  ...(unsent ? { unsent: true } : {}),
 });
 
 /**
@@ -372,13 +376,14 @@ export async function sendCommands(
       outcome = outcomeOf(command, "accepted");
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error);
+      const unsent = refusedBeforeSending(e);
+      outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error, unsent);
       // A stop — a Console Lock, a loss of the connection's notifications, which abort the signal
-      // before the refusal reaches here — ends the loop rather than failing the send. A send the
-      // page or the shell refused for it never left the app; any other is told first, since it
-      // may have reached the unit.
+      // before the refusal reaches here — ends the loop rather than failing the send. A send that
+      // never left — the page or the shell refused it, or the transport did not send it — is not
+      // told; any other is told first, since it may have reached the unit.
       if (signal?.aborted) {
-        if (!refusedBeforeSending(error)) onSent?.(outcome);
+        if (!unsent) onSent?.(outcome);
         signal.throwIfAborted();
       }
     }
@@ -455,6 +460,8 @@ export interface NameOutcome {
   write: NameWrite;
   ok: boolean;
   error?: string;
+  /** As on SendOutcome: it failed without leaving, so it cannot have moved the unit. */
+  unsent?: boolean;
 }
 
 /**
@@ -507,10 +514,11 @@ export async function sendNames(
       await vdSetStr(write.param, 0, write.y, write.value);
       outcome = { write, ok: true };
     } catch (e) {
-      outcome = { write, ok: false, error: e instanceof Error ? e.message : String(e) };
-      // As in sendCommands: a name a stop held was never sent, and any other is told first.
+      const unsent = refusedBeforeSending(e);
+      outcome = { write, ok: false, error: e instanceof Error ? e.message : String(e), ...(unsent ? { unsent } : {}) };
+      // As in sendCommands: a name that never left is not told on a stop, and any other is.
       if (signal?.aborted) {
-        if (!refusedBeforeSending(outcome.error)) onSent?.(outcome);
+        if (!unsent) onSent?.(outcome);
         signal.throwIfAborted();
       }
     }
@@ -885,7 +893,7 @@ export async function sendConverging(
         // on the wire with its fate unknown, so it invalidates exactly as an acceptance does. A
         // side-effect head resets addresses the catalogue does not enumerate, so it takes every
         // address out rather than its own.
-        if (o.result === "refused") return void onSent?.(o);
+        if (o.result === "refused" || o.unsent) return void onSent?.(o);
         if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
         else matched.delete(addr);
         onSent?.(o);

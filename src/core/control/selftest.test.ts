@@ -2327,6 +2327,40 @@ describe("runSelfTest and Console Lock", () => {
     expect(table).toEqual(before);
   });
 
+  // The transport may not send a write at all — the unit went offline before it — which the shell
+  // says (vd.rs `NOT_SENT`) and the page marks: nothing reached the unit.
+  it.each(["lock", "loss"] as const)(
+    "keeps no restore when the transport never sent its first write (%s)",
+    async (stop) => {
+      const table = installMockDevice(populatedPlan());
+      const lock = lockStream();
+      const before = new Map(table);
+      let lose: (() => void) | null = null;
+      vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+        lose = listener;
+        return () => {
+          lose = null;
+        };
+      });
+      const realSet = vi.mocked(vdSet).getMockImplementation()!;
+      let writes = 0;
+      vi.mocked(vdSet).mockImplementation(async () => {
+        writes++;
+        if (stop === "lock") lock.announce(1);
+        else lose?.();
+        throw Object.assign(new Error("device-lost: the unit went offline"), { notSent: true });
+      });
+      const report = await runSelfTest(model, 0);
+      vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+      vi.mocked(vdSet).mockImplementation(realSet);
+      expect(writes, "the premise: the first write was not sent").toBe(1);
+      expect(stop === "lock" ? report.locked : report.lost, "the premise: the stop").toBe(true);
+      expect(report.written).toBe(0);
+      expect(report.pendingRestore, "nothing reached the unit").toBeUndefined();
+      expect(table).toEqual(before);
+    },
+  );
+
   it("keeps the restore when its first write is sent and the answer is lost with the notifications", async () => {
     installMockDevice(populatedPlan());
     lockStream();

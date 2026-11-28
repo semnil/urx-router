@@ -50,6 +50,11 @@ pub(crate) const NOTIFICATIONS_LOST: &str = "notifications-lost";
 /// src/core/platform.ts), which it takes as the lock's stop rather than a failure.
 pub(crate) const WRITES_HELD: &str = "writes-held";
 
+/// The prefix on the failure of a write the transport never sent (`Evidence::NotSent`):
+/// the page takes it off and marks the error (`NOT_SENT`, src/core/platform.ts), so that it
+/// can tell a write that cannot have reached the unit from one that may have.
+pub(crate) const NOT_SENT: &str = "not-sent";
+
 /// The address of the unit's [Console Lock] (`PARAMS.CONSOLE_LOCK`,
 /// src/core/control/params.ts), the same on every model; announced on, it holds the
 /// writes in the shell until the page has the announcement.
@@ -883,7 +888,8 @@ mod imp {
     //! Tauri channels a notification goes out on, the link-lost event and the ledger.
     use super::{
         Cmd, DeviceSummary, LinkCounters, LinkEvent, MeterUpdate, Outbox, ParamUpdate, Run,
-        BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, LOCK_HAND_ON_WAIT, WRITES_HELD,
+        BULK_CHANGE, CONSOLE_LOCK_PARAM, CONTROL_WORKER_GONE, LOCK_HAND_ON_WAIT, NOT_SENT,
+        WRITES_HELD,
     };
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -1274,6 +1280,7 @@ mod imp {
         /// command it refused before sending — the session already over included — is
         /// worded by the session's end (`request_text`).
         fn run(&mut self, req: Request, at: &str) -> Result<Option<ReadValue>, String> {
+            let write = matches!(req, Request::SetNumeric(..) | Request::SetText(..));
             match request(&self.connection, req) {
                 Outcome::Success { value, .. } => Ok(value),
                 Outcome::Failure { failure, evidence } => {
@@ -1286,7 +1293,13 @@ mod imp {
                     ) {
                         self.counters.note_deadline();
                     }
-                    Err(request_text(&self.connection, failure, evidence, at))
+                    let text = request_text(&self.connection, failure, evidence, at);
+                    // A write the transport never sent says so, whatever its cause.
+                    Err(if write && evidence == Evidence::NotSent {
+                        format!("{NOT_SENT}: {text}")
+                    } else {
+                        text
+                    })
                 }
             }
         }
@@ -1786,7 +1799,7 @@ mod imp {
         };
         use super::{
             link_failure_text, request_text, worker_at, Route, Runs, BROKER_UNRESPONSIVE,
-            CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, WRITES_HELD,
+            CONNECT_DEADLINE, CONSOLE_LOCK_PARAM, DEVICE_LOST_PREFIX, NOT_SENT, WRITES_HELD,
         };
         use serde_json::{json, Value};
         use std::io::{BufRead, BufReader, Write};
@@ -3094,7 +3107,11 @@ mod imp {
             }));
             let err = set(tx.clone(), 1, 0, 0, 5).unwrap_err();
             assert!(err.starts_with("broker-timeout: 1:0:0"), "{err}");
-            assert_eq!(set(tx, 1, 0, 0, 6), Err(BROKER_UNRESPONSIVE.to_string()));
+            // Not sent, and said so: the page takes it as a write that cannot have landed.
+            assert_eq!(
+                set(tx, 1, 0, 0, 6),
+                Err(format!("{NOT_SENT}: {BROKER_UNRESPONSIVE}"))
+            );
         }
         // The unit lost after a read's deadline changes nothing: the deadline already ended
         // the session, as unresponsive.

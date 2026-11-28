@@ -6079,15 +6079,21 @@ if (!DEMO) {
                 // Armed the moment the rate RESOLVES, not from the returned outcomes: an
                 // abort between two sends throws out of the send loop and takes those
                 // outcomes with it, so a rate that reached the unit would go unrecorded and
-                // the recorder would never be re-read. Everything but an explicit refusal
-                // arms it: the shell sends before it waits, so a write whose answer never
-                // came may have landed and taken the Track Count down with it, and the
-                // recorder would then be left showing a count the unit no longer has. Any
+                // the recorder would never be re-read. Everything but an explicit refusal, or a
+                // write that never left (`unsent`), arms it: the shell sends before it waits, so a
+                // write whose answer never came may have landed and taken the Track Count down
+                // with it, and the recorder would then be left showing a count the unit no longer
+                // has. Any
                 // rate that goes out arms it, whatever put it in the plan, on a model that
                 // has the recorder.
                 onSent: (o: SendOutcome) => {
                   if (o.result === "accepted") sentSoFar++;
-                  if (o.result !== "refused" && o.command.name === "SAMPLE_RATE" && hasRecorder(device.model)) {
+                  if (
+                    o.result !== "refused" &&
+                    !o.unsent &&
+                    o.command.name === "SAMPLE_RATE" &&
+                    hasRecorder(device.model)
+                  ) {
                     trackCountMayHaveDropped = true;
                   }
                 },

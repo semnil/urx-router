@@ -351,6 +351,27 @@ describe("sendCommands", () => {
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
     expect(seen.map((o) => [o.result, o.error])).toEqual(told ? [["unknown", error]] : []);
   });
+
+  // A write the transport never sent (marked by `vdSet`, platform.ts `NOT_SENT`) never left: on a
+  // stop it is not told, and otherwise it is told as unsent.
+  it("tells a write the transport never sent as unsent, and not at all on a stop", async () => {
+    const commands = planToCommands(model, basePlan());
+    const unsent = (): Error => Object.assign(new Error("device-lost: the unit went offline"), { notSent: true });
+    const stop = new AbortController();
+    vi.mocked(vdSet).mockImplementation(async () => {
+      stop.abort(new Error("stopped"));
+      throw unsent();
+    });
+    const onStop: SendOutcome[] = [];
+    await expect(sendCommands(commands, stop.signal, (o) => onStop.push(o))).rejects.toThrow("stopped");
+    expect(onStop).toEqual([]);
+    vi.mocked(vdSet).mockImplementation(async () => {
+      throw unsent();
+    });
+    const told: SendOutcome[] = [];
+    await sendCommands(commands, undefined, (o) => told.push(o));
+    expect(told.map((o) => [o.result, o.unsent])).toEqual([["unknown", true]]);
+  });
 });
 
 // Clip Safe OFF landing together with an A.Gain write puts that A.Gain back, so the OFF is
