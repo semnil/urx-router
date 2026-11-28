@@ -808,8 +808,10 @@ export const ja: Messages = {
       `${n} 件の設定を書き込みましたが、${unread} 件を読み戻せず、デバイスの状態を確認できていません`,
     writeReadFailed: (n: number): string => `書き込みを中止しました: ${n} 件の設定をデバイスから読み取れません`,
     writeError: (message: string): string => `デバイスへの書き込みに失敗しました: ${message}`,
-    writeLocked: (sent: number, total: number): string =>
-      `本体が Console Lock になったため、書き込みを止めました: ${total} 件中 ${sent} 件を送りました。ロックを外してからもう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
+    writeLocked: (sent: number): string =>
+      `本体が Console Lock になったため、書き込みを止めました: 本体が受け取った書き込みは ${sent} 件です。ロックを外してからもう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
+    writeLost: (sent: number): string =>
+      `デバイスが知らせた変更を取得できなかったため、書き込みを止めました: 本体が受け取った書き込みは ${sent} 件です。もう一度書き込むと、本体と計画を比べ直して、違う設定を送ります`,
     consoleLocked: "本体が Console Lock 中です — 本体でロックを外すまで、アプリからは何も送りません",
     consoleUnlocked: "本体の Console Lock が外れました — 編集はまた本体へ送られます",
     consoleLockedNotSent: "本体が Console Lock 中のため、送りませんでした",
@@ -842,8 +844,12 @@ export const ja: Messages = {
       "セルフテストを止めました — 書き込む前に本体が Console Lock になりました。デバイスには触れていません。",
     selfTestLocked:
       "セルフテストを止めました — 本体が Console Lock になりました。本体は書き換わったままです。ロックを外したら、デバイスメニューの「セルフテストの書き戻し」を選んでください",
+    selfTestLostUntouched:
+      "セルフテストを止めました — 書き込む前に、デバイスが知らせた変更を取得できなくなりました。デバイスには触れていません。",
+    selfTestLost:
+      "セルフテストを止めました — デバイスが知らせた変更を取得できなくなりました。本体は書き換わったままです。デバイスメニューの「セルフテストの書き戻し」を選んでください",
     selfTestRestorePending:
-      "Console Lock で止まったセルフテストを、まだ書き戻していません — 先にデバイスメニューの「セルフテストの書き戻し」を選んでください",
+      "止まったセルフテストを、まだ書き戻していません — 先にデバイスメニューの「セルフテストの書き戻し」を選んでください",
     selfTestRestoring: "本体をセルフテストの前の状態に書き戻しています…",
     selfTestRestored: "本体をセルフテストの前の状態に書き戻しました",
     selfTestRestoreRefusedLock:
@@ -1154,8 +1160,6 @@ export const ja: Messages = {
         "デバイス制御の接続が中断されました。再接続してください。繰り返す場合はアプリを再起動してください。",
       deviceLost: "デバイスとの接続が切断されました (USB 抜去または Device Center 終了)",
       brokerClosed: "Device Center が制御接続を閉じました。起動し直してから再度お試しください。",
-      brokerNoVdpPort: (detail: string): string =>
-        `Device Center は応答しましたが制御ポートを提示しませんでした (${detail})。Device Center を起動し直してから再度お試しください。`,
       notConnected: "デバイスに接続していません",
       brokerTimeout: (detail: string): string => `Device Center から応答がありませんでした (${detail})`,
       brokerUnresponsive:
@@ -1163,6 +1167,8 @@ export const ja: Messages = {
       brokerRejected: (detail: string): string => `デバイスが書き込みを拒否しました (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center から想定外の応答が返りました (${detail})`,
       brokerIo: (detail: string): string => `Device Center との通信に失敗しました (${detail})`,
+      notificationsLost:
+        "デバイスが知らせた変更を取得できなかったため、この接続ではこれ以上何も送りません。もう一度始めてください。",
       fileNotFound: "そのパスにファイルがありません",
       fileDenied: "ファイルへのアクセスが拒否されました",
       fileIo: (detail: string): string => `ファイルの読み書きに失敗しました (${detail})`,

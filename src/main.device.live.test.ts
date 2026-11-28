@@ -387,6 +387,7 @@ describe("the live session", () => {
     const { channel } = shell.args[at] as { channel: { onmessage: (d: unknown) => void } };
     const readsBefore = shell.count("vd_get");
     channel.onmessage([{ param_id: 26, x: 0, y: 0, value: 40 }]); // CH1 HPF freq
+    await shell.delivered();
     await vi.waitFor(() => expect(shell.count("vd_get")).toBeGreaterThan(readsBefore), { timeout: 20_000 });
 
     // Let the read and its coalesced reflect finish, or the chord below meets the
@@ -441,6 +442,7 @@ describe("the live session", () => {
     panel({ paramId: RATE, x: 0, y: 0, value: 96_000 });
     if (fader) panel({ paramId: PARAMS.CH_FADER.id, x: 0, y: 0, value: levelToVd(-10) });
     notifyChannel(shell).onmessage([{ param_id: RATE, x: 0, y: 0, value: 96_000 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect($<HTMLSelectElement>("rate-picker").value).toBe("96000"), { timeout: 20_000 });
 
     // A press refused while a follow read runs is left where it was, so the next one is the same press.
@@ -493,6 +495,7 @@ describe("the live session", () => {
       { param_id: 26, x: 0, y: 0, value: 40 }, // CH1 HPF freq
       { param_id: 26, x: 0, y: 1, value: 40 }, // CH2 HPF freq
     ]);
+    await shell.delivered();
 
     await vi.waitFor(() => expect(errors(shell).length).toBeGreaterThan(0), { timeout: 25_000 });
     expect(faderAnswered, "the control: the read got CH 1's fader").toBe(true);
@@ -891,6 +894,7 @@ describe("the live session", () => {
     });
     const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+    await shell.delivered();
     selector.release();
 
     // The ordinary followed line, not the held one — and nothing sent back.
@@ -949,6 +953,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
+    await shell.delivered();
 
     await vi.waitFor(() => expect(heldCountFor(statusText(), 2, 0), progress()).not.toBeNaN(), { timeout: 25_000 });
     await vi.waitFor(() => expect(insertFxWrites(shell).length, progress()).toBeGreaterThan(written), {
@@ -985,6 +990,7 @@ describe("the live session", () => {
     // A CH 3 parameter the unit moved: no owner-less address, so this settles into a
     // SCOPED read, which never asks for the rate.
     channel.onmessage([{ param_id: PARAMS.HPF_ON.id, x: 0, y: 2, value: 1 }]);
+    await shell.delivered();
     try {
       await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
       // The excursion is announced while the scoped read is still running.
@@ -992,6 +998,7 @@ describe("the live session", () => {
         { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
         { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
       ]);
+      await shell.delivered();
     } finally {
       read.release();
     }
@@ -1038,6 +1045,7 @@ describe("the live session", () => {
 
     // An address in no index forces a FULL read, without touching the rate history.
     channel.onmessage([{ param_id: 9_999, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     try {
       await vi.waitFor(() => expect(read.held()).toBe(true), { timeout: 25_000 });
       expect(asked).toBeGreaterThanOrEqual(2); // The selector/engine family is stable.
@@ -1047,6 +1055,7 @@ describe("the live session", () => {
         { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
         { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
       ]);
+      await shell.delivered();
     } finally {
       read.release();
     }
@@ -1098,6 +1107,7 @@ describe("the live session", () => {
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 192_000 },
       { param_id: PARAMS.SAMPLE_RATE.id, x: 0, y: 0, value: 48_000 },
     ]);
+    await shell.delivered();
     await vi.waitFor(() => expect(fullRead.held(), "the full read reached CH 4").toBe(true), { timeout: 25_000 });
     // A STEREO EQ 1-knob switched on beside it, whose flush refetches STEREO — parked too.
     refetch.arm();
@@ -1120,6 +1130,7 @@ describe("the live session", () => {
     // until the flush carrying the refetch is done.
     const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.INSERT_FX.id, x: 0, y: 0, value: denormalizeInsertFx(INSERT_FX_NONE) }]);
+    await shell.delivered();
     refetch.release();
     $("dyn-screen-box").querySelector<HTMLButtonElement>(".consent-actions .consent-btn-secondary")!.click();
     // Whichever the read that took the clearing says first.
@@ -1162,6 +1173,7 @@ describe("the live session", () => {
     // unit announces it on.
     const status = recordStatus();
     channel.onmessage([{ param_id: PARAMS.SIGNAL_TYPE.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     selector.release();
 
     await vi.waitFor(() => expect(status.lines.some((l) => followedLine(l) || heldLine(l))).toBe(true), {
@@ -1311,12 +1323,13 @@ describe("the live session", () => {
 
     const nc = nameControl(getModel("URX44V"), "ch1")!;
     notifyChannel(shell).onmessage([{ param_id: nc.param, x: 0, y: 0, value: 0, value_str: "1234567  9" }]);
+    await shell.delivered();
 
-    // Asserted immediately, and deliberately not awaited: the notify is delivered and
-    // applied synchronously, while the idle net a followed change arms fires a full
-    // reconcile 900 ms later — and this stub never took the write, so that sweep reads
-    // the name back as empty and clears it. A `waitFor` here would therefore report an
-    // empty field for a name that had arrived correctly, and would let a wrong value be
+    // Asserted as soon as the page has taken the notify, and deliberately not polled: the
+    // notify is applied as it is handed on, while the idle net a followed change arms fires
+    // a full reconcile 900 ms later — and this stub never took the write, so that sweep
+    // reads the name back as empty and clears it. A `waitFor` here would therefore report
+    // an empty field for a name that had arrived correctly, and would let a wrong value be
     // polled away instead of failing.
     selectNode("ch1");
     expect($("inspector").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("1234567");
@@ -1353,6 +1366,7 @@ describe("the live session", () => {
     // A scoped (non-direct) parameter: its notify is not applied on its own, it makes
     // the follow re-read the node — which is the read under test.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HPF_FREQ.id, x: 0, y: 0, value: 40 }]);
+    await shell.delivered();
 
     selectNode("ch1");
     await vi.waitFor(
@@ -1395,6 +1409,7 @@ describe("the inspector while the CONSOLE hides it", () => {
     // Whole dB, since the gain decode rounds and a smaller step would leave the plan
     // where it was — the panel would then agree for the wrong reason.
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: 2000 }]);
+    await shell.delivered();
     // The reflect is coalesced onto a timer, so wait for it where it IS visible.
     await vi.waitFor(() => expect(consoleGain("CH 1")).toBe("20"), { timeout: 25_000 });
     expect(consoleGain("CH 3"), "CH 3 reads jack 1 too").toBe("20");
@@ -1510,12 +1525,14 @@ describe("the unit's CUE Mode", () => {
     const shell = await bootDevice();
     await up();
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(barShows()).toBe("false/true"));
     expect(modeWrites(shell), "followed, not written back").toEqual([]);
 
     $("cue-mode-mix").click();
     await vi.waitFor(() => expect(modeWrites(shell)).toEqual([0]), { timeout: 25_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(barShows()).toBe("true/false");
     expect(modeWrites(shell)).toEqual([0]);
@@ -1533,9 +1550,11 @@ describe("the unit's CUE Mode", () => {
     expect(barShows()).toBe("true/false");
     await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1]), { timeout: 25_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 1 }]);
+    await shell.delivered();
     expect(barShows(), "as the answer is delivered").toBe("true/false");
     await vi.waitFor(() => expect(modeWrites(shell)).toEqual([1, 0]), { timeout: 25_000 });
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(barShows()).toBe("true/false");
     expect(modeWrites(shell)).toEqual([1, 0]);
@@ -1580,6 +1599,7 @@ describe("the unit's CUE Mode", () => {
     const shell = await bootDevice();
     await up();
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MODE.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(barShows()).toBe("true/false");
     expect(modeWrites(shell)).toEqual([]);
@@ -1599,6 +1619,7 @@ describe("the unit's CUE Mode", () => {
     expect(barShows()).toBe("true/false");
     moved = true;
     notifyChannel(shell).onmessage([{ param_id: PARAMS.CUE_MONO.id, x: 0, y: 0, value: 0 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(barShows()).toBe("false/true"), { timeout: 10_000 });
     expect(modeWrites(shell)).toEqual([]);
   });
@@ -1746,6 +1767,7 @@ describe("the status line during Live sync", () => {
     expect(part("lead")).toBe(lead);
 
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HPF_FREQ.id, x: 0, y: 0, value: 80 }]);
+    await shell.delivered();
     await vi.waitFor(() => expect(syncCountFor(statusText(), t().status.liveFollowed)).toBeGreaterThan(0), {
       timeout: 15_000,
     });

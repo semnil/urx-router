@@ -95,10 +95,11 @@ function formatCount(n: number): string {
   return n.toLocaleString("en-US").replace(/,/g, " ");
 }
 
-/** Consecutive deadlines that end a session, mirroring BROKER_STALL_LIMIT in
- *  src-tauri/src/vd.rs. Printed beside the current run so "no answer" reads as a
- *  distance to the end of the session rather than as an unscaled tally. */
-export const BROKER_STALL_LIMIT = 3;
+/** Deadlines in a row that end a session: the transport src-tauri/src/vd.rs runs on ends
+ *  the connection on the first response deadline (N1). Printed beside the current run so
+ *  "no answer" reads as a distance to the end of the session rather than as an unscaled
+ *  tally. */
+export const BROKER_STALL_LIMIT = 1;
 
 /** How often a running session appends a line. A minute, so a session that ends with
  *  the app loses at most that much — the frontend cannot be relied on to write anything

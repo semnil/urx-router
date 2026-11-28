@@ -296,7 +296,13 @@ export class DeviceFollow {
     const key = addrs.map((a) => a.join(":")).join(",");
     if (this.unsub && key === this.registeredKey) return;
     this.registeredKey = key;
-    this.unsub?.();
+    // Not unsubscribed first. A subscribe replaces the one before it on the connection,
+    // switching to the new set before it lets the old one go, so an address both sets hold
+    // stays registered throughout: unsubscribing first would leave the unit unheard from
+    // until the new registrations were in, and a Console Lock or a scene recall made in
+    // that gap would never reach the plan. The old handle is dropped unused — it names no
+    // subscription of its own (`vd_params_unsubscribe` acts on whichever is current), so
+    // calling it after the replacement would take the new one away.
     this.unsub = null;
     // Dropped with the stream it stands for, before the await rather than after it: a
     // registration that throws leaves this method by an exception, and an unpaired

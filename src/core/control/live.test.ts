@@ -11,13 +11,15 @@ import { PlanWriteWitness, clonePlanState } from "../plan-history";
 // than a stand-in (the cadence pin below): a scoped pass reads names too.
 // vdParamsSubscribe is here for the cases that put the follow layer on top of the session,
 // where the notify stream is what a case delivers.
-vi.mock("../platform", () => ({
+vi.mock("../platform", async (importOriginal) => ({
   vdSet: vi.fn(),
   vdSetStr: vi.fn(),
   vdGet: vi.fn(),
   vdGetStr: vi.fn(),
   vdParamsSubscribe: vi.fn(),
   WRITES_HELD: "writes-held",
+  // A write the page or the shell refused before sending it, as the bridge says it.
+  refusedBeforeSending: (await importOriginal<typeof import("../platform")>()).refusedBeforeSending,
 }));
 
 import { vdSet, vdSetStr, vdGet, vdGetStr, vdParamsSubscribe, type ParamUpdate } from "../platform";

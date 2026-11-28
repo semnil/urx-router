@@ -187,8 +187,8 @@ sites):
   read the lock right after connecting, and refuse a locked unit.
 - **Reading never stops**: a fetch, a compare, Live sync's start and follow, and the meters.
 - **A lock announced in the middle of a write stops it at the next command.** A Live sync flush puts
-  what it had not sent back to the unit's values at once; Write to device says how many of how many
-  went out, and pressing it again once the unit is unlocked sends the rest; a self-test keeps what
+  what it had not sent back to the unit's values at once; Write to device says how many writes
+  the unit took, and pressing it again once the unit is unlocked sends the rest; a self-test keeps what
   it read before the run, says the unit is not restored, and the operator runs the restore alone from
   the Device menu once the unit is unlocked. The rest of the self-test is not resumed, and quitting
   the app drops what it kept.
@@ -202,3 +202,23 @@ is unlocked.
 
 **Reopen when.** A write over the link that moves the unit to its Console Lock menu turns up (it
 would make a lock from the app possible), or the unit starts refusing writes while it is locked.
+
+## A missed response deadline ends the session
+
+**Decision (2026-11-26, the operator).** Over the shared transport crate, a command whose response
+deadline passes ends the connection, as it does for urx-cli (the crate's N1): the command fails as
+`broker-timeout`, and the session ends with `broker-unresponsive` for the watch and every command after it.
+Before, `vd.rs` rode out a single missed deadline and ended the session only on the third in a row.
+
+**Why.** The operator first had the crate carry a policy that tolerated deadlines, so `vd.rs` could keep
+its old rule. Keeping a tolerated deadline's late reply from answering a later command needs the
+transport to decide, in the order frames arrive and across the threads that read, judge and send, when
+the wait for that reply ends and which request a frame answers. Four review rounds kept finding replies
+taken by the wrong request (a write the unit refused reported as accepted) and the deadline run following
+the wrong order, and the form that settled them moved notification recipients. The operator withdrew the
+policy.
+
+**Turned down.** Keeping the policy with those edges recorded as accepted limits; fixing them within the
+form that split receiving from judging.
+
+**Reopen when.** A reply names the request it answers, so a late reply can be told from a later one.

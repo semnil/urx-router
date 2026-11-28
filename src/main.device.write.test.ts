@@ -294,7 +294,7 @@ describe("Write to device", () => {
     return shell;
   };
 
-  // The shell SENDS before it waits (`vd.rs`, do_set), so an answer that never came leaves
+  // The shell SENDS before it waits (the transport `vd.rs` runs on), so an answer that never came leaves
   // the rate on the wire: it may have landed and taken the Track Count down with it. Armed
   // on an acknowledgement alone, the recorder went on showing a count the unit no longer has
   // and nothing on screen said so.

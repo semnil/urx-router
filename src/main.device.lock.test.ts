@@ -10,6 +10,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { $, bootApp, deviceCommands, statusText, unwrittenRead } from "./main.test-util";
 import type { TauriShell } from "./main.test-util";
+import { formatRate } from "./core/constraints";
+import { SUPPORTED_SYSTEM_FIRMWARE } from "./core/control/firmware";
 import { FX_EFFECT_ARRAY_PARAM } from "./core/control/fx-effect";
 import { DEBOUNCE_MS } from "./core/control/live";
 import { PARAMS } from "./core/control/params";
@@ -32,6 +34,8 @@ import {
   selectNode,
   turnOscOn,
   undoEdit,
+  RETRY_ASK,
+  SAVES,
   WRITE_ASK,
 } from "./main.device.test-util";
 
@@ -115,7 +119,8 @@ describe("Console Lock during a live session", () => {
     pressOscOn();
     announceLock(shell, 1);
     await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedPutBack), { timeout: 25_000 });
-    expect(oscFace()).toBe("OFF");
+    // The status line is set as the read-back ends; the board repaints on the reflect it requests.
+    await vi.waitFor(() => expect(oscFace()).toBe("OFF"));
     await quiet(shell);
     expect(writesTo(shell, PARAMS.OSC_ON.id)).toEqual([]);
     expect(errors(shell)).toEqual([]);
@@ -254,9 +259,9 @@ describe("Console Lock during a live session", () => {
       try {
         await wire;
         announceLock(shell, 1);
-        await Promise.resolve();
+        await shell.delivered();
         announceLock(shell, 0);
-        await Promise.resolve();
+        await shell.delivered();
       } finally {
         answer();
       }
@@ -298,6 +303,7 @@ describe("Console Lock during a live session", () => {
       announceLock(shell, 0);
     }
     notifyChannel(shell).onmessage([{ param_id: PARAMS.HA_GAIN.id, x: 0, y: 0, value: -500 }]);
+    await shell.delivered();
     await quiet(shell);
     expect(writesTo(shell, PARAMS.CLIP_SAFE.id)).toEqual(sent);
     expect(errors(shell)).toEqual([]);
@@ -314,6 +320,8 @@ describe("Console Lock during a live session", () => {
     pressOscOn();
     announceLock(shell, 1);
     announceLock(shell, 0);
+    // The edit below is made once the app has taken the unlock.
+    await shell.delivered();
     const level = (): HTMLInputElement =>
       paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
     level().value = "-10";
@@ -358,9 +366,9 @@ describe("Console Lock during a live session", () => {
     try {
       await wire;
       announceLock(shell, 1);
-      await Promise.resolve();
+      await shell.delivered();
       announceLock(shell, 0);
-      await Promise.resolve();
+      await shell.delivered();
       oscOn();
       const level = paramRow(t().inspector.oscLevel).querySelector<HTMLInputElement>('input[type="range"]')!;
       level.value = "-20";
@@ -379,22 +387,52 @@ describe("Console Lock during a live session", () => {
 
   // A cue pressed just before the lock arrived: it passed the refusal, and the write it queued met
   // the lock on its way out. That is the lock's stop rather than a failed write, so the session
-  // goes on and the cues are read back to show what the unit holds.
+  // goes on and the cues are read back to show what the unit holds. The write waits behind the
+  // read-back of an earlier press, held on the wire until the lock has arrived: a notification
+  // reaches the app on a later task, and a write queued behind nothing leaves before that.
   it("takes a cue the lock caught on its way out as not sent, and reads the cues back", SLOW, async () => {
-    const shell = await bootDevice();
+    const table = deviceCommands();
+    const get = table.vd_get as (a: Record<string, unknown>) => unknown;
+    let hold: Promise<void> | null = null;
+    let release!: () => void;
+    let onWire!: () => void;
+    const wire = new Promise<void>((r) => (onWire = r));
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_get: async (a: Record<string, unknown>) => {
+          if (hold && a.paramId === PARAMS.CUE_MONO.id) {
+            onWire();
+            await hold;
+          }
+          return get(a);
+        },
+      },
+    }))!;
     await up();
     await quiet(shell);
     selectNode("ch1");
     const cueReads = (): number =>
       shell.invokes.filter((cmd, i) => cmd === "vd_get" && shell.args[i]?.paramId === PARAMS.CUE_MONO.id).length;
+    const press = (label: string): void =>
+      [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
+        .find((b) => b.textContent === label)!
+        .click();
+    hold = new Promise<void>((r) => (release = r));
+    try {
+      press(t().inspector.on);
+      await wire;
+      press(t().inspector.off);
+      announceLock(shell, 1);
+      await shell.delivered();
+    } finally {
+      hold = null;
+      release();
+    }
     const before = cueReads();
-    [...paramRow(t().inspector.cue).querySelectorAll<HTMLButtonElement>("button")]
-      .find((b) => b.textContent === t().inspector.on)!
-      .click();
-    announceLock(shell, 1);
     await vi.waitFor(() => expect(statusText()).toBe(t().status.consoleLockedNotSent), { timeout: 10_000 });
     await quiet(shell);
-    expect(writesTo(shell, PARAMS.CUE_MONO.id)).toEqual([]);
+    expect(writesTo(shell, PARAMS.CUE_MONO.id), "the first press is sent, and the second is not").toEqual([1]);
     expect(cueReads(), "the cues are read back").toBeGreaterThan(before);
     expect(live().getAttribute("aria-checked")).toBe("true");
     expect(errors(shell)).toEqual([]);
@@ -504,6 +542,27 @@ describe("Console Lock and a value the unit drives", () => {
 });
 
 describe("Console Lock and a write outside a session", () => {
+  // What a write the notifications' loss stopped before it knew how much it was to send says.
+  const LOST_BEFORE_COUNT = t().status.writeError(t().error.shell.notificationsLost);
+  // Lets the tasks the page has queued run: a fetch the stub has just failed, and the stop it makes.
+  const settleTasks = async (): Promise<void> => {
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  // Answers every dialog Ok, except the question `asks` names: the connection's notifications are
+  // lost while it is open, and it is answered `answer` once the loss has landed.
+  const loseWhileAsking =
+    (box: { shell: TauriShell | null }, asks: (message: string) => boolean, answer: "Ok" | "Cancel") =>
+    async (a: Record<string, unknown>): Promise<string> => {
+      if (a.buttons !== "OkCancel" || !asks(String(a.message ?? ""))) return "Ok";
+      box.shell!.loseNotifications();
+      await settleTasks();
+      return answer;
+    };
+  const FIRMWARE_ASK = t().confirm.firmwareMismatch("0.0.1", SUPPORTED_SYSTEM_FIRMWARE);
+  const oldFirmware = (): Record<string, unknown> => ({
+    vd_connect: { ...(deviceCommands({}).vd_connect as Record<string, unknown>), firmware: "0.0.1" },
+  });
+
   it("refuses Write to device on a locked unit, before it asks anything", SLOW, async () => {
     const shell = await bootDevice({}, true, { [LOCK]: 1 });
     $("btn-write").click();
@@ -532,12 +591,534 @@ describe("Console Lock and a write outside a session", () => {
     await invoked(shell, "vd_disconnect");
     expect(shell.count("vd_set"), "nothing after the write on the wire").toBe(3);
     expect(shell.count("vd_set_str")).toBe(0);
-    // The total is read out of the line and put back, so the assertion pins the whole frame.
-    const total = Number(/(\d+) of (\d+) sent/.exec(statusText())?.[2] ?? NaN);
-    expect(statusText()).toBe(t().status.writeLocked(3, total));
-    expect(total).toBeGreaterThan(3);
+    expect(statusText()).toBe(t().status.writeLocked(3));
     expect(errors(shell)).toEqual([]);
   });
+
+  // A lock the unit announces is no longer heard once the connection's notifications are lost, so
+  // the write stops there as it stops on the lock: with what it sent, and no retry offered on the
+  // connection that lost them.
+  it("stops Write to device at the next command when the connection's notifications are lost", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let sent = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_set: () => {
+        sent++;
+        if (sent === 3) box.shell!.loseNotifications();
+        return null;
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(shell.count("vd_set"), "nothing after the write on the wire").toBe(3);
+    expect(shell.count("vd_set_str")).toBe(0);
+    expect(statusText()).toBe(t().status.writeLost(3));
+    expect(confirms(shell), "no retry is offered").toHaveLength(1);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // Lost while the write is still reading the unit: it stops there, saying why, with nothing sent.
+  it("stops Write to device with the cause when the notifications are lost while it reads", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let reads = 0;
+    const read = clockReads(false, 48_000);
+    const shell = await bootDevice({
+      vd_get: (a: Record<string, unknown>) => {
+        reads++;
+        if (reads === 20) box.shell!.loseNotifications();
+        return read(a);
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(statusText(), "nothing sent yet").toBe(t().status.writeLost(0));
+    expect(shell.count("vd_set")).toBe(0);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // A read that fails once the write has stopped does not take the stop's place on the line.
+  it.each(["lock", "loss"] as const)(
+    "says the stop, not the read failure, when a read fails after Write to device stopped (%s)",
+    SLOW,
+    async (stop) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      let reads = 0;
+      const read = clockReads(false, 48_000);
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) => {
+          if (++reads !== 20) return read(a);
+          if (stop === "lock") announceLock(box.shell!, 1);
+          else box.shell!.loseNotifications();
+          return new Promise((_, reject) => setTimeout(() => reject(new Error("read-refused")), 100));
+        },
+      });
+      box.shell = shell;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      expect(statusText()).toBe(stop === "lock" ? t().status.writeLocked(0) : t().status.writeLost(0));
+      expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+    },
+  );
+
+  // Lost while the write reads the names: it stops there, before it asks to write anything.
+  it("asks nothing once the notifications are lost while Write to device reads the names", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let names = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_get_str: () => {
+        if (++names === 3) box.shell!.loseNotifications();
+        return "";
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(names, "the premise: the names were being read").toBeGreaterThanOrEqual(3);
+    expect(confirms(shell), "no write is offered").toEqual([]);
+    expect(statusText()).toBe(t().status.writeLost(0));
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+  });
+
+  // The shell holds a write once the unit has announced Console Lock, before the page has taken
+  // it; the refusal is passed on once the page has, so the write stops on the lock, with no retry.
+  it("stops Write to device on the lock, with no retry, when the shell holds a write for it", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let sent = 0;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      vd_set: () => {
+        sent++;
+        if (sent !== 3) return null;
+        announceLock(box.shell!, 1);
+        throw new Error("writes-held: the unit announced Console Lock");
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(statusText()).toBe(t().status.writeLocked(2));
+    expect(confirms(shell), "no retry is offered").toHaveLength(1);
+    expect(sent, "nothing after the held write").toBe(3);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // Lost while the names go out: the write stops at the next name, saying how much went out and why.
+  // The unit answers every name empty here, so each node's name goes out.
+  it.each(["the first", "the second", "the last"] as const)(
+    "stops Write to device on a loss at %s name, saying what went out",
+    SLOW,
+    async (which) => {
+      const box: { shell: TauriShell | null; names: number; at: number } = { shell: null, names: 0, at: 0 };
+      const shell = await bootDevice({
+        "plugin:dialog|message": "Ok",
+        vd_set_str: () => {
+          if (++box.names === box.at) box.shell!.loseNotifications();
+          return null;
+        },
+      });
+      box.shell = shell;
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      // The unit keeps no name here, so the next write sends as many as this one did.
+      const names = box.names;
+      expect(names, "the premise: more than two names go out").toBeGreaterThan(2);
+      const at = which === "the first" ? 1 : which === "the second" ? 2 : names;
+      for (const [node, name] of [
+        ["ch2", "Kick"],
+        ["ch3", "Snare"],
+      ]) {
+        selectNode(node);
+        const field = paramRow(t().inspector.name).querySelector<HTMLInputElement>('input[type="text"]')!;
+        field.value = name;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      box.names = 0;
+      box.at = at;
+      const setsBefore = shell.count("vd_set");
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(shell.count("vd_set"), "the premise: only the names differ").toBe(setsBefore);
+      expect(box.names, "nothing after the loss").toBe(at);
+      expect(statusText()).toBe(t().status.writeLost(at));
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
+  // A question a write asks once its stop has come is not asked, and one the stop came under is not
+  // acted on: the write ends with the cause rather than with Canceled, a retry or a plan change.
+  it("asks nothing when the notifications are lost while Write to device registers its watch", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    const table = deviceCommands({ ...oldFirmware(), "plugin:dialog|message": "Ok" });
+    const subscribe = table.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_params_subscribe: (a: Record<string, unknown>) => {
+          box.shell!.loseNotifications();
+          return subscribe(a);
+        },
+      },
+    }))!;
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(confirms(shell), "not even the firmware question").toEqual([]);
+    expect(statusText()).toBe(LOST_BEFORE_COUNT);
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // A stop the page has heard while the write's watch starts ends the write on it, whatever the
+  // registration or the read of the lock it came during then comes back with — a failure, or a read
+  // that says the unit is locked or unlocked: the line says the stop, and neither the failure nor a
+  // lock at the start is raised in its place.
+  it.each(
+    (["registration", "read"] as const).flatMap((phase) =>
+      (["lock", "loss"] as const).flatMap((stop) =>
+        (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+      ),
+    ),
+  )("ends Write to device on the stop when its watch's %s after a %s then %s", SLOW, async (phase, stop, then) => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    const table = deviceCommands({ "plugin:dialog|message": "Ok" });
+    const subscribe = table.vd_params_subscribe as (a: Record<string, unknown>) => unknown;
+    const read = clockReads(false, 48_000);
+    const lockValue = then === "says locked" ? 1 : 0;
+    let answered = false;
+    // The stop reaches the page first; the call it came during comes back a moment later.
+    const stopThenAnswer = (value: unknown): Promise<unknown> => {
+      answered = true;
+      if (stop === "lock") announceLock(box.shell!, 1);
+      else box.shell!.loseNotifications();
+      return new Promise((resolve, reject) =>
+        setTimeout(() => (then === "fails" ? reject(new Error("connection-reset")) : resolve(value)), 100),
+      );
+    };
+    const shell = (await bootApp({
+      tauri: {
+        ...table,
+        vd_params_subscribe: (a: Record<string, unknown>) => {
+          const registered = subscribe(a);
+          return phase === "registration" && !answered ? stopThenAnswer(registered) : registered;
+        },
+        vd_get: (a: Record<string, unknown>) =>
+          a.paramId !== PARAMS.CONSOLE_LOCK.id
+            ? read(a)
+            : phase === "read" && !answered
+              ? stopThenAnswer(lockValue)
+              : lockValue,
+      },
+    }))!;
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(answered, "the premise: the call came back after the stop").toBe(true);
+    expect(statusText()).toBe(stop === "lock" ? t().status.consoleLockedStopped : LOST_BEFORE_COUNT);
+    expect(errors(shell), "neither the failure nor a lock at the start in the stop's place").toEqual([]);
+    expect(confirms(shell)).toEqual([]);
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+  });
+
+  // The other writes outside a session end the same way on a stop heard while their watch registers,
+  // whatever the read of the lock then says.
+  it.each(
+    (["lock", "loss"] as const).flatMap((stop) =>
+      (["says locked", "says unlocked"] as const).map((then) => [stop, then] as const),
+    ),
+  )(
+    "ends the device setup apply on a %s heard while its watch registers, when the read then %s",
+    SLOW,
+    async (stop, then) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      const shell = await bootDevice({}, true, {
+        [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0,
+        [LOCK]: then === "says locked" ? 1 : 0,
+      });
+      box.shell = shell;
+      $("btn-device-setup").click();
+      await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+      const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+      lang.value = "1";
+      lang.dispatchEvent(new Event("change", { bubbles: true }));
+      let answered = false;
+      shell.answer("vd_params_subscribe", () => {
+        answered = true;
+        if (stop === "lock") announceLock(box.shell!, 1);
+        else box.shell!.loseNotifications();
+        return new Promise((resolve) => setTimeout(() => resolve(null), 100));
+      });
+      $<HTMLButtonElement>("device-setup-apply").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(answered, "the premise: the registration came back after the stop").toBe(true);
+      expect(statusText()).toBe(
+        stop === "lock"
+          ? t().status.consoleLockedStopped
+          : t().error.deviceSetupWrite(t().error.shell.notificationsLost),
+      );
+      expect(errors(shell), "no lock at the start in the stop's place").toEqual([]);
+      expect(writesTo(shell, PARAMS.DEVICE_LANGUAGE.id)).toEqual([]);
+    },
+  );
+
+  it.each(
+    (["lock", "loss"] as const).flatMap((stop) =>
+      (["says locked", "says unlocked"] as const).map((then) => [stop, then] as const),
+    ),
+  )(
+    "ends the Follow USB switch on a %s heard while its watch registers, when the read then %s",
+    SLOW,
+    async (stop, then) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      const lockValue = then === "says locked" ? 1 : 0;
+      const shell = await bootDevice({
+        vd_get: (a: Record<string, unknown>) =>
+          a.paramId === PARAMS.CONSOLE_LOCK.id ? lockValue : clockReads(false, 48_000)(a),
+      });
+      box.shell = shell;
+      // The badge is unknown until something reads it; the first press reads.
+      $("follow-usb").click();
+      await invoked(shell, "vd_disconnect");
+      let answered = false;
+      shell.answer("vd_params_subscribe", () => {
+        answered = true;
+        if (stop === "lock") announceLock(box.shell!, 1);
+        else box.shell!.loseNotifications();
+        return new Promise((resolve) => setTimeout(() => resolve(null), 100));
+      });
+      $("follow-usb").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(answered, "the premise: the registration came back after the stop").toBe(true);
+      expect(statusText()).toBe(stop === "lock" ? t().status.consoleLockedStopped : LOST_BEFORE_COUNT);
+      expect(errors(shell), "no lock at the start in the stop's place").toEqual([]);
+      expect(confirms(shell), "nothing asked").toEqual([]);
+      expect(writesTo(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+    },
+  );
+
+  it.each(["firmware", "reclock", "write"] as const)(
+    "says the stop, not Canceled, when the notifications are lost while Write to device asks the %s question",
+    SLOW,
+    async (question) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      let asks: (message: string) => boolean = (m) => m === FIRMWARE_ASK;
+      const shell = await bootDevice({
+        ...(question === "firmware" ? oldFirmware() : {}),
+        vd_get: clockReads(false, question === "reclock" ? 96_000 : 48_000),
+        "plugin:dialog|message": (a: Record<string, unknown>) => loseWhileAsking(box, (m) => asks(m), "Cancel")(a),
+      });
+      box.shell = shell;
+      const planRate = formatRate(Number($<HTMLSelectElement>("rate-picker").value));
+      if (question === "reclock") asks = (m) => m.startsWith(t().confirm.reclock(formatRate(96_000), planRate));
+      if (question === "write") asks = (m) => m.includes(WRITE_ASK);
+      $("btn-write").click();
+      await invoked(shell, "vd_disconnect");
+      expect(confirms(shell).filter(asks), "the premise: it was asked").toHaveLength(1);
+      expect(confirms(shell), "nothing asked after it").toHaveLength(1);
+      // The firmware question comes before the write; the rate and write questions are inside it,
+      // so the line says what it sent.
+      if (question === "firmware") expect(statusText()).toBe(LOST_BEFORE_COUNT);
+      else expect(statusText()).toBe(t().status.writeLost(0));
+      expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
+  // A question open when the stop came that then fails is not raised in the stop's place: the write
+  // ends on the stop and what it sent.
+  it("says the stop and what it sent when the write question open under a loss then fails", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let failed = false;
+    const shell = await bootDevice({
+      vd_get: clockReads(false, 48_000),
+      "plugin:dialog|message": async (a: Record<string, unknown>) => {
+        if (a.buttons !== "OkCancel" || !String(a.message ?? "").includes(WRITE_ASK)) return "Ok";
+        box.shell!.loseNotifications();
+        await settleTasks();
+        failed = true;
+        throw new Error("dialog-failed");
+      },
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(failed, "the premise: the question failed after the loss").toBe(true);
+    expect(statusText()).toBe(t().status.writeLost(0));
+    expect(errors(shell), "the failure is not raised in the stop's place").toEqual([]);
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+  });
+
+  it("leaves the plan's rate when the notifications are lost while Write to device asks which rate", SLOW, async () => {
+    const shell = await bootDevice({ vd_get: clockReads(true, 96_000) });
+    const rate = $<HTMLSelectElement>("rate-picker").value;
+    expect(rate, "the premise: the plan and the unit disagree").not.toBe("96000");
+    $("btn-write").click();
+    await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 15_000 });
+    shell.loseNotifications();
+    await settleTasks();
+    $("rate-choice-adopt").click();
+    await invoked(shell, "vd_disconnect");
+    expect($<HTMLSelectElement>("rate-picker").value, "the plan keeps its rate").toBe(rate);
+    expect(statusText()).toBe(t().status.writeLost(0));
+    expect(shell.count("vd_set") + shell.count("vd_set_str")).toBe(0);
+    expect(errors(shell)).toEqual([]);
+  });
+
+  it("offers no retry once the notifications are lost while Write to device asks to run it again", SLOW, async () => {
+    const box: { shell: TauriShell | null } = { shell: null };
+    let sent = 0;
+    const shell = await bootDevice({
+      // The report of the stopped attempt is offered once the write ends, and saved.
+      ...SAVES,
+      vd_get: clockReads(false, 48_000),
+      vd_set: () => {
+        if (++sent === 3) throw new Error("broker-rejected: refused");
+        return null;
+      },
+      "plugin:dialog|message": loseWhileAsking(box, (m) => m.includes(RETRY_ASK), "Cancel"),
+    });
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    expect(
+      confirms(shell).filter((m) => m.includes(RETRY_ASK)),
+      "the premise: it was asked",
+    ).toHaveLength(1);
+    expect(sent, "nothing after the question").toBe(3);
+    expect(statusText()).toBe(t().status.writeLost(2));
+    expect(errors(shell)).toEqual([]);
+  });
+
+  // Numeric values, Sweet Spot presets and names alike: the line counts every write the unit took.
+  it("counts the presets with the rest when the notifications are lost at the first name", SLOW, async () => {
+    const { emptyPlan, serialize } = await import("./core/plan");
+    const plan = emptyPlan("URX44V");
+    for (const [id, preset] of [
+      ["ch1", 5],
+      ["ch2", 24],
+      ["ch3", 7],
+    ] as const)
+      plan.nodeParams[id] = { compEqType: 1, ssmcs: { sweetSpotData: preset, compDrive: 120 } };
+    plan.nodeNames["ch5"] = "Vox";
+    plan.nodeNames["ch6"] = "Gtr";
+    const box: { shell: TauriShell | null; renamed: boolean } = { shell: null, renamed: false };
+    const shell = (await bootApp({
+      url: `/?plan=${encodeURIComponent(Buffer.from(serialize(plan), "utf8").toString("base64url"))}`,
+      tauri: deviceCommands({
+        "plugin:dialog|message": "Ok",
+        vd_set_str: (a: Record<string, unknown>) => {
+          if (a.paramId !== PARAMS.SWEET_SPOT_DATA.id && !box.renamed) {
+            box.renamed = true;
+            box.shell!.loseNotifications();
+          }
+          return null;
+        },
+      }),
+    }))!;
+    box.shell = shell;
+    $("btn-write").click();
+    await invoked(shell, "vd_disconnect");
+    const presets = shell.invokes.filter(
+      (cmd, i) => cmd === "vd_set_str" && shell.args[i]?.paramId === PARAMS.SWEET_SPOT_DATA.id,
+    ).length;
+    expect(presets, "the premise: the presets went out").toBe(3);
+    expect(box.renamed, "the premise: a name went out").toBe(true);
+    const took = shell.count("vd_set") + shell.count("vd_set_str");
+    expect(statusText()).toBe(t().status.writeLost(took));
+    expect(errors(shell)).toEqual([]);
+  });
+
+  it(
+    "says the stop, not Canceled, when the notifications are lost while the Follow USB switch asks",
+    SLOW,
+    async () => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      // Off on the unit: turning it on is what asks.
+      const shell = await bootDevice({
+        vd_get: clockReads(false, 48_000),
+        "plugin:dialog|message": loseWhileAsking(box, () => true, "Cancel"),
+      });
+      box.shell = shell;
+      // The badge is unknown until something reads it; the first press reads.
+      $("follow-usb").click();
+      await invoked(shell, "vd_disconnect");
+      $("follow-usb").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(confirms(shell), "the premise: it asked").toHaveLength(1);
+      expect(statusText()).toBe(LOST_BEFORE_COUNT);
+      expect(writesTo(shell, PARAMS.FOLLOW_USB.id)).toEqual([]);
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
+  // Releasing the clock is a write the unit takes, so a stop after it counts it with the rest.
+  it.each(["lock", "loss"] as const)(
+    "counts the Follow USB release among what Write to device sent when it stops after it (%s)",
+    SLOW,
+    async (stop) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      const shell = await bootDevice({
+        vd_get: clockReads(true, 96_000),
+        // The stop comes while the release is on the wire, which the unit takes.
+        vd_set: (a: Record<string, unknown>) => {
+          if (a.paramId === PARAMS.FOLLOW_USB.id) {
+            if (stop === "lock") announceLock(box.shell!, 1);
+            else box.shell!.loseNotifications();
+          }
+          return null;
+        },
+      });
+      box.shell = shell;
+      expect($<HTMLSelectElement>("rate-picker").value, "the premise: the plan and the unit disagree").not.toBe(
+        "96000",
+      );
+      $("btn-write").click();
+      await vi.waitFor(() => expect($("rate-choice").hidden).toBe(false), { timeout: 15_000 });
+      $("rate-choice-release").click();
+      await invoked(shell, "vd_disconnect");
+      expect(writesTo(shell, PARAMS.FOLLOW_USB.id), "the premise: the release went out").toEqual([0]);
+      expect(shell.count("vd_set") + shell.count("vd_set_str"), "nothing after it").toBe(1);
+      expect(statusText()).toBe(stop === "lock" ? t().status.writeLocked(1) : t().status.writeLost(1));
+      expect(errors(shell)).toEqual([]);
+    },
+  );
+
+  // Every action that writes outside a session ends on its stop once the page has heard one: a
+  // failure the write in flight then comes back with is not raised in the stop's place.
+  it.each(["lock", "loss"] as const)(
+    "ends the device setup apply on the stop when the write in flight fails after it (%s)",
+    SLOW,
+    async (stop) => {
+      const box: { shell: TauriShell | null } = { shell: null };
+      const shell = await bootDevice({}, true, { [`${PARAMS.DEVICE_LANGUAGE.id}/0/0`]: 0 });
+      box.shell = shell;
+      $("btn-device-setup").click();
+      await vi.waitFor(() => expect($("device-setup-modal").hidden).toBe(false), { timeout: 20_000 });
+      const lang = document.querySelector<HTMLSelectElement>("#device-setup-language")!;
+      lang.value = "1";
+      lang.dispatchEvent(new Event("change", { bubbles: true }));
+      let failed = false;
+      shell.answer("vd_set", (a: Record<string, unknown>) => {
+        if (a.paramId !== PARAMS.DEVICE_LANGUAGE.id) return null;
+        failed = true;
+        if (stop === "lock") announceLock(box.shell!, 1);
+        else box.shell!.loseNotifications();
+        return new Promise((_, reject) => setTimeout(() => reject(new Error("connection-reset")), 100));
+      });
+      $<HTMLButtonElement>("device-setup-apply").click();
+      await invoked(shell, "vd_disconnect", 2);
+      expect(failed, "the premise: the write failed after the stop").toBe(true);
+      expect(statusText()).toBe(
+        stop === "lock"
+          ? t().status.consoleLockedStopped
+          : t().error.deviceSetupWrite(t().error.shell.notificationsLost),
+      );
+      expect(errors(shell), "the failure is not raised in the stop's place").toEqual([]);
+    },
+  );
 
   it("refuses the Follow USB switch on a locked unit", SLOW, async () => {
     const shell = await bootDevice({

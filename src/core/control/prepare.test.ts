@@ -19,6 +19,10 @@ const mocks = vi.hoisted(() => ({
   vdGet: vi.fn<(id: number, x: number, y: number) => Promise<number>>(),
   vdParamsSubscribe: vi.fn(),
   lock: { deliver: null as ((p: { paramId: number; x: number; y: number; value: number }) => void) | null },
+  // The run's lock watch also listens for the loss of the connection's notifications; `lost.lose`
+  // is that loss.
+  onNotificationsLost: vi.fn(),
+  lost: { lose: null as (() => void) | null },
   captureDeviceState: vi.fn(),
 }));
 
@@ -29,6 +33,7 @@ vi.mock("../platform", async (importOriginal) => ({
   vdSet: mocks.vdSet,
   vdGet: mocks.vdGet,
   vdParamsSubscribe: mocks.vdParamsSubscribe,
+  onNotificationsLost: mocks.onNotificationsLost,
 }));
 
 vi.mock("./selftest", async (importOriginal) => ({
@@ -215,6 +220,13 @@ describe("runPrepareModified", () => {
     mocks.vdSet.mockReset().mockResolvedValue(undefined);
     mocks.vdGet.mockReset().mockResolvedValue(0);
     mocks.lock.deliver = null;
+    mocks.lost.lose = null;
+    mocks.onNotificationsLost.mockReset().mockImplementation((listener: () => void) => {
+      mocks.lost.lose = listener;
+      return () => {
+        mocks.lost.lose = null;
+      };
+    });
     mocks.vdParamsSubscribe.mockReset().mockImplementation(async (_addrs: unknown, onUpdate: never) => {
       mocks.lock.deliver = onUpdate;
       return () => {
@@ -383,6 +395,74 @@ describe("runPrepareModified", () => {
     expect(report).toMatchObject({ aborted: true, locked: true });
     expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
     expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  // A stop that comes while the run's watch starts ends the run on it, whatever the registration or
+  // the read it came during then comes back with — a failure, or a read that says the unit is locked
+  // or unlocked: the report says the stop, and nothing is written.
+  it.each(
+    (["registration", "read"] as const).flatMap((phase) =>
+      (["lock", "loss"] as const).flatMap((stop) =>
+        (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+      ),
+    ),
+  )("ends with its report on a %s after a %s that then %s", async (phase, stop, then) => {
+    captureOk();
+    const announce = (): void => {
+      if (stop === "lock") mocks.lock.deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
+      else mocks.lost.lose?.();
+    };
+    const value = then === "says locked" ? 1 : 0;
+    mocks.vdParamsSubscribe.mockImplementation(async (_addrs: unknown, onUpdate: never) => {
+      mocks.lock.deliver = onUpdate;
+      if (phase === "registration") {
+        announce();
+        if (then === "fails") throw new Error("connection-reset");
+      }
+      return () => {
+        mocks.lock.deliver = null;
+      };
+    });
+    mocks.vdGet.mockImplementation(async () => {
+      if (phase === "read") {
+        announce();
+        if (then === "fails") throw new Error("connection-reset");
+      }
+      return value;
+    });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject(stop === "lock" ? { aborted: true, locked: true } : { aborted: true, lost: true });
+    if (stop === "loss") expect(report.locked, "a loss is not a lock").toBeUndefined();
+    expect(report.written).toBe(0);
+    expect(report.errors).toEqual([]);
+    expect(mocks.vdSet).not.toHaveBeenCalled();
+    expect(mocks.vdDisconnect).toHaveBeenCalledWith(3);
+  });
+
+  it("stops at the next command when the connection's notifications are lost under it", async () => {
+    captureOk();
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === 3) mocks.lost.lose?.();
+    });
+    const report = await runPrepareModified(model);
+    expect(report).toMatchObject({ aborted: true, lost: true });
+    expect(report.locked).toBeUndefined();
+    expect(sent, "the write on the wire lands; nothing after it goes").toBe(3);
+    expect(report.written, "every write that landed is counted").toBe(3);
+    expect(report.errors, "the writes it did not send are no failures").toEqual([]);
+  });
+
+  it("reports a loss that arrived with its last write as the run's stop", async () => {
+    captureOk();
+    const total = prepareBatches(model, buildModifiedPlan(captured())).flat().length;
+    let sent = 0;
+    mocks.vdSet.mockImplementation(async () => {
+      if (++sent === total) mocks.lost.lose?.();
+    });
+    const report = await runPrepareModified(model);
+    expect(sent, "the premise: every write was sent").toBe(total);
+    expect(report).toMatchObject({ aborted: true, lost: true, written: total });
   });
 
   it("does not disconnect a link it never opened", async () => {

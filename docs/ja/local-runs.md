@@ -106,9 +106,10 @@ node <out>.mjs
 
 ## 新しい worktree の最初のビルド
 
-`vendor/urx-lcd-sim` は git の submodule である: クローンと新しい worktree では空のまま始まり、
-`pnpm install` はそれを、そのままつなぐ。だから `git submodule update --init` を `pnpm install`
-の前に走らせる。
+`vendor/urx-lcd-sim` と `vendor/urx-device` は git の submodule である: クローンと新しい worktree では
+空のまま始まる。`pnpm install` は `vendor/urx-lcd-sim` を、そのままつなぎ、`src-tauri/Cargo.toml` は
+transport の crate を `vendor/urx-device` から path で取る。だから `git submodule update --init` を
+`pnpm install` と cargo のコマンドの前に走らせる。
 
 `src-tauri/tauri.conf.json` は、`src-tauri/THIRD_PARTY_LICENSES.html` をリソースとして同梱する。このファイルは git が無視する。
 新しい worktree にはこのファイルが無く、最初のビルドは、ビルドスクリプトの `resource path ... doesn't exist` で
@@ -249,7 +250,7 @@ dev アプリの localStorage (テーマ・機種・メーターポイント・�
 worktree の方が高く付く半分である — `reuseExistingServer` と E2E のポートがあるので、忘れたチェックアウトは、
 自分がビルドしたバンドルを、後の実行に渡しうる。そうなると、実行は、
 確かめるはずのコードではないコードに対して通る。消すときは `git worktree remove <path>` の後に
-`git branch -d <branch>` を打つ — git は、`vendor/urx-lcd-sim` をチェックアウトしている worktree
+`git branch -d <branch>` を打つ — git は、submodule をチェックアウトしている worktree
 ではこれを断り、`pnpm sync:merged` は、submodule のリポジトリを一緒に消すのではなく、
 そういう worktree を残す — `git worktree remove --force <path>` はそれを消し、そのリポジトリも消す。
 代わりにディレクトリを消すと、誰かが `git worktree prune` を思い出すまで、
@@ -267,7 +268,7 @@ worktree は登録されたまま残る。**Windows では、先につないだ 
 その出力が見本だけのクラスと呼ぶ入れ物である。`pnpm sync:merged` が 3 つの手順を
 1 つのコマンドにまとめているのは、そのためである。
 
-このコマンドは、デフォルトブランチを origin まで早送りし (`vendor/urx-lcd-sim` を、
+このコマンドは、デフォルトブランチを origin まで早送りし (各 submodule を、
 記録したコミットへ持っていく。手で動かしたときを除く)、ブランチを運んだ worktree を消し、ブランチを消す。
 断るときは、何をなぜ断ったかを必ず名指す。決まりは `AGENTS.md`「Conventions」に、
 守りは `scripts/sync-merged.mjs` にある。

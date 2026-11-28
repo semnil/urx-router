@@ -5,7 +5,14 @@ import { emptyPlan, ensureFixedConnections, setExclusiveConnection, type Plan } 
 // client.ts drives the device through platform.vdGet / vdSet (numbers) and
 // vdGetStr / vdSetStr (the CH SETTING names), so mock those four: the rest of
 // platform.ts (file IO, dialogs) is untouched here.
-vi.mock("../platform", () => ({ vdGet: vi.fn(), vdSet: vi.fn(), vdGetStr: vi.fn(), vdSetStr: vi.fn() }));
+vi.mock("../platform", async (importOriginal) => ({
+  vdGet: vi.fn(),
+  vdSet: vi.fn(),
+  vdGetStr: vi.fn(),
+  vdSetStr: vi.fn(),
+  // A write the page or the shell refused before sending it, as the bridge says it.
+  refusedBeforeSending: (await importOriginal<typeof import("../platform")>()).refusedBeforeSending,
+}));
 
 import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import {
@@ -323,6 +330,47 @@ describe("sendCommands", () => {
     expect(outcomes.slice(1).every((o) => !o.ok && o.skipped === true)).toBe(true);
     // Only the failing command reached the transport.
     expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+  });
+
+  // A stop ends the loop on the send it interrupted. One the page or the shell refused for it
+  // (a Console Lock, the connection's lost notifications) never left the app; one that failed
+  // otherwise may have reached the unit, and whoever decides what a write leaves standing is told.
+  it.each([
+    ["writes-held: the unit announced Console Lock (fetch 3)", false],
+    ["notifications-lost: a change the unit announced may not have reached the app, so nothing is written", false],
+    ["broker-io: ConnectionReset", true],
+  ] as const)("on a stop, tells the send it interrupted only when it may have gone out (%s)", async (error, told) => {
+    const commands = planToCommands(model, basePlan());
+    const stop = new AbortController();
+    vi.mocked(vdSet).mockImplementation(async () => {
+      stop.abort(new Error("stopped"));
+      throw new Error(error);
+    });
+    const seen: SendOutcome[] = [];
+    await expect(sendCommands(commands, stop.signal, (o) => seen.push(o))).rejects.toThrow("stopped");
+    expect(vi.mocked(vdSet)).toHaveBeenCalledTimes(1);
+    expect(seen.map((o) => [o.result, o.error])).toEqual(told ? [["unknown", error]] : []);
+  });
+
+  // A write the transport never sent (marked by `vdSet`, platform.ts `NOT_SENT`) never left: on a
+  // stop it is not told, and otherwise it is told as unsent.
+  it("tells a write the transport never sent as unsent, and not at all on a stop", async () => {
+    const commands = planToCommands(model, basePlan());
+    const unsent = (): Error => Object.assign(new Error("device-lost: the unit went offline"), { notSent: true });
+    const stop = new AbortController();
+    vi.mocked(vdSet).mockImplementation(async () => {
+      stop.abort(new Error("stopped"));
+      throw unsent();
+    });
+    const onStop: SendOutcome[] = [];
+    await expect(sendCommands(commands, stop.signal, (o) => onStop.push(o))).rejects.toThrow("stopped");
+    expect(onStop).toEqual([]);
+    vi.mocked(vdSet).mockImplementation(async () => {
+      throw unsent();
+    });
+    const told: SendOutcome[] = [];
+    await sendCommands(commands, undefined, (o) => told.push(o));
+    expect(told.map((o) => [o.result, o.unsent])).toEqual([["unknown", true]]);
   });
 });
 
@@ -1038,6 +1086,22 @@ describe("planToNameWrites bounds what reaches the wire", () => {
 });
 
 describe("diffNames", () => {
+  // A stop between two names, or one that came during the last read, ends the diff with it.
+  it("stops on a stop that came while it read, the last read included", async () => {
+    const plan = namedPlan();
+    const writes = planToNameWrites(model, plan);
+    for (const at of [1, writes.length]) {
+      const controller = new AbortController();
+      let reads = 0;
+      vi.mocked(vdGetStr).mockImplementation(async () => {
+        if (++reads === at) controller.abort(new Error("stopped"));
+        return "";
+      });
+      await expect(diffNames(model, plan, controller.signal)).rejects.toThrow("stopped");
+      expect(reads, `stopped at read ${at}`).toBe(at);
+    }
+  });
+
   it("keeps only the names the device does not already have", async () => {
     const plan = namedPlan();
     const writes = planToNameWrites(model, plan);
@@ -1130,6 +1194,38 @@ describe("diffNames", () => {
 });
 
 describe("sendNames", () => {
+  // Each name's outcome is told as it lands, so a stop thrown between two names still says what
+  // went out; a name a stop held throws the stop rather than failing.
+  it("tells each outcome as it lands and stops between two names, or on a name a stop held", async () => {
+    const writes = planToNameWrites(model, namedPlan());
+    const controller = new AbortController();
+    const told: boolean[] = [];
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      if (told.length === 1) controller.abort(new Error("stopped"));
+    });
+    await expect(sendNames(writes, controller.signal, (o) => told.push(o.ok))).rejects.toThrow("stopped");
+    expect(told, "the two that landed").toEqual([true, true]);
+
+    const held = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      held.abort(new Error("locked"));
+      throw new Error("writes-held: the unit is under Console Lock");
+    });
+    const heldTold: boolean[] = [];
+    await expect(sendNames(writes, held.signal, (o) => heldTold.push(o.ok))).rejects.toThrow("locked");
+    expect(heldTold, "a held name is no failure").toEqual([]);
+
+    // A name that failed otherwise under the stop may have reached the unit: it is told.
+    const lost = new AbortController();
+    vi.mocked(vdSetStr).mockImplementation(async () => {
+      lost.abort(new Error("lost"));
+      throw new Error("broker-io: ConnectionReset");
+    });
+    const lostTold: Array<string | undefined> = [];
+    await expect(sendNames(writes, lost.signal, (o) => lostTold.push(o.error))).rejects.toThrow("lost");
+    expect(lostTold).toEqual(["broker-io: ConnectionReset"]);
+  });
+
   it("writes every name through the string transport", async () => {
     vi.mocked(vdSetStr).mockResolvedValue(undefined);
     const writes = planToNameWrites(model, namedPlan());
@@ -1640,7 +1736,7 @@ describe("confirmedAddrs", () => {
   });
 
   it("vouches for nothing when a side-effect head's answer never came", async () => {
-    // The shell SENDS before it waits (`vd.rs`, do_set), so a timeout, a device-lost push
+    // The shell SENDS before it waits (the transport `vd.rs` runs on), so a timeout, a device-lost push
     // mid-write or a closed link leaves the request on the wire with its fate unknown — the
     // head may have landed and reset the very address an earlier round confirmed. Only an
     // explicit refusal says otherwise, and treating the two alike adopted a value the unit no

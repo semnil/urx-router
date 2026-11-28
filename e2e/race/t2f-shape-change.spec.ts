@@ -617,7 +617,7 @@ test.describe("T2f shape-change", () => {
     expect(ctlOwnReads).toBeGreaterThan(0);
     // The probe never reaches the page at all: 758 is planExternal, so it is in no
     // write set, so it is in no registration, so the bridge drops the notify
-    // (src-tauri/src/vd.rs Subs::absorb). Nothing escalates and nothing is read — the
+    // (the transport's per-token delivery that src-tauri/src/vd.rs sends on). Nothing escalates and nothing is read — the
     // app does not pay for the change, and it does not learn about it either. What the
     // same announcement costs on an address that IS delivered but resolves to no owner
     // node is phase D of the case above (766: two reconciles, >1000 reads).

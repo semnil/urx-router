@@ -5,7 +5,7 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
+import { refusedBeforeSending, vdGet, vdGetStr, vdSet, vdSetStr } from "../platform";
 import { PARAMS } from "./params";
 import type { ParamSpec } from "./params";
 import {
@@ -260,7 +260,7 @@ export async function diffPlan(model: DeviceModel, plan: Plan, opts: DiffOptions
 /**
  * What became of one command, as far as the link can say.
  *
- * The three-way matters because the shell SENDS before it waits (`vd.rs`, `do_set`): the
+ * The three-way matters because the shell SENDS before it waits (the transport `vd.rs` runs on): the
  * request is already on the wire by the time anything can go wrong with the answer.
  *
  *  - "accepted": the broker answered 200. The write landed.
@@ -288,9 +288,12 @@ export interface SendOutcome {
   /** What became of it (see SendResult). `ok` and `skipped` are this field's two boolean
    *  faces and are written from it here, so no reader can be told two different things. */
   result: SendResult;
+  /** True when it failed without leaving: the page or the shell refused it, or the transport did
+   *  not send it (`refusedBeforeSending`). It cannot have moved the unit. */
+  unsent?: boolean;
 }
 
-const outcomeOf = (command: VdCommand, result: SendResult, error?: string): SendOutcome => ({
+const outcomeOf = (command: VdCommand, result: SendResult, error?: string, unsent = false): SendOutcome => ({
   command,
   result,
   ok: result === "accepted",
@@ -298,6 +301,7 @@ const outcomeOf = (command: VdCommand, result: SendResult, error?: string): Send
   // reader of a whole outcome compares against.
   ...(result === "skipped" ? { skipped: true } : {}),
   ...(error === undefined ? {} : { error }),
+  ...(unsent ? { unsent: true } : {}),
 });
 
 /**
@@ -338,14 +342,15 @@ export class ClipSafeHold {
 export async function sendCommands(
   commands: VdCommand[],
   signal?: AbortSignal,
-  /** Told about each send that RESOLVED, accepted or not, before this call returns. The
-   *  returned array is not a substitute: an abort is detected at the top of the next
-   *  iteration and THROWS, so every outcome collected so far is lost and a caller that only
-   *  reads the return value cannot know which commands the unit actually took. A caller
-   *  acting on one send in particular — the sample rate, whose arrival is what makes the
-   *  recorder's Track Count worth re-reading — has to be told here, and so does one deciding
-   *  what a write it cannot vouch for leaves standing. The commands after the stop are not
-   *  reported here: nothing was sent for them. */
+  /** Told about each send that RESOLVED, accepted or not, before this call returns — the one
+   *  a stop interrupted included, unless the page or the shell refused it before sending
+   *  (`refusedBeforeSending`). The returned array is not a substitute: an abort THROWS, so
+   *  every outcome collected so far is lost and a caller that only reads the return value
+   *  cannot know which commands the unit actually took. A caller acting on one send in
+   *  particular — the sample rate, whose arrival is what makes the recorder's Track Count
+   *  worth re-reading — has to be told here, and so does one deciding what a write it cannot
+   *  vouch for leaves standing. The commands after the stop are not reported here: nothing
+   *  was sent for them. */
   onSent?: (outcome: SendOutcome) => void,
   /** Told about each command immediately before it goes on the wire — the moment its
    *  announcement can start to arrive, which can be ahead of its ack. */
@@ -359,6 +364,10 @@ export async function sendCommands(
   for (const command of commands) {
     signal?.throwIfAborted();
     await hold.before(command, command.vdValue, signal);
+    // Again after the wait, with nothing awaited between here and the send: a stop that came
+    // during it (a Console Lock, which also holds every write) stops the loop rather than
+    // failing the send it held.
+    signal?.throwIfAborted();
     hold.sending(command, command.vdValue, writeSettle.mark());
     onSending?.(command);
     let outcome: SendOutcome;
@@ -367,7 +376,16 @@ export async function sendCommands(
       outcome = outcomeOf(command, "accepted");
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
-      outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error);
+      const unsent = refusedBeforeSending(e);
+      outcome = outcomeOf(command, error.startsWith(REFUSED_PREFIX) ? "refused" : "unknown", error, unsent);
+      // A stop — a Console Lock, a loss of the connection's notifications, which abort the signal
+      // before the refusal reaches here — ends the loop rather than failing the send. A send that
+      // never left — the page or the shell refused it, or the transport did not send it — is not
+      // told; any other is told first, since it may have reached the unit.
+      if (signal?.aborted) {
+        if (!unsent) onSent?.(outcome);
+        signal.throwIfAborted();
+      }
     }
     outcomes.push(outcome);
     onSent?.(outcome);
@@ -442,6 +460,8 @@ export interface NameOutcome {
   write: NameWrite;
   ok: boolean;
   error?: string;
+  /** As on SendOutcome: it failed without leaving, so it cannot have moved the unit. */
+  unsent?: boolean;
 }
 
 /**
@@ -450,10 +470,16 @@ export interface NameOutcome {
  * not re-sent. A read failure is reported and the write left out, matching
  * diffPlan: the caller aborts rather than writing over a name it could not read.
  */
-export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ writes: NameWrite[]; errors: string[] }> {
+export async function diffNames(
+  model: DeviceModel,
+  plan: Plan,
+  /** Stops the reads between two names, as the numeric diff's does. */
+  signal?: AbortSignal,
+): Promise<{ writes: NameWrite[]; errors: string[] }> {
   const writes: NameWrite[] = [];
   const errors: string[] = [];
   for (const write of planToNameWrites(model, plan)) {
+    signal?.throwIfAborted();
     try {
       const current = (await vdGetStr(write.param, 0, write.y)).trimEnd();
       if (current !== write.value) writes.push(write);
@@ -461,6 +487,8 @@ export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ write
       errors.push(`name ${write.param}:${write.y}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+  // A stop that came during the last read stops here too, before the caller acts on the diff.
+  signal?.throwIfAborted();
   return { writes, errors };
 }
 
@@ -468,16 +496,34 @@ export async function diffNames(model: DeviceModel, plan: Plan): Promise<{ write
  * Send CH SETTING name writes (string params, via the string IPC). Separate from
  * sendCommands because names are strings outside the numeric VdCommand path;
  * idempotent, so no converge loop is needed. The caller must have connected.
+ * `signal` stops it between two names, and a write a stop held (a Console Lock, a loss of
+ * the connection's notifications) throws the stop rather than failing; `onSent` is told
+ * each name's outcome as it resolves, which a stop's throw would otherwise take with it — the
+ * name a stop interrupted included, unless it was refused before sending (`refusedBeforeSending`).
  */
-export async function sendNames(writes: NameWrite[]): Promise<NameOutcome[]> {
+export async function sendNames(
+  writes: NameWrite[],
+  signal?: AbortSignal,
+  onSent?: (outcome: NameOutcome) => void,
+): Promise<NameOutcome[]> {
   const outcomes: NameOutcome[] = [];
   for (const write of writes) {
+    signal?.throwIfAborted();
+    let outcome: NameOutcome;
     try {
       await vdSetStr(write.param, 0, write.y, write.value);
-      outcomes.push({ write, ok: true });
+      outcome = { write, ok: true };
     } catch (e) {
-      outcomes.push({ write, ok: false, error: e instanceof Error ? e.message : String(e) });
+      const unsent = refusedBeforeSending(e);
+      outcome = { write, ok: false, error: e instanceof Error ? e.message : String(e), ...(unsent ? { unsent } : {}) };
+      // As in sendCommands: a name that never left is not told on a stop, and any other is.
+      if (signal?.aborted) {
+        if (!unsent) onSent?.(outcome);
+        signal.throwIfAborted();
+      }
     }
+    outcomes.push(outcome);
+    onSent?.(outcome);
   }
   return outcomes;
 }
@@ -553,7 +599,7 @@ export async function sendPresetsAndReconverge(
   readErrors: string[];
   result: ConvergeResult | null;
 }> {
-  const names = await diffNames(model, plan);
+  const names = await diffNames(model, plan, opts.signal);
   if (names.errors.length)
     return { presets: [], notSent: [], unconfirmed: [], canceled: false, readErrors: names.errors, result: null };
   opts.signal?.throwIfAborted();
@@ -847,7 +893,7 @@ export async function sendConverging(
         // on the wire with its fate unknown, so it invalidates exactly as an acceptance does. A
         // side-effect head resets addresses the catalogue does not enumerate, so it takes every
         // address out rather than its own.
-        if (o.result === "refused") return void onSent?.(o);
+        if (o.result === "refused" || o.unsent) return void onSent?.(o);
         if (SIDE_EFFECT_PARAMS.has(o.command.name)) matched.clear();
         else matched.delete(addr);
         onSent?.(o);

@@ -172,10 +172,10 @@ for as long as the lock stands, and never locks or unlocks the unit itself:
   Write to device says how much it sent. Writing again once the unit is unlocked compares the unit
   with the plan again and sends what differs then, a setting the part already sent made the unit
   change included.
-- The device self-test (an `--experimental` launch) does not start on a locked unit. One the lock
-  stops after it has written leaves the unit changed, and **Restore after self-test** in the
-  Device menu puts it back once the unit is unlocked. Quitting the app before that loses what
-  the restore needs.
+- The device self-test (an `--experimental` launch) does not start on a locked unit. One the lock —
+  or a loss of the connection's notifications — stops after it has written leaves the unit changed,
+  and **Restore after self-test** in the Device menu puts it back once the unit is unlocked.
+  Quitting the app before that loses what the restore needs.
 
 > Confirmed on a URX44V (System 1.5.0.1). Not confirmed on the URX22 or the URX44.
 

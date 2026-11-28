@@ -26,7 +26,7 @@ meet, together with the 21.2 or later the `?plan=` codec's `CompressionStream("d
 `pnpm test node-engines` fails when the two differ.
 
 ```sh
-git submodule update --init   # vendor/urx-lcd-sim; a clone and a new worktree start with it empty
+git submodule update --init   # vendor/urx-lcd-sim and vendor/urx-device; a clone and a new worktree start with them empty
 pnpm install
 pnpm dev           # browser at http://localhost:5173, no Rust required
 pnpm tauri dev     # desktop app
@@ -50,7 +50,8 @@ pnpm tauri dev     # desktop app
 - Keep diffs minimal and match the surrounding style. Formatting-only changes are not accepted
   on their own.
 - **Zero runtime external dependencies** — no npm packages or CDNs from outside github.com/semnil in
-  the shipped app (the LCD simulator `urx-lcd-sim` is semnil's own). Dev dependencies are fine.
+  the shipped app (the LCD simulator `urx-lcd-sim` and the `urx-device` transport crate are semnil's own).
+  Dev dependencies are fine.
 - Run `pnpm format` (and `cargo fmt` for Rust changes) before committing. `format.yml` runs
   both and fails on the diff; it does not write anything back to your branch.
 - Keep the theme palettes in `src/style.css` and `PALETTES` in `src/ui/graph.ts` in sync.

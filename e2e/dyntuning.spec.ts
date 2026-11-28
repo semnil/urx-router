@@ -121,6 +121,30 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem("urx-theme", "dark");
     localStorage.setItem("urx-model", "URX44V");
     localStorage.setItem("urx-disclaimer-accepted", "1"); // skip the consent gate
+    // The page fetches the connection's notifications (`vd_notifications`), and the shell answers
+    // with every run routed since the last fetch, or waits for one (vd.rs `Outbox`). A case's
+    // delivery is routed to the subscription's handler as the shell routes one, and the page's
+    // fetch takes it.
+    const outbox = {
+      open: false,
+      runs: [] as unknown[],
+      waiter: null as ((runs: unknown[] | null) => void) | null,
+      answer(): void {
+        const waiter = this.waiter;
+        if (waiter === null || (this.open && this.runs.length === 0)) return;
+        this.waiter = null;
+        const runs = this.runs;
+        this.runs = [];
+        waiter(this.open ? runs : null);
+      },
+    };
+    const routing = (kind: string, handler: unknown) => ({
+      onmessage: (updates: unknown[]) => {
+        if (!outbox.open) return;
+        outbox.runs.push({ kind, handler, updates });
+        outbox.answer();
+      },
+    });
     const state: Window["__dynTest"] = {
       meterChannel: null,
       paramChannel: null,
@@ -169,9 +193,29 @@ test.beforeEach(async ({ page }) => {
           case "plugin:updater|check":
             return Promise.resolve(null);
           case "vd_connect":
+            outbox.open = true;
+            outbox.runs = [];
             return Promise.resolve({ model: "URX44V", label: "Stub URX", firmware: "", epoch: 1 });
           case "vd_disconnect":
+            outbox.open = false;
+            outbox.runs = [];
+            outbox.answer();
             return Promise.resolve();
+          case "vd_notifications":
+            if (!outbox.open) return Promise.resolve(null);
+            // One fetch outstanding at a time, as the page keeps it; a second one is the page's defect.
+            if (outbox.waiter !== null)
+              return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
+            return new Promise((resolve) => {
+              outbox.waiter = resolve;
+              outbox.answer();
+              // As the shell does, an empty answer when nothing came within a second.
+              setTimeout(() => {
+                if (outbox.waiter !== resolve) return;
+                outbox.waiter = null;
+                resolve([]);
+              }, 1_000);
+            });
           case "vd_get":
             // Answer reads with what was written: a blanket 0 would let a scoped
             // readback undo the state the test just set (1-knob back off, and its
@@ -188,7 +232,7 @@ test.beforeEach(async ({ page }) => {
             return Promise.resolve();
           // Live sync needs exactly these two beyond the reads.
           case "vd_params_subscribe":
-            state.paramChannel = args.channel as Window["__dynTest"]["paramChannel"];
+            state.paramChannel = routing("params", args.handler);
             return Promise.resolve();
           case "vd_params_unsubscribe":
             return Promise.resolve();
@@ -198,7 +242,7 @@ test.beforeEach(async ({ page }) => {
           case "vd_meters_subscribe":
             state.subscribes++;
             state.meterAddrs = args.addrs as Array<[number, number]>;
-            state.meterChannel = args.channel as Window["__dynTest"]["meterChannel"];
+            state.meterChannel = routing("meters", args.handler);
             return Promise.resolve();
           case "vd_meters_unsubscribe":
             state.unsubscribes++;

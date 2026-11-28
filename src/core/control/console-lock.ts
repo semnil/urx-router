@@ -13,7 +13,15 @@
 
 import type { DeviceModel } from "../../models/types";
 import type { Plan } from "../plan";
-import { holdDeviceWrites, vdGet, vdParamsSubscribe, WRITES_HELD, type ParamUpdate } from "../platform";
+import {
+  holdDeviceWrites,
+  notificationsLostAbort,
+  onNotificationsLost,
+  vdGet,
+  vdParamsSubscribe,
+  WRITES_HELD,
+  type ParamUpdate,
+} from "../platform";
 import { PARAMS } from "./params";
 import { cmdAddr, planToCommands, planToNameWrites, type WriteScope } from "./translate";
 
@@ -87,46 +95,81 @@ export interface LockWatch {
 export interface LockWatchIo {
   subscribe: typeof vdParamsSubscribe;
   get: (paramId: number, x: number, y: number) => Promise<number>;
+  /** Where the loss of the connection's notifications is heard (`onNotificationsLost`). */
+  lost?: typeof onNotificationsLost;
 }
 
 /**
  * Watch the unit's [Console Lock] for a write outside a live session. Registers for its notify
  * first and reads it second, so a lock made between the two is not missed. Locked at the start,
  * writes are held and `lockedAtStart` says so; a lock announced later holds writes and calls
- * `onLock` once, where the caller stops its run. `stop()` releases both. A failed registration or
- * read rejects, with nothing left registered or held: a write that cannot tell whether the unit
- * is locked does not start. The caller must have connected first.
+ * `onLock` once, where the caller stops its run. A loss of the connection's notifications calls
+ * `onLost` once, since a lock the unit announced may then never be heard: the caller stops its run
+ * on that too. `stop()` releases all of it. A failed registration or read rejects, with nothing left
+ * registered or held: a write that cannot tell whether the unit is locked does not start. Once the
+ * watch has told its caller of a stop while it starts, the start rejects with that stop, whatever the
+ * registration and the read came back with, a read that says the unit is locked included: only a
+ * start that heard no stop says `lockedAtStart`. The caller must have connected first.
  */
 export async function watchConsoleLock(
   onLock: () => void,
   io: LockWatchIo = { subscribe: vdParamsSubscribe, get: vdGet },
+  onLost?: () => void,
 ): Promise<LockWatch> {
   let tripped = false;
   let stopped = false;
+  // The first stop this watch told its caller of, which decides how the run ends: a start it was
+  // told during rejects with it, whatever the calls in flight came back with.
+  let told: Error | null = null;
   const trip = (): void => {
     if (tripped || stopped) return;
     tripped = true;
+    told ??= consoleLockAbort();
     holdDeviceWrites(true);
     onLock();
   };
-  const unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
-    if (isConsoleLockAddr(p) && consoleLockedOf(p.value)) trip();
-  });
+  let lostTold = false;
+  const unlost = onLost
+    ? (io.lost ?? onNotificationsLost)(() => {
+        if (stopped || lostTold) return;
+        lostTold = true;
+        told ??= notificationsLostAbort();
+        onLost();
+      })
+    : () => {};
+  // The start is one step with one verdict: a stop this watch has told of is how it ends, whatever
+  // the registration and the read came back with; with none, their failure; with neither, the
+  // read's value.
+  let unsubscribe: (() => void) | null = null;
+  let lockedAtStart = false;
+  let failure: { err: unknown } | null = null;
+  try {
+    unsubscribe = await io.subscribe([CONSOLE_LOCK_ADDR], (p) => {
+      if (isConsoleLockAddr(p) && consoleLockedOf(p.value)) trip();
+    });
+    lockedAtStart = await readConsoleLock(io.get);
+  } catch (err) {
+    failure = { err };
+  }
+  if (told || failure) {
+    // A lock announced while the watch started held writes on its behalf; a watch that never
+    // started holds nothing, and hears nothing after this.
+    stopped = true;
+    unlost();
+    unsubscribe?.();
+    if (tripped) holdDeviceWrites(false);
+    throw told ?? failure?.err;
+  }
+  const unregister = unsubscribe;
   const release = (): void => {
     if (stopped) return;
     stopped = true;
-    unsubscribe();
+    unlost();
+    unregister?.();
     holdDeviceWrites(false);
   };
-  let lockedAtStart: boolean;
-  try {
-    lockedAtStart = await readConsoleLock(io.get);
-  } catch (err) {
-    release();
-    throw err;
-  }
   // Locked already: the caller refuses, and writes are held until it lets go.
-  if (lockedAtStart && !tripped) {
+  if (lockedAtStart) {
     tripped = true;
     holdDeviceWrites(true);
   }
@@ -145,8 +188,9 @@ export interface RunWatch {
 
 /**
  * Watch a run that connects on its own (the self-test, the audit-prep writer) for Console Lock:
- * the signal it hands back is the one the run passes to every phase, so a lock stops the run at its
- * next command the way the caller's cancel does. The caller must have connected first.
+ * the signal it hands back is the one the run passes to every phase, so a lock — or the loss of the
+ * connection's notifications, under which a lock would go unheard — stops the run at its next
+ * command the way the caller's cancel does. The caller must have connected first.
  */
 export async function watchRun(outer?: AbortSignal, io?: LockWatchIo): Promise<RunWatch> {
   const ctl = new AbortController();
@@ -155,9 +199,16 @@ export async function watchRun(outer?: AbortSignal, io?: LockWatchIo): Promise<R
   else outer?.addEventListener("abort", follow, { once: true });
   let watch: LockWatch;
   try {
-    watch = await watchConsoleLock(() => ctl.abort(consoleLockAbort()), io);
+    watch = await watchConsoleLock(
+      () => ctl.abort(consoleLockAbort()),
+      io,
+      () => ctl.abort(notificationsLostAbort()),
+    );
   } catch (err) {
     outer?.removeEventListener("abort", follow);
+    // A stop already taken ends the run: it is handed back aborted, so the run ends through its
+    // own stop handling, with its report, rather than on the failure of the watch's start.
+    if (ctl.signal.aborted) return { signal: ctl.signal, lockedAtStart: false, stop: () => {} };
     throw err;
   }
   return {

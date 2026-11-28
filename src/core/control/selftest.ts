@@ -54,7 +54,7 @@ import { parseRef, ref } from "../../models/types";
 import type { Plan } from "../plan";
 import { emptyPlan, PHANTOM_KEYS } from "../plan";
 import { canConnect, isStereoLinkedPair, mirrorLinkedPair, partnerChannel } from "../routing";
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
+import { stoppedByNotificationsLost, vdConnect, vdDisconnect, vdGet, vdGetStr, vdSet } from "../platform";
 import {
   BUS_TYPE_OPTIONS,
   COMP_EQ_COMP_FIRST,
@@ -275,9 +275,12 @@ export interface SelfTestReport {
   /** True when the unit went into Console Lock while the run was going: it stopped at the next
    *  command, as a cancel stops it (`aborted` is true with it). */
   locked?: boolean;
-  /** What a run Console Lock stopped once it had written, and before its restore was done, needs
-   *  to put the unit back: handed to `restoreSelfTest` once the unit is unlocked. Absent
-   *  otherwise. The unit is left changed until then. */
+  /** True when the connection's notifications were lost while the run was going: it stopped at
+   *  the next command the same way, since a Console Lock would no longer be heard. */
+  lost?: boolean;
+  /** What a run Console Lock or a loss of notifications stopped once it had written, and before its
+   *  restore was done, needs to put the unit back: handed to `restoreSelfTest` on a later
+   *  connection. Absent otherwise. The unit is left changed until then. */
   pendingRestore?: PendingRestore;
   /**
    * DIAGNOSTIC — the restore's own account of itself, small enough to ride the report
@@ -865,6 +868,9 @@ export async function runSelfTest(
   let run: RunWatch | null = null;
   // What the restore needs, once the reads ahead of the sweep have it.
   let pending: PendingRestore | null = null;
+  // Whether a write of the run may have reached the unit: set as each goes on the wire, so a
+  // stop before the first one leaves nothing to restore.
+  let mayHaveWritten = false;
   try {
     // Connected device is not this model: nothing read, nothing written.
     if (device.model !== model.id) {
@@ -1037,16 +1043,29 @@ export async function runSelfTest(
     for (let pass = 0; pass < passes; pass++) {
       const plan = perturbedPlan(model, original, pass, suppress);
       report.phase = "write";
+      // Reached the device — counted as each send resolves, not from `outcomes`, which a stop's
+      // throw takes with it, and not `outcomes.length`, which also counts the commands
+      // `sendCommands` marked skipped after the first refusal. Those never left the app,
+      // and counting them had the same report saying "N commands written" and "M
+      // command(s) never sent" about the same run. Whether the unit may hold a write of the run
+      // is read off the same results: an accepted one, or one whose fate is unknown; neither one
+      // the unit declined, which moved nothing, nor one that never left (`unsent`: the page or the
+      // shell held it, or the transport did not send it).
       const result = await phaseStep(
-        sendConverging(model, plan, { settleMs, signal, trace: true, stopOnError: false }),
+        sendConverging(model, plan, {
+          settleMs,
+          signal,
+          trace: true,
+          stopOnError: false,
+          onSent: (o) => {
+            if (o.unsent) return;
+            report.written++;
+            if (o.result !== "refused") mayHaveWritten = true;
+          },
+        }),
       );
       if (!result) break;
       const { outcomes, residual } = result;
-      // Reached the device — not `outcomes.length`, which also counts the commands
-      // `sendCommands` marked skipped after the first refusal. Those never left the app,
-      // and counting them had the same report saying "N commands written" and "M
-      // command(s) never sent" about the same run.
-      report.written += outcomes.filter((o) => !o.skipped).length;
       sendFailures += outcomes.filter(reachedAndFailed).length;
       report.errors.push(...sendFailureLines(outcomes, `p${pass}`));
       // A command whose current value could not be read is left out of the diff by
@@ -1158,22 +1177,24 @@ export async function runSelfTest(
     if (!report.aborted && pending) await restoreCaptured(model, pending, settleMs, signal, report, phaseStep);
     return report;
   } finally {
-    keepForLock(report, run, pending);
+    keepForLock(report, run, mayHaveWritten ? pending : null);
     run?.stop();
     await vdDisconnect(device.epoch);
   }
 }
 
 /**
- * A run Console Lock stopped says so, and one it stopped once it had written, with the restore not
- * done, keeps what the restore needs (`pendingRestore`) — what the run read before the sweep is
- * the only record of what the unit held.
+ * A run Console Lock or a loss of the connection's notifications stopped says so, and one stopped
+ * once a write of it may have reached the unit (`pending` is given only then), with the restore not
+ * done, keeps what the restore needs (`pendingRestore`) — what the run read before the sweep is the
+ * only record of what the unit held.
  */
 function keepForLock(report: SelfTestReport, run: RunWatch | null, pending: PendingRestore | null): void {
-  if (!run || !stoppedByConsoleLock(run.signal)) return;
-  report.locked = true;
-  const wrote = report.phase === "write" || report.phase === "verify" || report.phase === "restore";
-  if (pending && wrote && !report.restored) report.pendingRestore = pending;
+  if (!run) return;
+  if (stoppedByNotificationsLost(run.signal)) report.lost = true;
+  else if (stoppedByConsoleLock(run.signal)) report.locked = true;
+  else return;
+  if (pending && !report.restored) report.pendingRestore = pending;
 }
 
 /**
@@ -1214,7 +1235,8 @@ export async function restoreSelfTest(
     await restoreCaptured(model, pending, settleMs, signal, report, phaseStep);
     return report;
   } finally {
-    if (run && stoppedByConsoleLock(run.signal)) report.locked = true;
+    if (run && stoppedByNotificationsLost(run.signal)) report.lost = true;
+    else if (run && stoppedByConsoleLock(run.signal)) report.locked = true;
     // A restore that did not put the unit back — refused, stopped, cancelled, or run to its end with
     // writes refused or a read failed — leaves `pending` the only record of what the unit held, so
     // it is kept for another try.
@@ -1356,13 +1378,18 @@ async function restoreCaptured(
     // The string half: what the converge cannot write, verified the way it verifies its
     // own. A name the first read could not see is counted too, since nothing put it back.
     if (!presetRefused) {
-      const names = await phaseStep(diffNames(model, original));
+      const names = await phaseStep(diffNames(model, original, signal));
       if (!names) return;
-      const renamed = await phaseStep(sendNames(names.writes.filter((w) => w.name === undefined)));
+      const renamed = await phaseStep(
+        sendNames(
+          names.writes.filter((w) => w.name === undefined),
+          signal,
+        ),
+      );
       if (!renamed) return;
       report.errors.push(...nameFailureLines(renamed));
     }
-    const namesAfter = await phaseStep(diffNames(model, original));
+    const namesAfter = await phaseStep(diffNames(model, original, signal));
     if (!namesAfter) return;
     report.errors.push(...namesAfter.errors.map((e) => `restore name verify: ${e}`));
     for (const w of namesAfter.writes)
@@ -1688,6 +1715,12 @@ export function formatSelfTestReport(report: SelfTestReport): string {
       report.pendingRestore
         ? "- Stopped: the unit went into Console Lock; the unit is left changed, and what the restore needs is kept for Restore after self-test"
         : "- Stopped: the unit went into Console Lock",
+    );
+  if (report.lost)
+    lines.push(
+      report.pendingRestore
+        ? "- Stopped: the changes the unit announced could not be fetched; the unit is left changed, and what the restore needs is kept for Restore after self-test"
+        : "- Stopped: the changes the unit announced could not be fetched",
     );
 
   if (report.unverified.length) {

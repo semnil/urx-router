@@ -62,6 +62,15 @@ export interface TauriShell {
   channels: Array<{ onmessage: (data: unknown) => void }>;
   /** How many times `cmd` was invoked. */
   count: (cmd: string) => number;
+  /** Resolves once the page has taken every notification delivered so far and handed it to its
+   *  handlers: at the page's next fetch with nothing left to take, since the page fetches again
+   *  only after handing on what the last fetch answered — or at the disconnect, after which
+   *  nothing is taken. A case that asserts what a delivery did before anything later (a follow's
+   *  idle reconcile) can move it awaits this, not a `waitFor`. */
+  delivered: () => Promise<void>;
+  /** Fail the page's notification fetch — the one outstanding, or the next — as an IPC call that
+   *  does not come back fails: the page loses the connection's notifications. */
+  loseNotifications: () => void;
   /** Deliver a shell event to every handler the app registered for it, and answer how
    *  many handlers actually took it. The desktop shell intercepts drag & drop and the
    *  macOS Edit menu before the webview sees them, so those arrive as events rather than
@@ -285,6 +294,13 @@ const DEVICE_TRAFFIC = [
   "vd_probe_subscribe",
 ];
 
+/** The subscriptions the shell routes notifications to, and the kind of run each one's arrive in. */
+const ROUTED = new Map([
+  ["vd_params_subscribe", "params"],
+  ["vd_meters_subscribe", "meters"],
+  ["vd_probe_subscribe", "probe"],
+]);
+
 /** Where a device table keeps its connection guard for the shell it is installed in. */
 const GUARD = Symbol("device traffic guard");
 
@@ -315,6 +331,90 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
   const invokes: string[] = [];
   const args: Array<Record<string, unknown> | undefined> = [];
   const channels: TauriShell["channels"] = [];
+  // The page fetches a connection's notifications (`vd_notifications`), and the shell answers
+  // with every run routed since the last fetch, or waits for one (vd.rs `Outbox`). A case
+  // delivers a batch through the `channel` a subscription's arguments record, as it would push
+  // one into a channel: that routes the batch to the subscription's handler, and the page's
+  // fetch takes it.
+  const outbox = {
+    epoch: null as number | null,
+    /** The number the page's next fetch carries on this connection: one more for every answer. */
+    seq: 0,
+    runs: [] as Array<{ kind: string; handler: unknown; updates: unknown }>,
+    waiter: null as {
+      epoch: number;
+      resolve: (runs: unknown[] | null) => void;
+      reject: (error: Error) => void;
+    } | null,
+    /** The next fetch fails (`loseNotifications`). */
+    failNext: false,
+    /** Answers the outstanding fetch once there is something to answer: the runs of its own
+     *  connection, or null once that connection is no longer the one followed. */
+    answer(): void {
+      const waiter = this.waiter;
+      if (waiter !== null && this.failNext) {
+        this.failNext = false;
+        this.waiter = null;
+        return waiter.reject(new Error("stub: the notification fetch failed"));
+      }
+      if (waiter === null || (waiter.epoch === this.epoch && this.runs.length === 0)) return;
+      this.waiter = null;
+      if (waiter.epoch !== this.epoch) return waiter.resolve(null);
+      const runs = this.runs;
+      this.runs = [];
+      this.seq += 1;
+      waiter.resolve(runs);
+    },
+  };
+  const routing = (kind: string, handler: unknown) => ({
+    onmessage: (updates: unknown) => {
+      if (outbox.epoch === null) return;
+      outbox.runs.push({ kind, handler, updates });
+      outbox.answer();
+    },
+  });
+  const takenWaiters: Array<() => void> = [];
+  const fetchNotifications = (a: Record<string, unknown> | undefined): Promise<unknown[] | null> => {
+    const epoch = outbox.epoch;
+    if (epoch === null || a?.epoch !== epoch) return Promise.resolve(null);
+    if (outbox.runs.length === 0) for (const taken of takenWaiters.splice(0)) taken();
+    // One fetch outstanding at a time, numbered after the answer before it, as the page keeps them;
+    // anything else would be the page's defect.
+    if (outbox.waiter !== null) return Promise.reject(new Error("stub: a notification fetch is already outstanding"));
+    if (a?.seq !== outbox.seq)
+      return Promise.reject(new Error(`stub: fetch ${String(a?.seq)}, ${outbox.seq} expected`));
+    return new Promise((resolve, reject) => {
+      const waiter = { epoch, resolve, reject };
+      outbox.waiter = waiter;
+      outbox.answer();
+      // As the shell does, an empty answer when nothing came within a second.
+      setTimeout(() => {
+        if (outbox.waiter !== waiter) return;
+        outbox.waiter = null;
+        outbox.seq += 1;
+        resolve([]);
+      }, 1_000);
+    });
+  };
+  const follow = (cmd: string, a: Record<string, unknown> | undefined, answered: Promise<unknown>): void => {
+    if (cmd === "vd_connect") {
+      void answered.then(
+        (connection) => {
+          outbox.epoch = (connection as { epoch?: number } | null)?.epoch ?? null;
+          outbox.seq = 0;
+          outbox.runs = [];
+          outbox.answer();
+        },
+        () => {},
+      );
+    } else if (cmd === "vd_disconnect" && a?.epoch === outbox.epoch) {
+      outbox.epoch = null;
+      outbox.runs = [];
+      outbox.answer();
+      // Nothing more is taken: a case waiting for its delivery to be handed on goes on.
+      for (const taken of takenWaiters.splice(0)) taken();
+    }
+  };
 
   class Channel {
     onmessage: (data: unknown) => void = () => {};
@@ -348,35 +448,44 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
       return id;
     },
     invoke: (cmd: string, a?: Record<string, unknown>) => {
-      invokes.push(cmd);
-      args.push(a);
-      if (once.has(cmd)) {
-        const err = once.get(cmd);
-        once.delete(cmd);
-        return Promise.reject(err);
-      }
-      if (!(cmd in table)) return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
-      // Below the two failure checks, not above them: a registration the shell refused
-      // (`failOnce`, or a command nobody taught this stub about) leaves the app's own
-      // `.catch` arm holding no handler, so recording it there and then delivering the
-      // event would describe a state nothing produces. A table function that throws is
-      // NOT covered by this — the recording is above the call — but nothing answers this
-      // command with a function today.
-      if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
-        listeners.set(a.event, [...(listeners.get(a.event) ?? []), { handler: a.handler, target: a.target }]);
-      }
-      const v = table[cmd];
-      if (typeof v !== "function") return Promise.resolve(v);
-      // A table function that throws synchronously has to REJECT, not throw out of
-      // `invoke`: the real IPC always returns a promise, so a caller that only attaches
-      // `.catch` would survive the device and blow up here.
-      try {
-        return Promise.resolve((v as (x: Record<string, unknown>) => unknown)(a ?? {}));
-      } catch (err) {
-        return Promise.reject(err);
-      }
+      // Not recorded: the page keeps one fetch outstanding for as long as a session lasts, and a
+      // case that waits for the app to stop asking the shell anything reads the record.
+      if (cmd === "vd_notifications") return fetchNotifications(a);
+      const answered = invokeTable(cmd, a);
+      follow(cmd, a, answered);
+      return answered;
     },
   };
+
+  function invokeTable(cmd: string, a?: Record<string, unknown>): Promise<unknown> {
+    invokes.push(cmd);
+    args.push(ROUTED.has(cmd) && a ? { ...a, channel: routing(ROUTED.get(cmd) as string, a.handler) } : a);
+    if (once.has(cmd)) {
+      const err = once.get(cmd);
+      once.delete(cmd);
+      return Promise.reject(err);
+    }
+    if (!(cmd in table)) return Promise.reject(new Error(`stub: unhandled command ${cmd}`));
+    // Below the two failure checks, not above them: a registration the shell refused
+    // (`failOnce`, or a command nobody taught this stub about) leaves the app's own
+    // `.catch` arm holding no handler, so recording it there and then delivering the
+    // event would describe a state nothing produces. A table function that throws is
+    // NOT covered by this — the recording is above the call — but nothing answers this
+    // command with a function today.
+    if (cmd === "plugin:event|listen" && typeof a?.event === "string" && typeof a.handler === "number") {
+      listeners.set(a.event, [...(listeners.get(a.event) ?? []), { handler: a.handler, target: a.target }]);
+    }
+    const v = table[cmd];
+    if (typeof v !== "function") return Promise.resolve(v);
+    // A table function that throws synchronously has to REJECT, not throw out of
+    // `invoke`: the real IPC always returns a promise, so a caller that only attaches
+    // `.catch` would survive the device and blow up here.
+    try {
+      return Promise.resolve((v as (x: Record<string, unknown>) => unknown)(a ?? {}));
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
 
   installedShell = {
     invokes,
@@ -385,6 +494,12 @@ export function tauriShell(commands: Record<string, unknown> = {}): TauriShell {
     answer: (cmd, value) => void (table[cmd] = guard && DEVICE_TRAFFIC.includes(cmd) ? guard(value) : value),
     failOnce: (cmd, err) => void once.set(cmd, err),
     count: (cmd) => invokes.filter((c) => c === cmd).length,
+    loseNotifications: () => {
+      outbox.failNext = true;
+      outbox.answer();
+    },
+    delivered: () =>
+      outbox.epoch === null ? Promise.resolve() : new Promise<void>((resolve) => takenWaiters.push(resolve)),
     emit: (event, payload, from = "main") => {
       let delivered = 0;
       for (const { handler: id, target } of listeners.get(event) ?? []) {

@@ -821,10 +821,10 @@ carries a one-line map of the same directories and points here.
   `experimental_enabled` answers for the launch flag that opens the self-test, Compare with device, the `.urxf`
   import, the SIM view and the link statistics readout, and `self_test_requested` for the self-test's auto-run
   alone) + **the session teardown** (one epilogue
-  every break lands on: unregister every address the session registered, then begin the orderly close (shutting
-  the socket's write half) — a replaced connection, an explicit disconnect, a dropped channel, the pump's own error and the
-  app's quit all leave the same way, and the drain stops at the socket's first read timeout rather than
-  spending the Quit on a quiet broker; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
+  every way out lands on, the transport's `Connection::close`: unregister every address the session may still
+  have registered, then shut the socket down and wait for the connection's threads, within one teardown budget —
+  a replaced connection, an explicit disconnect, a dropped channel, a link that has already ended and the
+  app's quit all leave the same way; the app is `build`+`run` rather than `run` so a `RunEvent::Exit`
   handler can call `vd::shutdown_blocking`, which WAITS, bounded, for those frames to reach the wire.) + the MIDI
   control window and the relay between it and the main window (`midiwin.rs`: `open_midi_window` — async on
   purpose, since building a webview from a blocking command deadlocks on Windows — `close_midi_window`,
@@ -1380,11 +1380,12 @@ Japanese there is the expected reading and not a defect. Both sides of the shell
 | Source                          | Codes                                                                                                                                                                                  |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src-tauri/src/lib.rs` (file IO) | `file-not-found`, `file-denied`, `file-io`, `file-bad-extension`, `file-no-temp`                                                                                                       |
-| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-no-vdpport`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io` |
+| `src-tauri/src/vd.rs` (broker)  | `broker-unreachable`, `no-device`, `multiple-devices`, `control-worker-gone`, `not-connected`, `device-lost`, `broker-closed`, `broker-timeout`, `broker-unresponsive`, `broker-rejected`, `broker-bad-response`, `broker-io`, `notifications-lost` |
 | `src-tauri/src/midi.rs`         | `midi-port-not-found`, `midi-output-not-open`, `midi-init-failed`, `midi-open-failed`, `midi-send-failed`                                                                              |
 | `src-tauri/src/keepawake.rs`    | `keep-awake-failed`, `keep-awake-unsupported`                                                                                                                                          |
 | `core/storage.ts` (export)      | `png-encode`, `canvas-unavailable`, `svg-rasterize`                                                                                                                                    |
 | `core/control/live.ts` (converge) | `converge-failed`                                                                                                                                                                    |
+| `core/platform.ts` (notification fetch) | `notifications-lost`                                                                                                                                                           |
 
 `errorText` (`i18n/index.ts`) resolves a code against `error.shell` and hands the detail to the
 entries that take one; an unrecognized message passes through unchanged, so an unexpected JS error
@@ -1825,36 +1826,69 @@ drag lands on the nearest.
   the app reads: all three. The address was confirmed on the URX44V and the URX22; the URX44 is assumed to behave
   as the URX44V and is not confirmed (decisions/device-control.md, "The URX44 is assumed to behave as the URX44V").
 - **Streaming path** — the Rust side (`src-tauri/src/vd.rs`) handles a meter subscription
-  (`MetersSubscribe`/`MetersUnsubscribe`) by registering each address with the broker, and forwards meter
-  `notify` frames to the frontend over a Tauri Channel during the socket drain (`pump` parses each frame with
-  `parse_meter` and sends one `Vec<MeterUpdate>` batch per drain). The broker streams ~250 readings/s, so a
-  per-reading send would cross the IPC boundary ~250×/s; batching cuts that to ~30×/s. Each drain is
-  time-bounded (`PUMP_BUDGET`, 30 ms) so a continuous feed neither monopolizes the worker (live writes wait
-  behind it) nor delays the batch; while a subscription streams the worker also polls commands on a shorter
-  interval so the bounded pump runs back-to-back and keeps up with the feed. That budget bounds the wait only
-  while the feed is running: on a QUIET link the drain ends at the socket's own read timeout instead, and the
-  worker is not looking at the command channel until it does — on a URX44V, with a 200 ms timeout, the first live
-  write after a quiet gap waits 152 ms, which is why that timeout is 50 ms (`READ_TIMEOUT`), not
-  the 30 ms budget. Changing the budget does not move it: on a quiet link the loop leaves at the drained
-  branch and never reaches the budget check.
-  A subscribed notify that lands while a command awaits its response (the `do_set` / `do_get_value` loops) is
-  absorbed into the same pending batch instead of discarded, and the batch flushes on the pump cadence
-  (subscription channels and pending batches live in the worker's `Subs`) — so the meters keep streaming with
-  bounded latency even while a long command sequence (e.g. a device-follow readback) holds the worker.
+  (`MetersSubscribe`/`MetersUnsubscribe`) through the shared transport, `urx-device-transport` from the
+  `vendor/urx-device` submodule. The subscription is a token whose addresses the transport registers one at a time,
+  each verdict checked before the next, and whose notifications it hands over in bounded batches on a delivery thread
+  of its own. `vd.rs` routes each batch into the session's outbox — one run per stretch of one subscription's
+  readings, in receive order (`Outbox`) — and then acknowledges it, which lets the next batch form. The page fetches
+  the outbox with `vd_notifications`, one request outstanding at a time, and each answer takes every run routed
+  since the last: the broker streams ~250 readings/s, and one IPC crossing per fetch rather than per reading is
+  what keeps the boundary quiet. Past 8192 updates the page has not fetched, `vd.rs` waits for the page's next
+  fetch before routing more, so the transport's next batch waits with it. Delivery runs beside the worker that sends commands, not inside its read loop, so a
+  meter stream neither holds up a live write nor waits behind a long command sequence (a device-follow readback,
+  say).
   Meters stream only while Live sync is on (subscription starts in `console.setLive`).
   The subscription is bound to Live sync, not to view visibility: a GRAPH ↔ CONSOLE tab switch only stops the
   paint loop (`requestAnimationFrame` → `stopPaint`) and keeps the broker subscription warm. Re-registering every
   address on each toggle would stall the meters for ~1 s, so the full teardown (`stopMeters`) runs only when Live
   sync ends, and re-showing resumes from the warm stream at once.
-- **Device follow** — the reverse of live sync. The same drain path also carries device-side parameter
-  changes: `ParamsSubscribe`/`parse_param` (sharing the `notify_frame` envelope parse with the meter path)
-  register every writable address and forward each `notify` (batched per drain, like the meter path). A notify carries the changed address **and its
+- **Device follow** — the reverse of live sync. The same delivery path also carries device-side parameter
+  changes: `ParamsSubscribe` registers every writable address as a token of its own, and each `notify` goes on
+  in the batch the transport delivered it in, like the meter path. A notify carries the changed address **and its
   new value**, so detection is free and exact. The broker sends a notify to **every** connected client, not just
-  the one that registered the address, so both forwarders drop what this session did not register (the worker
-  keeps its registered sets in `Subs` for exactly this, alongside the unregister-on-replace they also serve).
-  Without that filter another broker client's registrations ride in, and so does the unit's own clock — one push
-  every 10 s, which resolves to no node and escalates to a full readback every 10 s for the whole session. The
-  address-less bulk-change sentinel below is the one exemption: it belongs to no address by design.
+  the one that registered the address, so the transport hands a notification only to the tokens that registered
+  its address, and `vd.rs` routes it only to the handler whose token is among them. Without that filter another
+  broker client's registrations ride in, and so does the unit's own clock — one push every 10 s, which resolves to
+  no node and escalates to a full readback every 10 s for the whole session. The address-less bulk-change sentinel
+  below is the one exemption: the transport hands it to every token that holds a parameter address.
+  A subscription that is replaced can still have notifications queued for its token, received before the switch;
+  they go to its own handler, which `vd.rs` keeps until the kind is unsubscribed or the session ends, and one that
+  several of a kind's tokens received goes once, to the newest one's. Every subscription names a handler of the
+  page's own (`src/core/platform.ts`), and the page hands each fetched run to its handler in the order the outbox
+  holds them, which is the order `vd.rs` received them in. The follow layer takes the old and the new subscription
+  with one handler, so a Console Lock the unit announced before a re-subscription reaches it ahead of the unlock
+  that followed. Notifications are fetched rather than pushed over Tauri channels for that reason: Tauri keeps one
+  channel's messages in order and not two channels' — a message of 8 KiB or more is fetched by the page after the
+  fact. The fetches are numbered from 0 on each connection, and asking for the next number is the page's
+  acknowledgement of the last answer: `vd.rs` keeps an answer until then, and answers a resend of its number with it
+  again — Tauri resends a request whose response the page could not read, when its custom protocol fails over to
+  `postMessage`, and that resend would otherwise take the runs after the ones lost. A number out of sequence is
+  refused. A fetch that fails, or takes longer than 5 s (`NOTIFICATION_FETCH_DEADLINE_MS`; the shell answers within
+  its one-second wait), loses the connection's notifications: a change the unit announced may not have reached the
+  page, so every later write on that connection is refused before it is sent (`notifications-lost`), whichever
+  operation sends it, and a live session ends with that code — through its link watch, at once if the watch is
+  registered after the loss. An operation running on the connection stops with that cause at its next command, as
+  it stops on a Console Lock (its lock watch is told, `onNotificationsLost`): Write to device says how many writes the unit took
+  — numeric values, Sweet Spot presets, names and the Follow USB release a rate choice makes counted alike, re-sends included, with no total — asks nothing more and acts on no answer to a
+  question it had open when the stop came (`askWhileWriting`), and offers no retry on that connection; a self-test
+  that may have written — a write accepted, or one whose answer was lost, and not one the page or the shell refused
+  before sending it, nor one the transport never sent, which the shell marks `not-sent` (`refusedBeforeSending`) — keeps what its restore needs for Restore after self-test on a later
+  connection. The next connection starts clean. A Console Lock the unit announced holds the writes in the shell
+  from that announcement to the announcement of the lock off: `vd.rs` takes the lock state as the transport
+  receives each announcement — the transport shows it every notification as it queues it (`open_observed`), ahead
+  of the batch that carries it, which can wait behind others on the cap of unfetched updates — and refuses a write
+  meanwhile with `writes-held` and the number of the first fetch that carries the announcement. The hold is asked just
+  before the write's first byte would go out (the transport's send gate, `submit_gated`), under the gate the
+  transport takes each frame out of its buffer under, so a lock received at any point before that byte holds the
+  write, however long ago the shell took it. The gate records the write as held on the announcement it refused on,
+  and the shell keeps that record, with the first fetch that handed the announcement on, until the refusal is worded
+  from it: what the unit announces and the page fetches after the refusal changes neither the refusal nor the fetch
+  it names. To name that number it
+  waits for the announcement to reach the outbox, up to the page's own 5 s deadline, past which the refusal names
+  none. So a write the page handed over before it knew of the lock does not reach the locked unit, however many
+  updates wait; a batch that carries a lock announcement does not wait on the cap, so the next fetch hands it on.
+  The page passes the refusal on only once it has handed that fetch on — or, when the refusal names none, a fetch
+  that starts after it — so whoever handles it finds the lock already taken.
   While Live sync is on, `core/control/follow.ts` `DeviceFollow`
   classifies each notify against the live snapshot's address→node index (`live.lookup`): a **direct** node-local
   scalar (fader / pan / on / level, flagged `follow: "direct"` in the catalog) is decoded straight into the plan
@@ -2179,7 +2213,7 @@ moving whatever control is under the pointer, which on a mixer is a fader jumpin
 
 - **Bridge (Rust)** — `src-tauri/src/midi.rs` enumerates ports through midir (CoreMIDI on macOS, WinMM on
   Windows) and holds one open input plus one open output. Incoming messages are batched per burst — the same
-  idea as the vd meter pump — and streamed to the frontend through a Tauri channel (`midi_list_inputs/outputs`,
+  idea as the vd notification batches — and streamed to the frontend through a Tauri channel (`midi_list_inputs/outputs`,
   `midi_open_input`, `midi_close_input`, `midi_open_output`, `midi_close_output`, `midi_send`). Everything is a
   local OS-API round-trip (no broker), so the commands stay synchronous. The frontend bridge is
   `core/platform.ts` (no-ops outside Tauri). midir starts at 0.11.1 (`src-tauri/Cargo.toml`): 0.11.0's CoreMIDI
@@ -2434,7 +2468,7 @@ rather than absent, and the operation stops instead of proceeding with the gate 
 is unplugged.
 
 **One transport, served to concurrent clients.** Device Center advertises a **per-session port** for each
-listed unit on `:51770` (`/vddp_srv/devices`), and the link (`Link` in `vd.rs`) is a plain socket to that port
+listed unit on `:51770` (`/vddp_srv/devices`), and the link (the transport's `Connection`, which `vd.rs` opens) is a plain socket to that port
 carrying newline-delimited JSON, one `vdp` message per line. The socket is scoped to one unit, so no message
 names the unit, and Device Center serves the port to every client at once — any other tool touching the broker
 leaves this app's link in place. The port is looked up on every connection and never cached: it belongs to a
@@ -2448,12 +2482,10 @@ client, whether or not this session registered the address, so a notify for the 
 on arrives whenever anything else touches the unit — and the reachable-by-everyone route is the one that makes
 that ordinary rather than rare. A notify names the address it is about, so matching a reply by address alone
 lets one answer the command: a read returns the pushed value instead of the read, and a write, finding no
-`response_code`, reports a write that landed as refused and aborts. Replies are therefore matched on **verb
-and address together** (`reply_for`), and each command keeps the verb it sent and the verb it will accept in
-one place so the two cannot drift. A write, a registration and an unregistration are all POSTs on the
-address, and a registration's reply can still be in flight when the next write starts, so a POST reply also has
-to carry the request's single `operation` (`value`, `regist` or `unregist`). Notifies for a subscribed channel are absorbed into that channel's
-batch rather than dropped.
+`response_code`, reports a write that landed as refused and aborts. The shared transport therefore matches a
+reply on **verb and address together**, and a POST reply also on the request's single `operation` (`value`,
+`regist` or `unregist`), since a write, a registration and an unregistration are all POSTs on the address. A
+notify never answers a command: it goes to the delivery path, to the tokens that registered its address.
 
 **The same on both platforms.** A difference in the endpoints or the
 reply shapes would mean the Windows build could not connect at all. On Windows it is
@@ -2520,8 +2552,9 @@ Live sync, and why the Delay under tempo Sync stays turnable. The SIM view holds
 
 Every failure raised outside the UI layer returns a stable, machine-readable code rather than a raw English
 string — see [Error codes](#error-codes) for the scheme. The broker link's are `broker-unreachable` (Device
-Center not running), `no-device` (running, but no URX attached — the empty-list, `sync_status != online`, and
-list-timeout shapes all collapse to this single code, since the user's remedy is the same),
+Center not running), `no-device` (running, but no URX attached — the empty-list and `sync_status != online`
+shapes, an empty status included, collapse to this single code, since the user's remedy is the same; a device
+list that does not answer is `broker-timeout`),
 `multiple-devices` (more than one URX online and the selected model does not pick one of them),
 `control-worker-gone` (the Rust worker thread died, stopped responding, or panicked — handshake, command send,
 reply-wait, and task-join failures all collapse to this code), `not-connected`, `device-lost`, `broker-closed`,
@@ -2889,7 +2922,7 @@ overlay is built from — it records a mark for a catalog string write (the SSMC
 name is not one, so a name address is never in the `PendingWrites` handle. A settle on one would always spend its
 whole bound, and answering from the send is what this section forbids. The notify itself does arrive —
 name addresses are in the registration set because the follow carries a device-side rename, which is the
-paragraph below; an address in no registration has every notify dropped by `Subs::absorb`. So the refetch does not read names at
+paragraph below; an address in no registration has every notify dropped by the transport, which hands one only to the tokens that registered it. So the refetch does not read names at
 all: the read exists to collect what the unit RECOMPUTED, and no parameter write makes the unit recompute a name.
 Leaving it in could only do harm — a rename flushed in the same window comes back as the name it replaced and
 goes into the plan and the name snapshot together, so they agree, no diff remains, and the rename is reverted
@@ -2924,8 +2957,12 @@ holds by construction instead of by that inventory staying true.
 
 Without a request from the flush, an address a mode change adds would stay unheard until the next reconcile
 happens to run. The flush asks the follow layer to re-subscribe at its END, never inside itself: a
-re-registration unsubscribes before it subscribes, and doing that mid-flush would drop the notifies the refetch's
-settle is waiting for. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
+re-registration replaces the subscription, registering the new set's addresses and releasing the old set's one at a
+time on the worker that carries the flush's writes, and doing that mid-flush would put those requests between the
+writes and the notifies the refetch's settle is waiting for. It is a replacement and not an unsubscribe followed by
+a subscribe: an address both sets hold stays registered throughout, where unsubscribing first would leave the unit
+unheard from until the new registrations were in, and a Console Lock or a scene recall made in that gap would never
+reach the plan. `DeviceFollow.refresh` compares the set's identity and returns without touching the broker
 when it has not moved, so an ordinary flush costs one comparison and no traffic; it is deliberately not `begin`,
 whose generation bump is how an in-flight registration tells a dead session from a live one. Registrations run one
 at a time within a generation: `refresh` is fire-and-forget from a flush and shares no lock with the other two
@@ -3349,17 +3386,18 @@ Behind `--experimental` and, like fetch and write, disabled while Live sync hold
 A link that drops *during* a command surfaces on the next operation as a broker error, but a held-open connection
 sitting **idle** (live sync with no edits) would go unnoticed. Unplugging *only the URX* is also invisible to a
 socket check: the broker socket stays up and keeps ACKing writes (a success reply with no unit attached), so neither
-a socket drop nor a write error reveals it. To close both gaps the Rust worker watches, in `pump` (the idle socket
-drain) and in the read/write round-trip loops (`do_set` / `do_get_value`, the late drain after a deadline included), for (a) a socket drop and (b) the
-`/vd/synchronize` frame Device Center spontaneously sends at the moment of disconnect (`sync_status` flipping away
-from `online` — distinct from the handshake / sync_status reads that fetch it on purpose). On either, it pushes a
-single `LinkEvent` to the frontend (`vdWatchLink`), or fails the in-flight command, and the frontend tears the live
-session down. That drop is also **latched** in the worker, whichever reader met it: the `/vd/synchronize` push arrives exactly once, so
-without latching only the command that consumed it could ever notice, and every command after it would keep talking
-to a broker that ACKs writes with no unit attached and answers reads from its cache. Once latched, every later
-command fails until a reconnect, with the cause the drop was met with (`broker-closed`, `device-lost`, `broker-io`, …).
-The worker stays up to answer them — a drop the idle pump meets stops the pump, not the worker — so an action with a
-dialog open between its connect and its first command reports what happened to the link rather than
+a socket drop nor a write error reveals it. The shared transport closes both gaps: its reader watches the link for
+(a) a socket that closes or fails and (b) the `/vd/synchronize` frame Device Center spontaneously sends at the moment
+of disconnect (`sync_status` flipping away from `online`), and either ends the connection, failing the command in
+flight and every one waiting. It records which of the three it was (`Connection::lost_link`), and `vd.rs` words them
+apart: `device-lost` for the unit going away, `broker-closed` for a link the broker closed, `broker-io` for a socket
+error. Discovery and the opening are worded the same way: their failures carry how the link was lost
+(`LinkFailure::lost_link`). The worker checks the connection's end between commands too, so an idle session is noticed: it pushes a single
+`LinkEvent` to the frontend (`vdWatchLink`), and the frontend tears the live session down. The end is permanent for
+that connection: the `/vd/synchronize` push arrives exactly once, and the broker would otherwise keep ACKing writes
+with no unit attached and answering reads from its cache. Every later command fails with the same code until a
+reconnect, and the worker stays up to answer them, so an action with a dialog open between its connect and its first
+command reports what happened to the link rather than
 `control-worker-gone`.
 
 ### Reset chains, and what a converge round sends
@@ -3590,10 +3628,10 @@ listed here so they are not proposed as gaps:
    deliberately NOT applied to the readout beside it: the panel shows what the plan holds, which after a
    device read is what the unit holds, and the unit can hold a value this app's own range excludes. One
    readout cannot answer both "what is the unit at" and "what would the next write send".
-3. **`read_frame` drops a line that is not JSON.** The vd protocol is one JSON message per line, TCP has
-   already settled byte integrity underneath it, and a stray line is noise rather than a failed operation —
-   so dropping it *is* the salvage. On the idle drain it ends that pump as a drained socket does; a command
-   waiting for its reply reads past it, and a reply that never comes still fails loudly, as `broker-timeout`.
+3. **The transport's frame reader drops a line that is not JSON.** The vd protocol is one JSON message per
+   line, TCP has already settled byte integrity underneath it, and a stray line is noise rather than a failed
+   operation — so dropping it *is* the salvage. The reader reads past it, and a reply that never comes still
+   fails loudly, as `broker-timeout`.
 4. **MIDI unplug is not detected at all.** midir has no hot-plug notification, and a virtual port (Stream Deck
    and its kind) outlives the hardware behind it, so polling cannot tell a live port from a dead one even in
    principle. The lists are re-enumerated on demand instead, and a port that fails to open reports it.
@@ -3806,11 +3844,18 @@ lands while that read is out is the newer of the two, and the read is not taken 
 after connecting and refuses a locked unit with `error.consoleLocked` before it asks anything (`withDevice`'s
 `writes` option). While it runs it is registered for the lock state's notify (`watchConsoleLock`), and a lock that arrives
 aborts the write's controller with `consoleLockAbort`, which stops it at its next command the way a cancel does;
-the status line says how far a Write to device got (`status.writeLocked`), and writing again once the unit is
+the status line says how many writes the unit took (`status.writeLocked`), and writing again once the unit is
 unlocked compares the unit with the plan again and sends what differs then. The self-test and `--prepare-modified` connect on their own and take the same watch through
-`watchRun`, after the model check — so a unit of another model is still neither read nor written.
+`watchRun`, after the model check — so a unit of another model is still neither read nor written. A stop the watch
+has told of decides how the action ends, whatever the call in flight then comes back with: once a lock or a loss of
+the notifications has been heard while the watch registers or reads the lock, the write ends on that stop whether the
+registration or the read then fails or the read says the unit is locked or unlocked — only a start that heard no stop
+refuses a unit locked at the start — and the self-test and `--prepare-modified` return their report with it; a
+write's step that fails after the stop ends on the stop and what was sent.
 
-**A self-test the lock stops** once it has written leaves the unit changed. What its restore needs — the captured
+**A self-test the lock stops** — or a loss of the connection's notifications, under which a lock would go unheard —
+once a write of it may have reached the unit (one has gone on the wire, counted as it goes) leaves the unit changed;
+one stopped before that keeps nothing to restore. What its restore needs — the captured
 plan and the addresses read before the sweep — is kept on the report as `pendingRestore`, the app holds it in
 memory, and the Device menu shows **Restore after self-test** while it does. That runs the restore alone
 (`restoreSelfTest`): it refuses a unit still locked or of another model, keeps `pendingRestore` for another try
@@ -3842,11 +3887,11 @@ to tell that a `cmd` on the bar and the panel's `Sent` are one number.
 | Value | Where it is counted |
 | --- | --- |
 | Link up | The frontend, from the connect |
-| Sent (`set` / `get`) | The worker, per command it puts on the socket |
+| Sent (`set` / `get`) | The worker's connection: the parameter writes and reads the transport reports it wrote whole (`Connection::sent_frames`), read at each reading, so a command counts once it is on the socket and one the transport refused before sending — the session already over included — is not counted |
 | Subscriptions (params / meters) | The worker, per subscription command — including the session's first, which is why the row is not called "re-subscribes": a healthy session opens at 2 and that is not churn. The churn is the row below, where a first registration has no `unregist` beside it |
-| Registration frames (`regist` / `unregist`) | The worker, per address — subscription is per-address, never a bulk post |
+| Registration frames (`regist` / `unregist`) | The worker's connection: the frames the transport reports it wrote whole (`Connection::sent_frames`), read at each reading, so a frame counts once it is on the socket, whatever answer the call that sent it gets — a registration refused at the second address counts two registrations and its cleanup's one unregistration, and an unsubscribe still waiting for its answers counts the unregistrations it sent. The close's own unregistrations go out after the session's last line is written, and are on no line. The transport's address union decides which addresses go out at all: a new subscription's that no other subscription (the one it replaces included) holds, and an old one's that no remaining one holds. Subscription is per-address, never a bulk post |
 | Full reads | The frontend: a whole-device readback is a decision this side makes, and the broker only sees the ~800 commands it decomposes into |
-| No answer | The worker, in `Health::guard`, where a deadline is already classified. Two figures with different tenses: the count is the session's total, and `n/3 to cutoff` is the CURRENT consecutive run — three deadlines in a row (~9 s with nothing answered) latch `broker-unresponsive` and end the session, and any answered command puts it back to zero |
+| No answer | The worker, as each command's outcome comes back from the transport, a subscription's registrations and the release of the set it replaces included. Two figures with different tenses: the count is the session's total, and `n/1 to cutoff` is the CURRENT run. The transport ends the connection on the first response deadline (N1), which `vd.rs` reports as `broker-unresponsive` for every command after it, so the run is 1 once a deadline has ended the session and 0 before |
 
 Round-trip latency, queue depth, notify and meter rates, and the share of notifies the address filter drops
 were all considered and **left out**. The first four measure how the link feels from this side, which is not
@@ -3888,13 +3933,13 @@ covers the device link, and this is not on it.
 
 ### Session teardown
 
-Every way out of the worker loop lands on one epilogue: it unregisters every address the session registered,
-then begins the orderly close: it shuts the write half of the socket, and the drain below reads what the broker
-still has queued until it meets the peer's EOF.
-A replaced connection, an explicit disconnect, a dropped command channel and the app's own exit therefore all
-leave the same way, and so does the pump's own error break. The drain stops at the socket's first read
-timeout: an empty read means the peer has nothing queued, and counting those against a
-frame budget would spend seconds of the operator's Quit on a broker that has already gone quiet.
+Every way out of the worker loop lands on one epilogue, the transport's `Connection::close`: it unregisters
+every address the session may still have registered (once each, stopping at the first failure, and nothing at
+all once the link has ended), then shuts the socket down and waits for the connection's threads, all within
+one teardown budget (2 s, or what is left of the exit wait below). A replaced connection, an explicit
+disconnect, a dropped command channel, a link that has already ended and the app's own exit therefore all
+leave the same way. Each unregister is a request with its own answer, so the close knows the frames landed
+without reading the socket on to the peer's EOF.
 
 On the app side the same is true of the connection: `releaseLive` in `main.ts` is the one release, so "read the
 ledger's final counters, wait out a follow read and the session's own flush still on the wire, drop the link,
@@ -3906,8 +3951,8 @@ action connecting over that read.
 
 The app's exit is the case that needs more than telling: `lib.rs` builds the app and runs it with a
 `RunEvent::Exit` handler that calls `vd::shutdown_blocking`, which **waits** (bounded, 1.5 s) for the
-unregisters and the close to reach the wire. The worker is handed the instant that wait ends, and its read of what
-the broker still has queued stops one read's timeout ahead of it, however the frames arrive. Everywhere else the worker outlives the caller and finishes on its
+unregisters and the close to reach the wire. The worker is handed the instant that wait ends, and the close's
+teardown budget ends at that instant, however the broker answers. Everywhere else the worker outlives the caller and finishes on its
 own; at exit it does not, and "told to close" and "closed" are the same thing only when something outlives the
 telling. An update install is the one exit that does not reach that handler on every platform — on Windows the
 updater ends the process from inside its install command — so the frontend calls `prepare_for_exit` before the
@@ -5114,7 +5159,7 @@ a cancel stopped before it went out, so what an earlier read established about e
 holds. Invalidating on the round being PLANNED instead would discard a confirmed value every time a later
 round's side-effect head is refused.
 
-**Only an explicit refusal says a write did not land.** `vd.rs`'s `do_set` SENDS and then waits, so by
+**Only an explicit refusal says a write did not land.** The transport SENDS a write and then waits, so by
 the time anything can go wrong with the answer the request is already on the wire. `SendOutcome.result`
 carries the three-way: `accepted` (the broker answered 200), `refused` (it answered with another code —
 the one failure that says the write was turned down), and `unknown` (no answer came, the link failed
@@ -5481,6 +5526,8 @@ incompatible, while Dependabot labels it semver-minor. The exception is cargo's 
 an npm package below 1.0, such as esbuild, merges on its own like any other. So does an update of the
 `vendor/urx-lcd-sim` submodule, which `.github/dependabot.yml` moves to the newest commit of urx-lcd-sim's
 default branch with no cooldown: the update is a commit, and fetch-metadata gives it no semver type.
+The `vendor/urx-device` submodule is the exception: it moves only to a published release, in a pull request
+a person opens, so `.github/dependabot.yml` ignores it and the workflow never enables auto-merge for it.
 `.github/workflows/dependabot-auto-merge.yml` reads each updated dependency with
 `dependabot/fetch-metadata` and, when all of them qualify and the pull request is one commit — the head,
 written by `dependabot[bot]`, committed by GitHub (web-flow) and with a verified signature, since the
@@ -5748,7 +5795,7 @@ accepted — they reach the device layer with nothing on screen to press, so the
 The web layer ships with no third-party runtime dependency — its one runtime dependency is semnil's own
 urx-lcd-sim, whose typeface (IBM Plex Sans, SIL Open Font License 1.1) is listed by a fixed entry in
 `src-tauri/about.hbs` — but a distributed desktop build statically links
-the Tauri runtime and its Rust crates, which carry their own open-source licenses. None are
+the Tauri runtime and its Rust crates (semnil's own `urx-device-transport` among them), which carry their own open-source licenses. None are
 GPL/AGPL/LGPL — the set is permissive plus file-scoped weak-copyleft (MPL-2.0), all satisfied by
 bundling their notices.
 

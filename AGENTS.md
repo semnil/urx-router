@@ -11,7 +11,7 @@ and Live sync are always enabled in the desktop build (vd protocol, `src/core/co
 
 - Tauri 2 (desktop shell; Windows 11 / Apple silicon macOS)
 - TypeScript + Vite (frontend)
-- Rendering is plain SVG. **Zero runtime external dependencies**: no npm packages or CDNs in the runtime from outside github.com/semnil. The one runtime dependency is semnil's own LCD simulator `urx-lcd-sim` (the SIM view), a git submodule at `vendor/urx-lcd-sim` that `package.json` links (`link:`) and Dependabot moves to the newest commit of its default branch
+- Rendering is plain SVG. **Zero runtime external dependencies**: no npm packages or CDNs in the runtime from outside github.com/semnil. The web layer's one runtime dependency is semnil's own LCD simulator `urx-lcd-sim` (the SIM view), a git submodule at `vendor/urx-lcd-sim` that `package.json` links (`link:`) and Dependabot moves to the newest commit of its default branch. The shell's device link runs on semnil's own transport crate from `urx-device`, a git submodule at `vendor/urx-device` that `src-tauri/Cargo.toml` takes by path; it is pinned to a published release and moved only in a pull request a person opens (Dependabot and the auto-merge leave it alone)
 
 ## Structure
 
@@ -26,7 +26,7 @@ and Live sync are always enabled in the desktop build (vd protocol, `src/core/co
 - `src/midi-window.ts` — entry of the MIDI control window, a view with no plan of its own; a MIDI input port delivers its bursts to the window that opened it, so a window with no plan must never open one
 - `src/app/` — the entry's non-wiring parts, lifted out of `main.ts` so each is drivable without booting the app
 - `src/i18n/` — i18n for the app UI. `en.ts` is the baseline, `ja.ts` the translation, `index.ts` the language registry + active-language switcher; runtime language switching (`core/*` is language-independent)
-- `src-tauri/` — Rust shell: webview host, file IO, the `vd_*` and `midi_*` commands, the MIDI window's relay, window geometry, the idle-sleep hold, the macOS Edit menu
+- `src-tauri/` — Rust shell: webview host, file IO, the `vd_*` commands (an adapter over the `urx-device` transport crate) and the `midi_*` commands, the MIDI window's relay, window geometry, the idle-sleep hold, the macOS Edit menu
 - `docs/en/` + `docs/ja/` — `device-model.md` (grounding for the routing rules) / `architecture.md` / `known-issues.md` / `console-sends.md` / `channel-tuning.md` / `live-race-harness.md` / `local-runs.md` / `repository-checks.md` / `reusable-assets.md`; each says at its top what it holds. Keep English and Japanese in sync
 - `docs/en/decisions/` + `docs/ja/decisions/` — records of closed decisions, one document per subject and one heading per decision (what was decided, why, what was turned down, what would reopen it); read the subject's record before reopening anything in it. The other documents describe the software as it is; a decision's history goes here. The Japanese file keeps the English headings
 - The private notes — a separate private repository, not part of this public one, holding the investigation material this project draws on: primary sources, protocol notes and device probes. A checkout of it may sit inside this one, where it is ignored (`.gitignore`)
@@ -36,7 +36,7 @@ and Live sync are always enabled in the desktop build (vd protocol, `src/core/co
 ## Development
 
 ```sh
-git submodule update --init   # vendor/urx-lcd-sim — empty in a fresh clone or worktree; run before pnpm install
+git submodule update --init   # vendor/urx-lcd-sim + vendor/urx-device — empty in a fresh clone or worktree; run before pnpm install and cargo
 pnpm install
 pnpm dev          # browser http://localhost:5173 (no Rust required)
 pnpm tauri dev    # desktop app (Rust required; install via rustup if missing)

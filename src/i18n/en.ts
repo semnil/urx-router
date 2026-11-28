@@ -1052,8 +1052,10 @@ export const en = {
     writeReadFailed: (n: number): string =>
       `Write canceled: ${n} setting${n === 1 ? "" : "s"} could not be read from the device`,
     writeError: (message: string): string => `Device write failed: ${message}`,
-    writeLocked: (sent: number, total: number): string =>
-      `The unit went into Console Lock, so the write stopped: ${sent} of ${total} sent. Write again once it is unlocked to compare the unit with the plan again and send what differs`,
+    writeLocked: (sent: number): string =>
+      `The unit went into Console Lock, so the write stopped: the unit took ${sent} write${sent === 1 ? "" : "s"}. Write again once it is unlocked to compare the unit with the plan again and send what differs`,
+    writeLost: (sent: number): string =>
+      `The changes the device announced could not be fetched, so the write stopped: the unit took ${sent} write${sent === 1 ? "" : "s"}. Write again to compare the unit with the plan again and send what differs`,
     // Console Lock during Live sync (core/control/console-lock.ts).
     consoleLocked: tr("The unit is under Console Lock — the app sends it nothing until it is unlocked on the unit"),
     consoleUnlocked: tr("The unit's Console Lock is off — edits are sent to the unit again"),
@@ -1098,8 +1100,16 @@ export const en = {
     selfTestLocked: tr(
       "Self-test stopped — the unit went into Console Lock. The unit is left changed: once it is unlocked, choose Restore after self-test in the Device menu",
     ),
+    selfTestLostUntouched: tr(
+      "Self-test stopped — the changes the device announced could not be fetched before the run wrote anything. The device was not touched.",
+    ),
+    // The run stopped part-way and kept what the restore needs; the Device menu runs it on the next
+    // connection.
+    selfTestLost: tr(
+      "Self-test stopped — the changes the device announced could not be fetched. The unit is left changed: choose Restore after self-test in the Device menu",
+    ),
     selfTestRestorePending: tr(
-      "A self-test Console Lock stopped is not restored yet — choose Restore after self-test in the Device menu first",
+      "A stopped self-test is not restored yet — choose Restore after self-test in the Device menu first",
     ),
     selfTestRestoring: tr("Restoring the unit to what it held before the self-test…"),
     selfTestRestored: tr("Restored the unit to what it held before the self-test"),
@@ -1488,8 +1498,6 @@ export const en = {
       ),
       deviceLost: tr("the device link dropped (USB unplugged or Device Center quit)"),
       brokerClosed: tr("Device Center closed the control connection. Start it again, then retry."),
-      brokerNoVdpPort: (detail: string): string =>
-        `Device Center answered but did not offer a control port (${detail}). Restart Device Center, then try again.`,
       notConnected: tr("not connected to the device"),
       brokerTimeout: (detail: string): string => `Device Center did not answer in time (${detail})`,
       brokerUnresponsive: tr(
@@ -1498,6 +1506,9 @@ export const en = {
       brokerRejected: (detail: string): string => `the device refused the write (${detail})`,
       brokerBadResponse: (detail: string): string => `Device Center sent an unexpected response (${detail})`,
       brokerIo: (detail: string): string => `the connection to Device Center failed (${detail})`,
+      notificationsLost: tr(
+        "the changes the device announced could not be fetched, so the app sends nothing more on this connection. Start it again.",
+      ),
       fileNotFound: tr("the file no longer exists at that path"),
       fileDenied: tr("access to the file was denied"),
       fileIo: (detail: string): string => `the file could not be read or written (${detail})`,

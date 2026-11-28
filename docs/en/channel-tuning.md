@@ -2085,11 +2085,11 @@ panel never hears — so the gate subscribes to the hold bookkeeping directly.
 ## Meter subscription ownership
 
 **This app holds one meter subscription per session, and that is its own arrangement rather than a
-device limit.** The wire carries no subscription object at all — `reg_meter` sends one `regist` /
-`unregist` frame per address. What is single is the worker's own set: `Cmd::MetersSubscribe` in
-`src-tauri/src/vd.rs` unregisters `subs.meter_addrs` entry by entry and then registers the new
-addresses, so `vd_meters_subscribe` replaces rather than adds, and `vd_meters_unsubscribe` takes no
-address because there is only ever one set to drop. The device constraint recorded beside it is a
+device limit.** The wire carries no subscription object at all — the transport sends one `regist` /
+`unregist` frame per address. What is single is the worker's own subscription: `Cmd::MetersSubscribe` in
+`src-tauri/src/vd.rs` takes a new token for the new addresses and releases the previous one, so
+`vd_meters_subscribe` replaces rather than adds, and `vd_meters_unsubscribe` takes no address because there
+is only ever one subscription to drop. The device constraint recorded beside it is a
 different one: never bulk-post to `/vd/meters`.
 
 The replacement is silent and the CONSOLE does not self-heal, so an unannounced takeover would leave

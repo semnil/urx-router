@@ -24,7 +24,7 @@ rustup 経由の Rust。その範囲は、直接の依存がそれぞれの `eng
 `pnpm test node-engines` が落ちる。
 
 ```sh
-git submodule update --init   # vendor/urx-lcd-sim。clone 直後と新しい worktree では空
+git submodule update --init   # vendor/urx-lcd-sim と vendor/urx-device。clone 直後と新しい worktree では空
 pnpm install
 pnpm dev           # ブラウザ版 http://localhost:5173（Rust 不要）
 pnpm tauri dev     # デスクトップアプリ
@@ -47,7 +47,7 @@ pnpm tauri dev     # デスクトップアプリ
 - 識別子とコメントは英語。コメントは振る舞いのみを説明する（経緯は書かない）。
 - diff は最小限に、周囲のスタイルに合わせる。フォーマットのみの変更は単独では受け付けない。
 - **ランタイムの外部依存はゼロ** — 配布物に github.com/semnil の外の npm パッケージや CDN を持ち込まない
-  (LCD シミュレーター `urx-lcd-sim` は semnil 自身のもの)。開発依存は可。
+  (LCD シミュレーター `urx-lcd-sim` と `urx-device` の transport の crate は semnil 自身のもの)。開発依存は可。
 - コミット前に `pnpm format`（Rust の変更があれば `cargo fmt`）を実行する。`format.yml` は両方を
   実行して差分が出たら失敗する。ブランチへの書き戻しは行わない。
 - `src/style.css` のテーマパレットと `src/ui/graph.ts` の `PALETTES` は同期を保つ。

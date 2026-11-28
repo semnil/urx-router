@@ -37,6 +37,7 @@ fn main() {
             "vd_params_subscribe",
             "vd_params_unsubscribe",
             "vd_probe_subscribe",
+            "vd_notifications",
             "vd_watch_link",
             "vd_disconnect",
             "prepare_for_exit",

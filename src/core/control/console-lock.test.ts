@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../../models";
 import { defaultPlan } from "../../models/initial-state";
-import { deviceWritesHeld, holdDeviceWrites, vdSet, vdSetStr, WRITES_HELD, type ParamUpdate } from "../platform";
+import {
+  deviceWritesHeld,
+  holdDeviceWrites,
+  stoppedByNotificationsLost,
+  vdSet,
+  vdSetStr,
+  WRITES_HELD,
+  type ParamUpdate,
+} from "../platform";
 import {
   CONSOLE_LOCK_ADDR,
   consoleLockAbort,
@@ -20,8 +28,17 @@ afterEach(() => holdDeviceWrites(false));
 // record of what was registered and when it was let go.
 function unit(locked: number, failRead = false) {
   let deliver: ((p: ParamUpdate) => void) | null = null;
+  let lost: (() => void) | null = null;
   const log: string[] = [];
   const io: LockWatchIo = {
+    lost: (listener) => {
+      log.push("listen for a loss");
+      lost = listener;
+      return () => {
+        log.push("stop listening for a loss");
+        lost = null;
+      };
+    },
     subscribe: async (addrs, onUpdate) => {
       log.push(`subscribe ${addrs.map((a) => a.join(":")).join(",")}`);
       deliver = onUpdate;
@@ -38,7 +55,9 @@ function unit(locked: number, failRead = false) {
   };
   const notify = (value: number, addr = CONSOLE_LOCK_ADDR): void =>
     deliver?.({ paramId: addr[0], x: addr[1], y: addr[2], value });
-  return { io, log, notify };
+  /** The connection's notifications are lost. */
+  const lose = (): void => lost?.();
+  return { io, log, notify, lose };
 }
 
 describe("the unit's Console Lock", () => {
@@ -120,11 +139,55 @@ describe("watchConsoleLock", () => {
     expect(onLock).toHaveBeenCalledTimes(1);
   });
 
+  // The registration's verdict comes after a notify it already let through: a lock announced in
+  // between held writes for a watch that then never started, and must not outlive it. The start
+  // rejects with the lock it told of, not with the registration's failure.
+  it("leaves writes let through when the registration fails after a lock was announced", async () => {
+    let deliver: ((p: ParamUpdate) => void) | null = null;
+    const io: LockWatchIo = {
+      subscribe: async (_addrs, onUpdate) => {
+        deliver = onUpdate;
+        onUpdate({ paramId: 895, x: 0, y: 0, value: 1 });
+        throw new Error("broker-rejected: 895:0:0 response_code 400");
+      },
+      get: async () => 0,
+    };
+    const onLock = vi.fn();
+    const err = await watchConsoleLock(onLock, io).catch((e: unknown) => e);
+    expect(stoppedByConsoleLock(err), String(err)).toBe(true);
+    expect(deviceWritesHeld()).toBe(false);
+    (deliver as ((p: ParamUpdate) => void) | null)?.({ paramId: 895, x: 0, y: 0, value: 1 });
+    expect(deviceWritesHeld(), "a notify after the failed start holds nothing").toBe(false);
+    expect(onLock).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves nothing registered or held when the read fails", async () => {
     const u = unit(0, true);
     await expect(watchConsoleLock(() => {}, u.io)).rejects.toThrow("not-connected");
     expect(u.log).toEqual(["subscribe 895:0:0", "get 895:0:0", "unsubscribe"]);
     expect(deviceWritesHeld()).toBe(false);
+  });
+});
+
+describe("watchConsoleLock and a loss of the notifications", () => {
+  it("stops the run once when the connection's notifications are lost, and listens no more once let go", async () => {
+    const u = unit(0);
+    const onLost = vi.fn();
+    const watch = await watchConsoleLock(vi.fn(), u.io, onLost);
+    u.lose();
+    u.lose();
+    expect(onLost).toHaveBeenCalledOnce();
+    watch.stop();
+    expect(u.log).toContain("stop listening for a loss");
+  });
+
+  it("stops listening for a loss when the registration fails", async () => {
+    const u = unit(0);
+    u.io.subscribe = async () => {
+      throw new Error("refused");
+    };
+    await expect(watchConsoleLock(vi.fn(), u.io, vi.fn())).rejects.toThrow("refused");
+    expect(u.log).toEqual(["listen for a loss", "stop listening for a loss"]);
   });
 });
 
@@ -136,6 +199,13 @@ describe("watchRun", () => {
     locked.notify(1);
     expect(stoppedByConsoleLock(run.signal)).toBe(true);
     run.stop();
+
+    const lost = unit(0);
+    const stopped = await watchRun(undefined, lost.io);
+    lost.lose();
+    expect(stoppedByNotificationsLost(stopped.signal), "and with the loss of the notifications").toBe(true);
+    expect(stoppedByConsoleLock(stopped.signal)).toBe(false);
+    stopped.stop();
 
     const outer = new AbortController();
     const canceled = await watchRun(outer.signal, unit(0).io);
@@ -162,6 +232,71 @@ describe("watchRun", () => {
     const run = await watchRun(outer.signal, unit(0).io);
     expect(run.signal.aborted).toBe(true);
     run.stop();
+  });
+});
+
+// A stop the watch tells its caller of while it starts decides how the run ends, whatever the calls
+// in flight then come back with: the registration or the read failing after it, or the read saying
+// the unit is locked or unlocked, does not take its place. Without a stop, the failure or the read's
+// value is what the start comes to (the cases above).
+describe("a stop the watch told of while it started", () => {
+  const CASES = (["registration", "read"] as const).flatMap((phase) =>
+    (["lock", "loss"] as const).flatMap((stop) =>
+      (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+    ),
+  );
+  // A unit whose registration or read announces the stop, and then fails or answers.
+  const startingAfter = (
+    phase: "registration" | "read",
+    stop: "lock" | "loss",
+    then: "fails" | "says locked" | "says unlocked",
+  ) => {
+    const u = unit(then === "says locked" ? 1 : 0);
+    const announce = (): void => (stop === "lock" ? u.notify(1) : u.lose());
+    const subscribe = u.io.subscribe;
+    const get = u.io.get;
+    u.io.subscribe = async (addrs, onUpdate) => {
+      const unsubscribe = await subscribe(addrs, onUpdate);
+      if (phase !== "registration") return unsubscribe;
+      announce();
+      if (then === "fails") throw new Error("connection-reset");
+      return unsubscribe;
+    };
+    u.io.get = async (paramId, x, y) => {
+      const value = await get(paramId, x, y);
+      if (phase !== "read") return value;
+      announce();
+      if (then === "fails") throw new Error("connection-reset");
+      return value;
+    };
+    return u;
+  };
+  const stoppedBy = (stop: "lock" | "loss", cause: unknown): boolean =>
+    stop === "lock" ? stoppedByConsoleLock(cause) : stoppedByNotificationsLost(cause);
+
+  it.each(CASES)(
+    "watchConsoleLock rejects with the stop on a %s after a %s that then %s",
+    async (phase, stop, then) => {
+      const u = startingAfter(phase, stop, then);
+      const err = await watchConsoleLock(vi.fn(), u.io, vi.fn()).catch((e: unknown) => e);
+      expect(stoppedBy(stop, err), String(err)).toBe(true);
+      expect(String(err)).not.toContain("connection-reset");
+      expect(deviceWritesHeld(), "nothing is left held").toBe(false);
+      expect(u.log).toContain("stop listening for a loss");
+      if (!(phase === "registration" && then === "fails"))
+        expect(u.log, "the registration is let go").toContain("unsubscribe");
+    },
+  );
+
+  it.each(CASES)("watchRun hands the run back stopped on a %s after a %s that then %s", async (phase, stop, then) => {
+    const outer = new AbortController();
+    const removed = vi.spyOn(outer.signal, "removeEventListener");
+    const run = await watchRun(outer.signal, startingAfter(phase, stop, then).io);
+    expect(stoppedBy(stop, run.signal)).toBe(true);
+    expect(run.lockedAtStart, "a stop is not a lock at the start").toBe(false);
+    expect(removed, "the caller's cancel is let go").toHaveBeenCalledWith("abort", expect.any(Function));
+    run.stop();
+    expect(deviceWritesHeld()).toBe(false);
   });
 });
 

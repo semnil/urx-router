@@ -5,7 +5,16 @@ import { defaultPlan } from "../../models/initial-state";
 
 // runSelfTest drives the device through platform connect/get/set/disconnect, so
 // mock those with a faithful in-memory device: vdSet stores, vdGet reads back.
-vi.mock("../platform", () => ({
+vi.mock("../platform", async (importOriginal) => ({
+  // How a stop the loss of the connection's notifications made is told apart, as the bridge says it.
+  NOTIFICATIONS_LOST: (await importOriginal<typeof import("../platform")>()).NOTIFICATIONS_LOST,
+  notificationsLostAbort: (await importOriginal<typeof import("../platform")>()).notificationsLostAbort,
+  stoppedByNotificationsLost: (await importOriginal<typeof import("../platform")>()).stoppedByNotificationsLost,
+  // And a write the page or the shell refused before sending it, as the bridge says it.
+  refusedBeforeSending: (await importOriginal<typeof import("../platform")>()).refusedBeforeSending,
+  // The run's lock watch also listens for that loss: a case that loses the notifications calls
+  // the listener it was given.
+  onNotificationsLost: vi.fn(() => () => {}),
   vdConnect: vi.fn(),
   vdDisconnect: vi.fn(),
   vdGet: vi.fn(),
@@ -19,7 +28,16 @@ vi.mock("../platform", () => ({
   WRITES_HELD: "writes-held",
 }));
 
-import { vdConnect, vdDisconnect, vdGet, vdGetStr, vdParamsSubscribe, vdSet, vdSetStr } from "../platform";
+import {
+  onNotificationsLost,
+  vdConnect,
+  vdDisconnect,
+  vdGet,
+  vdGetStr,
+  vdParamsSubscribe,
+  vdSet,
+  vdSetStr,
+} from "../platform";
 import type { ParamUpdate } from "../platform";
 import {
   auditUnverified,
@@ -2226,6 +2244,221 @@ describe("runSelfTest and Console Lock", () => {
     expect(formatSelfTestReport(report)).toContain("the unit is under Console Lock");
   });
 
+  it("keeps no restore when the notifications are lost before the run has written anything", async () => {
+    // A run with no loss, to find the read the first write follows: the sweep's own read of the
+    // unit, in its write phase, with nothing written yet.
+    installMockDevice(populatedPlan());
+    lockStream();
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let reads = 0;
+    let lastReadBeforeWrite = -1;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      reads++;
+      return realGet(id, x, y);
+    });
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (lastReadBeforeWrite < 0) lastReadBeforeWrite = reads;
+      return realSet(id, x, y, v);
+    });
+    await runSelfTest(model, 0);
+    expect(lastReadBeforeWrite, "the premise: the run read before it wrote").toBeGreaterThan(0);
+    vi.mocked(vdSet).mockClear().mockImplementation(realSet);
+
+    const table = installMockDevice(populatedPlan());
+    lockStream();
+    const before = new Map(table);
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const get = vi.mocked(vdGet).getMockImplementation()!;
+    reads = 0;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (++reads === lastReadBeforeWrite) lose?.();
+      return get(id, x, y);
+    });
+    const report = await runSelfTest(model, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    expect(report.lost, "the premise: the loss stopped it").toBe(true);
+    expect(report.phase, "the premise: in the write phase").toBe("write");
+    expect(vi.mocked(vdSet), "the premise: nothing was written").not.toHaveBeenCalled();
+    expect(report.written).toBe(0);
+    expect(report.pendingRestore, "nothing to put back").toBeUndefined();
+    expect(table).toEqual(before);
+  });
+
+  // The shell refuses a write once the unit has announced Console Lock, before the page has the
+  // announcement (vd.rs `Session::set`), and the page refuses one on a connection that lost its
+  // notifications (platform.ts `lostWrite`): neither reaches the unit, whichever stop the run hears.
+  it.each([
+    ["lock", "writes-held: the unit announced Console Lock (fetch 3)"],
+    ["loss", "writes-held: the unit announced Console Lock (fetch 3)"],
+    ["loss", "notifications-lost: a change the unit announced may not have reached the app, so nothing is written"],
+  ] as const)("keeps no restore when its first write is refused before sending (%s: %s)", async (stop, refusal) => {
+    const table = installMockDevice(populatedPlan());
+    const lock = lockStream();
+    const before = new Map(table);
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation(async () => {
+      writes++;
+      if (stop === "lock") lock.announce(1);
+      else lose?.();
+      throw new Error(refusal);
+    });
+    const report = await runSelfTest(model, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    vi.mocked(vdSet).mockImplementation(realSet);
+    expect(writes, "the premise: the first write was refused").toBe(1);
+    expect(stop === "lock" ? report.locked : report.lost, "the premise: the stop").toBe(true);
+    expect(report.written).toBe(0);
+    expect(report.pendingRestore, "nothing reached the unit").toBeUndefined();
+    expect(table).toEqual(before);
+  });
+
+  // The transport may not send a write at all — the unit went offline before it — which the shell
+  // says (vd.rs `NOT_SENT`) and the page marks: nothing reached the unit.
+  it.each(["lock", "loss"] as const)(
+    "keeps no restore when the transport never sent its first write (%s)",
+    async (stop) => {
+      const table = installMockDevice(populatedPlan());
+      const lock = lockStream();
+      const before = new Map(table);
+      let lose: (() => void) | null = null;
+      vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+        lose = listener;
+        return () => {
+          lose = null;
+        };
+      });
+      const realSet = vi.mocked(vdSet).getMockImplementation()!;
+      let writes = 0;
+      vi.mocked(vdSet).mockImplementation(async () => {
+        writes++;
+        if (stop === "lock") lock.announce(1);
+        else lose?.();
+        throw Object.assign(new Error("device-lost: the unit went offline"), { notSent: true });
+      });
+      const report = await runSelfTest(model, 0);
+      vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+      vi.mocked(vdSet).mockImplementation(realSet);
+      expect(writes, "the premise: the first write was not sent").toBe(1);
+      expect(stop === "lock" ? report.locked : report.lost, "the premise: the stop").toBe(true);
+      expect(report.written).toBe(0);
+      expect(report.pendingRestore, "nothing reached the unit").toBeUndefined();
+      expect(table).toEqual(before);
+    },
+  );
+
+  it("keeps the restore when its first write is sent and the answer is lost with the notifications", async () => {
+    installMockDevice(populatedPlan());
+    lockStream();
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation(async () => {
+      writes++;
+      lose?.();
+      throw new Error("broker-io: ConnectionReset");
+    });
+    const report = await runSelfTest(model, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    vi.mocked(vdSet).mockImplementation(realSet);
+    expect(writes, "the premise: one write went out").toBe(1);
+    expect(report.lost).toBe(true);
+    expect(report.written, "its fate is unknown, so it counts").toBe(1);
+    expect(report.pendingRestore, "the unit may hold it").toBeDefined();
+  });
+
+  it("keeps the restore, saying why, when the standalone restore loses the notifications", async () => {
+    installMockDevice(populatedPlan());
+    lockStream();
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 5) lose?.();
+      return realSet(id, x, y, v);
+    });
+    const report = await runSelfTest(model, 0);
+    expect(report.pendingRestore, "the premise: a restore is kept").toBeDefined();
+    writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      if (++writes === 2) lose?.();
+      return realSet(id, x, y, v);
+    });
+    const restore = await restoreSelfTest(model, report.pendingRestore!, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    vi.mocked(vdSet).mockImplementation(realSet);
+    expect(restore.lost).toBe(true);
+    expect(restore.restored).toBe(false);
+    expect(restore.pendingRestore, "kept until a restore succeeds").toBe(report.pendingRestore);
+  });
+
+  it("stops at the next command when the connection's notifications are lost, and keeps what the restore needs", async () => {
+    const seed = populatedPlan();
+    const table = installMockDevice(seed);
+    const before = new Map(table);
+    lockStream();
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const realSet = vi.mocked(vdSet).getMockImplementation()!;
+    let writes = 0;
+    vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+      writes++;
+      if (writes === 5) lose?.();
+      return realSet(id, x, y, v);
+    });
+
+    const report = await runSelfTest(model, 0);
+
+    expect(report.lost).toBe(true);
+    expect(report.locked).toBeUndefined();
+    expect(report.aborted, "stopped the way a cancel stops").toBe(true);
+    expect(writes, "the write on the wire lands; nothing after it goes").toBe(5);
+    expect(report.written, "every write that landed is counted").toBe(5);
+    expect(report.pendingRestore?.model).toBe("URX44V");
+    expect(formatSelfTestReport(report)).toContain(
+      "- Stopped: the changes the unit announced could not be fetched; the unit is left changed, and what the restore needs is kept for Restore after self-test",
+    );
+    expect(lose, "the run let go of the listener").toBeNull();
+
+    // On the next connection the restore alone puts the unit back.
+    vi.mocked(vdSet).mockImplementation(realSet);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    const restore = await restoreSelfTest(model, report.pendingRestore!, 0);
+    expect(restore.restored).toBe(true);
+    for (const [k, v] of before) expect(table.get(k), k).toBe(v);
+  });
+
   it("stops at the next command when the unit is locked under it, and keeps what the restore needs", async () => {
     const seed = populatedPlan();
     const table = installMockDevice(seed);
@@ -2278,6 +2511,93 @@ describe("runSelfTest and Console Lock", () => {
     expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
     expect(table.size).toBeGreaterThan(0);
   });
+
+  // A stop that comes while the run's watch starts ends the run on it, whatever the registration or
+  // the read it came during then comes back with — a failure, or a read that says the unit is locked
+  // or unlocked: the run returns its report, which says the stop and no refusal, and nothing is
+  // written — the self-test and the restore alike.
+  const WATCH_START_CASES = (["registration", "read"] as const).flatMap((phase) =>
+    (["lock", "loss"] as const).flatMap((stop) =>
+      (["fails", "says locked", "says unlocked"] as const).map((then) => [phase, stop, then] as const),
+    ),
+  );
+  // The watch's registration or its read of the lock announces the stop, then fails or answers.
+  const failWatchStart = (
+    phase: "registration" | "read",
+    stop: "lock" | "loss",
+    then: "fails" | "says locked" | "says unlocked",
+  ): void => {
+    let deliver: ((p: ParamUpdate) => void) | null = null;
+    let lose: (() => void) | null = null;
+    vi.mocked(onNotificationsLost).mockImplementation((listener) => {
+      lose = listener;
+      return () => {
+        lose = null;
+      };
+    });
+    const announce = (): void => {
+      if (stop === "lock") deliver?.({ paramId: PARAMS.CONSOLE_LOCK.id, x: 0, y: 0, value: 1 });
+      else lose?.();
+    };
+    vi.mocked(vdParamsSubscribe).mockImplementation(async (_addrs, onUpdate) => {
+      deliver = onUpdate;
+      if (phase === "registration") {
+        announce();
+        if (then === "fails") throw new Error("connection-reset");
+      }
+      return () => {
+        deliver = null;
+      };
+    });
+    const realGet = vi.mocked(vdGet).getMockImplementation()!;
+    let answered = false;
+    vi.mocked(vdGet).mockImplementation((id, x, y) => {
+      if (answered || id !== PARAMS.CONSOLE_LOCK.id) return realGet(id, x, y);
+      answered = true;
+      if (phase === "read") announce();
+      if (phase === "read" && then === "fails") return Promise.reject(new Error("connection-reset"));
+      return Promise.resolve(then === "says locked" ? 1 : 0);
+    });
+  };
+
+  it.each(WATCH_START_CASES)("ends with its report on a %s after a %s that then %s", async (phase, stop, then) => {
+    const table = installMockDevice(populatedPlan());
+    const before = new Map(table);
+    failWatchStart(phase, stop, then);
+    const report = await runSelfTest(model, 0);
+    vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+    expect(stop === "lock" ? report.locked : report.lost, "the report says the stop").toBe(true);
+    expect(report.refusal, "and no refusal").toBeUndefined();
+    expect(report.aborted).toBe(true);
+    expect(report.pendingRestore, "nothing was written, so nothing to put back").toBeUndefined();
+    expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    expect(table).toEqual(before);
+  });
+
+  it.each(WATCH_START_CASES)(
+    "ends the restore with its report on a %s after a %s that then %s",
+    async (phase, stop, then) => {
+      installMockDevice(populatedPlan());
+      const stream = lockStream();
+      const realSet = vi.mocked(vdSet).getMockImplementation()!;
+      let writes = 0;
+      vi.mocked(vdSet).mockImplementation((id, x, y, v) => {
+        if (++writes === 3) stream.announce(1);
+        return realSet(id, x, y, v);
+      });
+      const pending = (await runSelfTest(model, 0)).pendingRestore!;
+      expect(pending, "the premise").toBeDefined();
+      vi.mocked(vdSet).mockClear().mockImplementation(realSet);
+      failWatchStart(phase, stop, then);
+      const restore = await restoreSelfTest(model, pending, 0);
+      vi.mocked(onNotificationsLost).mockImplementation(() => () => {});
+      expect(stop === "lock" ? restore.locked : restore.lost, "the report says the stop").toBe(true);
+      expect(restore.refusal, "and no refusal").toBeUndefined();
+      expect(restore.restored).toBeFalsy();
+      expect(restore.pendingRestore, "kept for another try").toBe(pending);
+      expect(vi.mocked(vdSet)).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps the restore for another try when the unit is still locked, or is another model", async () => {
     const seed = populatedPlan();

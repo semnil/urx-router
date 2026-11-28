@@ -277,7 +277,7 @@ test.describe("T2b shape-change", () => {
   //
   // It first asserted that NEITHER address was registered and concluded "a rename cannot
   // be followed". That was true of the app and not of the unit: the URX announces a
-  // rename, and the app had simply never registered the address, so `Subs::absorb`
+  // rename, and the app had simply never registered the address, so the transport's per-token delivery
   // dropped it. Names were registered and the name half flipped.
   //
   // Sweet Spot Data has now gone the same way, and for the same reason: the unit
@@ -718,7 +718,7 @@ test.describe("T2b shape-change", () => {
     await mark(page, "forced-reconcile");
     // The sentinel is the address-free way to force one whole-device reconcile: it
     // belongs to no address, so it is the one notify the bridge forwards whatever the
-    // session registered (src-tauri/src/vd.rs Subs::absorb).
+    // session registered (the transport's per-token delivery that src-tauri/src/vd.rs sends on).
     await pushBulkChange(page);
     await settleAfter(page, "forced-reconcile", 2500);
     await mark(page, "loop-window");

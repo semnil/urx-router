@@ -26,7 +26,7 @@
 import type { DeviceModel } from "../../models/types";
 import { PHANTOM_KEYS } from "../plan";
 import type { Plan } from "../plan";
-import { vdConnect, vdDisconnect } from "../platform";
+import { stoppedByNotificationsLost, vdConnect, vdDisconnect } from "../platform";
 import { dryRun, reachedAndFailed, sendCommands } from "./client";
 import { captureDeviceState, floorSilent, sweepInputSource } from "./selftest";
 import { stoppedByConsoleLock, watchRun, type RunWatch } from "./console-lock";
@@ -91,6 +91,9 @@ export interface PrepareReport {
   /** True when the unit was under Console Lock, or went into it: nothing was written, or the
    *  write stopped at its next command. */
   locked?: boolean;
+  /** True when the connection's notifications were lost: the write stopped at its next command,
+   *  since a Console Lock would no longer be heard. */
+  lost?: boolean;
 }
 
 // Non-round, well-separated fractions of a range. Cycling them per scalar keeps
@@ -292,6 +295,12 @@ export async function runPrepareModified(model: DeviceModel, outer?: AbortSignal
   // aborts too — so the tolerant send below stops instead of taking each held write as a
   // rejection and moving on to the next.
   let signal = outer;
+  const markStop = (): void => {
+    if (!signal?.aborted) return;
+    report.aborted = true;
+    if (stoppedByNotificationsLost(signal)) report.lost = true;
+    else if (stoppedByConsoleLock(signal)) report.locked = true;
+  };
   try {
     // Connect prologue shared with the self-test: model check + device capture. Reads only, so
     // it goes ahead on a locked unit; the lock is asked once there is something to write.
@@ -318,8 +327,10 @@ export async function runPrepareModified(model: DeviceModel, outer?: AbortSignal
       let commands = list;
       while (commands.length) {
         signal?.throwIfAborted();
-        const outcomes = await sendCommands(commands, signal);
-        report.written += outcomes.filter((o) => o.ok).length;
+        // Counted as each lands: a stop's throw takes the batch's outcomes with it.
+        const outcomes = await sendCommands(commands, signal, (o) => {
+          if (o.ok) report.written++;
+        });
         const idx = outcomes.findIndex(reachedAndFailed);
         if (idx === -1) break;
         const c = commands[idx];
@@ -338,11 +349,12 @@ export async function runPrepareModified(model: DeviceModel, outer?: AbortSignal
     for (const batch of prepareBatches(model, plan)) await send(batch);
     report.residual = rejected.length;
     report.errors.push(...rejected);
+    // A stop that arrived with the last write still ends the run as a stop.
+    markStop();
     return report;
   } catch (e) {
     if (signal?.aborted) {
-      report.aborted = true;
-      if (stoppedByConsoleLock(signal)) report.locked = true;
+      markStop();
       return report;
     }
     throw e;
